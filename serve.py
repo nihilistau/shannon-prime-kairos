@@ -74,6 +74,8 @@ def build_env(c: dict) -> dict:
         "SP_DAEMON_URL": f"http://127.0.0.1:{c['serve']['port']}",
         "SP_SPINE_TOOLSET": b(agent["spine_toolset"]),
         "SP_SPINE_RECALL": b(agent["spine_recall"]),
+        "SP_GATEWAY_AUTHORITY": agent.get("authority", "l5"),
+        "SP_GATEWAY_PREWARM": b(agent.get("prewarm", False)),
         "SP_PERSONALITY": b(agent["personality"]),
         "SP_MCP_TOOLS": b(agent["mcp_tools"]),
         "SP_PERSONA_FILE": os.path.join(ROOT, "persona.md"),

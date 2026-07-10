@@ -43,6 +43,15 @@ spine_toolset = true
 spine_recall = true
 personality = true
 mcp_tools = true
+# Hydrate the ~1.5k-token persona+tools preamble into the persist cache at BOOT (background)
+# so the user's FIRST message reuses it (LCP) instead of paying the one-time ~100s cold
+# prefill live. The cost moves to startup; every turn after is a strict extension.
+prewarm = true
+# 'spine' = the harness owns recall on gateway turns (fast: strict-extension prompt
+# composes with persist-KV). Daemon L5 delivery clears the committed cache on every
+# recalled turn -> minutes-long interrogative turns through the gateway. Direct
+# daemon chats (gateway down) still use L5 via the console checkbox.
+authority = 'spine'
 
 [decode]
 mtp = false  # P5: verify machinery proven byte-exact, but prompt-lookup drafts are

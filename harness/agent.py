@@ -170,11 +170,16 @@ def agent_chat_stream(
     config: Optional[InferenceConfig] = None,
     on_tool: Optional[Callable[[str, dict, str], None]] = None,
     max_rounds: int = 3,
+    mutate_messages: bool = False,
 ):
     """Streaming agent: yields the FINAL answer token-by-token. Tool rounds run silently
     (the model's ```tool_code is buffered, executed, and fed back without reaching the user);
     only the model's plain-language answer is streamed. A generation is treated as a tool call
-    iff it begins with a ```tool fence."""
+    iff it begins with a ```tool fence.
+
+    mutate_messages=True (HINDSIGHT session-transcript mode): the caller's list IS the
+    conversation — tool-round turns are appended into it, so a stateful gateway keeps the
+    CANONICAL transcript the daemon actually saw (persist-KV strict extension every turn)."""
     client = client or get_client()
     # temp>0 + repetition_penalty 1.3: greedy (temp 0) collapses into in-context repetition ruts
     # ("I don't know" to everything). 0.6/1.3 keeps the voice alive AND breaks the rut; the
@@ -192,7 +197,7 @@ def agent_chat_stream(
         system_content, tool_index = build_tool_system(core_tools(), extra_tools(),
                                                        system_prefix=load_agent_system())
     system = {"role": "system", "content": system_content}
-    convo = list(messages)
+    convo = messages if mutate_messages else list(messages)
 
     for _round in range(max_rounds):
         buf = ""

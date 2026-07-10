@@ -237,6 +237,36 @@ def create_flask_app():
 
 
 # ──── Stdlib agent server (zero-dep) ──────────────────────────────────────
+# ── HINDSIGHT 2026-07-10: CANONICAL SESSION TRANSCRIPTS ──
+# The gateway was stateless: the client echoed its own history back, which NEVER matches
+# what the daemon actually saw (spine recall notes + tool rounds are transient) — so the
+# turn AFTER any recall/tool turn diverged from the persist-KV committed cache and paid a
+# full preamble re-prefill (the live "minutes then [aborted]" pattern). With a session_id,
+# the gateway keeps the CANONICAL append-only transcript (notes + tool rounds included)
+# and the daemon sees a strict extension every turn = O(new tokens) prefill.
+_CHAT_SESSIONS: Dict[str, list] = {}
+_CHAT_SESSIONS_MAX = 32
+
+
+def _session_transcript(body: Dict[str, Any]) -> list:
+    """Resolve the canonical message list for this request (mutated in place by the turn)."""
+    sid = body.get("session_id")
+    msgs = list(body.get("messages", []))
+    if not sid:
+        return msgs                        # stateless fallback (old behavior)
+    canon = _CHAT_SESSIONS.get(sid)
+    if canon is None:
+        if len(_CHAT_SESSIONS) >= _CHAT_SESSIONS_MAX:
+            _CHAT_SESSIONS.pop(next(iter(_CHAT_SESSIONS)))
+        canon = msgs                       # first sight: seed from the client's history
+        _CHAT_SESSIONS[sid] = canon
+    else:
+        new_user = next((m for m in reversed(msgs) if m.get("role") == "user"), None)
+        if new_user is not None:
+            canon.append(dict(new_user))   # append ONLY the new user turn
+    return canon
+
+
 def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
     """The console's native /v1/chat: {messages} -> SSE data: {...} -> [DONE], run through the
     streaming AGENT (tool calling).
@@ -285,13 +315,27 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
     #  SP_SPINE_TOOLSET=1 : adaptive tool tier — the turn advertises the RIGHT ≤6 tools
     #                       (coding/memory/core) instead of one fixed set.
     import os as _os
-    msgs = list(body.get("messages", []))
+    msgs = _session_transcript(body)
     turn_tools = None
     turn_extra = None
     user_text = next((m.get("content", "") for m in reversed(msgs)
                       if m.get("role") == "user"), "")
     want_recall = _os.environ.get("SP_SPINE_RECALL", "0") == "1"
     want_toolset = _os.environ.get("SP_SPINE_TOOLSET", "0") == "1"
+    # ── HINDSIGHT 2026-07-10: PROFILE-SELECTED RECALL AUTHORITY ──
+    # SP_GATEWAY_AUTHORITY=spine (the kairos agent profile) makes the HARNESS the one
+    # recall authority and refuses the client's auto_recall passthrough. Why: the
+    # daemon-L5 delivery re-prefills an AUGMENTED prompt and then CLEARS the persist
+    # committed cache (routes.rs recalled-turn clear), so with the console checkbox on,
+    # EVERY interrogative turn cost ~2 full preamble prefills and the following turn a
+    # third — the live "minutes then [aborted]" pattern. Spine recall injects its note
+    # BEFORE the new user message, so the prompt stays a STRICT EXTENSION of the
+    # committed cache = O(suffix) prefill. Default 'l5' keeps the old passthrough
+    # (G-PK2-RECALL-L5-COMPOSE behavior) byte-for-byte.
+    if _os.environ.get("SP_GATEWAY_AUTHORITY", "l5").lower() == "spine" and cfg.auto_recall:
+        cfg.auto_recall = False
+        if typed:
+            yield ("data: " + json.dumps({"authority": "spine"}) + "\n\n").encode()
     # ONE-AUTHORITY GUARD (G-PK2-RECALL-L5-COMPOSE, 2026-07-08): free composition of BOTH
     # recall authorities is REFUTED on the metal — with L5 armed, its systemecho SYSTEM
     # delivery overrides the harness note, and an L5 selection cross-pick surfaces to the
@@ -312,8 +356,10 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
                     if facts:
                         note = ("Relevant facts from your long-term memory (use them faithfully; "
                                 "never contradict them): " + " | ".join(facts))
-                        # inject as a SYSTEM note right before the last user message
-                        msgs = msgs[:-1] + [{"role": "system", "content": note}, msgs[-1]]
+                        # inject as a SYSTEM note right before the last user message —
+                        # IN PLACE, so the canonical session transcript keeps it (the
+                        # daemon's persist cache and the next turn's prompt stay aligned).
+                        msgs.insert(len(msgs) - 1, {"role": "system", "content": note})
                         if typed:
                             yield ("data: " + json.dumps({"recall": facts}) + "\n\n").encode()
                 elif dec.kind == "select_toolset":
@@ -330,12 +376,17 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
 
     def _run():
         try:
-            kw = {"config": cfg, "on_tool": on_tool}
+            kw = {"config": cfg, "on_tool": on_tool, "mutate_messages": True}
             if turn_tools is not None:
                 kw["tools"] = turn_tools
             for delta in agent_chat_stream(msgs, **kw):
                 reply_parts.append(delta)
                 evq.put({"delta": delta})
+            # close the canonical transcript with the final answer (session mode keeps it;
+            # stateless mode discards the local list — harmless either way).
+            final = "".join(reply_parts).strip()
+            if final:
+                msgs.append({"role": "assistant", "content": final})
         except Exception as exc:
             logger.error("[gateway] native chat failed: %s", exc)
             evq.put({"delta": f"[error: {exc}]"})
