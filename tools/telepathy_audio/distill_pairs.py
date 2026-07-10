@@ -43,9 +43,40 @@ def tts_wav(text: str) -> np.ndarray:
     raise NotImplementedError("TTS hook not wired — voxtral-mini-realtime-rs speak")
 
 
-def mimi_encode(wav: np.ndarray) -> np.ndarray:
-    """(C) Mimi encoder -> [T, D_Z] continuous latent @12.5Hz (pre-quantization)."""
-    raise NotImplementedError("MIMI encode not wired — moshi/mimi encoder")
+_MIMI = None
+
+
+def _mimi():
+    """Load Mimi once (eager mode — Triton/torch.compile unavailable on Windows)."""
+    global _MIMI
+    if _MIMI is None:
+        import os
+        os.environ.setdefault("NO_TORCH_COMPILE", "1")
+        import torch
+        torch._dynamo.config.suppress_errors = True
+        from huggingface_hub import hf_hub_download
+        from moshi.models import loaders
+        w = hf_hub_download(loaders.DEFAULT_REPO, loaders.MIMI_NAME)
+        m = loaders.get_mimi(w, device="cuda" if torch.cuda.is_available() else "cpu")
+        m.set_num_codebooks(8)
+        _MIMI = m
+    return _MIMI
+
+
+def mimi_encode(wav: np.ndarray, sr: int = 16000) -> np.ndarray:
+    """(C) Mimi encoder -> [T, D_Z=512] continuous latent @12.5Hz (pre-quantization).
+    PROVEN 2026-07-11: mimi._encode_to_unquantized_latent -> [1,512,T]. Resamples to 24k."""
+    import torch
+    m = _mimi()
+    x = np.asarray(wav, dtype=np.float32)
+    if sr != m.sample_rate:
+        n2 = int(round(len(x) * m.sample_rate / sr))
+        x = np.interp(np.linspace(0, len(x) - 1, n2), np.arange(len(x)), x).astype(np.float32)
+    dev = next(m.parameters()).device
+    xt = torch.tensor(x)[None, None].to(dev)
+    with torch.no_grad():
+        z = m._encode_to_unquantized_latent(xt)      # [1, 512, T]
+    return z.squeeze(0).transpose(0, 1).cpu().numpy()  # [T, 512]
 
 
 def align(h: np.ndarray, z: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
