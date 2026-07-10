@@ -40,12 +40,53 @@ def read_wav16(path: str) -> np.ndarray:
     return x
 
 
+def augment(x: np.ndarray, rng: np.random.Generator, real: bool) -> np.ndarray:
+    """P1.5 real-mic bridge: SAPI voices are clean/dry; real mic input has room
+    reverb, coloration, background noise, and level variation. Simulate that in
+    the WAVEFORM so the SAPI corpus better matches live capture. real=False keeps
+    the light clean pass (one copy stays near-original)."""
+    # speed jitter
+    sp = float(rng.uniform(0.9, 1.1))
+    if abs(sp - 1.0) > 1e-3:
+        t = np.linspace(0, len(x) - 1, int(len(x) / sp))
+        x = np.interp(t, np.arange(len(x)), x).astype(np.float32)
+    if real:
+        # reverb: convolve with a short exponential-decay impulse (RT60-ish)
+        if rng.random() < 0.7:
+            rt = float(rng.uniform(0.05, 0.25))
+            L = max(2, int(rt * 16000))
+            imp = (rng.normal(0, 1, L) * np.exp(-np.arange(L) / (rt * 16000 / 3))).astype(np.float32)
+            imp[0] = 1.0
+            x = np.convolve(x, imp / (np.abs(imp).sum() + 1e-6))[: len(x)].astype(np.float32)
+        # EQ tilt (first-order shelf): color like a cheap mic
+        tilt = float(rng.uniform(-0.5, 0.5))
+        if abs(tilt) > 0.05:
+            x = x + tilt * np.diff(x, prepend=x[:1]).astype(np.float32)
+        # additive noise at a random SNR
+        rms = float(np.sqrt((x ** 2).mean()) + 1e-8)
+        snr = float(rng.uniform(8, 30))
+        nstd = rms / (10 ** (snr / 20))
+        x = x + rng.normal(0, nstd, size=x.shape).astype(np.float32)
+        # gain
+        x = x * float(rng.uniform(0.5, 1.4))
+        x = np.clip(x, -1.0, 1.0)
+    else:
+        x = x + rng.normal(0, 0.003, size=x.shape).astype(np.float32)
+    return x.astype(np.float32)
+
+
 def main() -> int:
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--aug_copies", type=int, default=2,
+                    help="extra REAL-mic-augmented copies per wav (0 = clean only)")
+    a = ap.parse_args()
+
     vsub = np.load(os.path.join(OUT, "vsub.npy"))
     corpus = {i: json.loads(l) for i, l in enumerate(
         open(os.path.join(OUT, "corpus.jsonl"), encoding="utf-8"))}
     wavs = sorted(glob.glob(os.path.join(OUT, "wav", "s*.wav")))
-    print(f"vsub={len(vsub)} corpus={len(corpus)} wavs={len(wavs)}")
+    print(f"vsub={len(vsub)} corpus={len(corpus)} wavs={len(wavs)} aug_copies={a.aug_copies}")
 
     rng = np.random.default_rng(0)
     feats, targs, flens, tlens, sent_ids = [], [], [], [], []
@@ -57,21 +98,18 @@ def main() -> int:
         row = corpus.get(sid)
         if not row or not row["ids"]:
             continue
-        x = read_wav16(w)
-        # augment: speed jitter (0.9-1.1) via resample + small gaussian noise
-        sp = float(rng.uniform(0.9, 1.1))
-        if abs(sp - 1.0) > 1e-3:
-            t = np.linspace(0, len(x) - 1, int(len(x) / sp))
-            x = np.interp(t, np.arange(len(x)), x).astype(np.float32)
-        x = x + rng.normal(0, 0.003, size=x.shape).astype(np.float32)
-        mel = logmel(x)
-        if mel.shape[0] < len(row["ids"]) + 1:   # CTC needs T > target length
-            continue
-        feats.append(mel)
-        targs.append(np.array(row["ids"], dtype=np.int64))
-        flens.append(mel.shape[0])
-        tlens.append(len(row["ids"]))
-        sent_ids.append(sid)
+        base = read_wav16(w)
+        # one clean-ish pass + N real-mic-augmented copies
+        for c in range(1 + a.aug_copies):
+            x = augment(base, rng, real=(c > 0))
+            mel = logmel(x)
+            if mel.shape[0] < len(row["ids"]) + 1:   # CTC needs T > target length
+                continue
+            feats.append(mel)
+            targs.append(np.array(row["ids"], dtype=np.int64))
+            flens.append(mel.shape[0])
+            tlens.append(len(row["ids"]))
+            sent_ids.append(sid)
 
     N = len(feats)
     Tmax = max(f.shape[0] for f in feats)

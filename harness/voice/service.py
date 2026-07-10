@@ -71,17 +71,29 @@ def voice_turn(body: Dict[str, Any], transcript: list) -> Iterator[bytes]:
         yield b"data: [DONE]\n\n"
         return
 
-    # canonical transcript: the voice turn is real conversation state.
-    transcript.append({"role": "user", "content": "[voice utterance — injected as "
-                       f"{int(frames.shape[0])} latent audio frames]"})
+    # P1.5 graceful framing: the ear is still learning REAL-mic speech (trained on
+    # synthetic voices), so injected tokens are often partial. Tell the model to
+    # respond to what it CAN make out and ASK rather than confabulate — this stops
+    # the "invent a whole backstory" failure mode on unclear audio.
+    n_fr = int(frames.shape[0])
+    guide = ("The user just SPOKE to you; their words were transcribed to audio "
+             "frames but the transcription is imperfect and may be partial. Reply "
+             "naturally and briefly to what you can make out. If it is unclear or "
+             "too short to tell, say you didn't quite catch it and ask them to "
+             "repeat — do NOT invent facts or a backstory.")
+    turn = list(transcript)
+    turn.append({"role": "system", "content": guide})
+    turn.append({"role": "user", "content": f"[voice utterance, {n_fr} audio frames]"})
+    transcript.append({"role": "user", "content": f"[voice utterance, {n_fr} audio frames]"})
 
     from harness.inference.client import get_client
     client = get_client()
     req = {
-        "messages": list(transcript),
+        "messages": turn,
         "inject_frames": [f.tolist() for f in frames],
         "inject_ph": VOICE_PH,
-        "max_tokens": int(body.get("max_tokens", 96)),
+        # P1.5: double the ceiling — voice replies were truncating mid-sentence.
+        "max_tokens": int(body.get("max_tokens", 256)),
         "temperature": float(body.get("temperature", 0.6)),
         "repetition_penalty": 1.3,
         "eot_bias": 4.0,
@@ -91,13 +103,26 @@ def voice_turn(body: Dict[str, Any], transcript: list) -> Iterator[bytes]:
         for delta in client.chat_stream_raw(req) if hasattr(client, "chat_stream_raw") \
                 else _raw_stream(client, req):
             reply_parts.append(delta)
-            yield ev({"delta": delta})
+            yield ev({"delta": _clean(delta)})
     except Exception as exc:
         yield ev({"delta": f"[voice turn error: {exc}]"})
-    final = "".join(reply_parts).strip()
+    final = _clean("".join(reply_parts)).strip()
     if final:
         transcript.append({"role": "assistant", "content": final})
     yield b"data: [DONE]\n\n"
+
+
+_CTRL = None
+
+
+def _clean(s: str) -> str:
+    """Strip control-token artifacts that leak on the injected-frame path
+    (<0x0D> CR bytes, stray fences, [audio] placeholders)."""
+    global _CTRL
+    if _CTRL is None:
+        import re
+        _CTRL = re.compile(r"<0x0[0-9A-Fa-f]>|```+|\[audio\]|<\|?audio\|?>")
+    return _CTRL.sub("", s)
 
 
 def _raw_stream(client, req: Dict[str, Any]) -> Iterator[str]:

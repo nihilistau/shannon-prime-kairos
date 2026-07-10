@@ -972,11 +972,27 @@
   }
   async function sendUtterance() {
     const total = vadBuf.reduce((n, b) => n + b.length, 0);
-    const pcm = new Int16Array(total);
-    let o = 0;
-    for (const b of vadBuf) for (let i = 0; i < b.length; i++)
-      pcm[o++] = Math.max(-32768, Math.min(32767, Math.round(b[i] * 32767)));
+    // concat float mono at the ACTUAL context rate
+    const flat = new Float32Array(total);
+    { let k = 0; for (const b of vadBuf) { flat.set(b, k); k += b.length; } }
     vadBuf = [];
+    // P1.5 SYNC FIX: the AudioContext often runs at 48k even when 16k is
+    // requested; the ear is trained strictly on 16k, so a rate mismatch
+    // time-warps the audio and it mis-hears. Resample to EXACTLY 16k here.
+    const srcRate = (audioCtx && audioCtx.sampleRate) || 16000;
+    let mono = flat;
+    if (Math.abs(srcRate - 16000) > 1) {
+      const ratio = 16000 / srcRate;
+      const outLen = Math.round(flat.length * ratio);
+      mono = new Float32Array(outLen);
+      for (let i = 0; i < outLen; i++) {
+        const t = i / ratio, i0 = Math.floor(t), frac = t - i0;
+        mono[i] = (flat[i0] || 0) * (1 - frac) + (flat[i0 + 1] || 0) * frac;  // linear
+      }
+    }
+    const pcm = new Int16Array(mono.length);
+    for (let i = 0; i < mono.length; i++)
+      pcm[i] = Math.max(-32768, Math.min(32767, Math.round(mono[i] * 32767)));
     let bin = ''; const u8 = new Uint8Array(pcm.buffer);
     for (let i = 0; i < u8.length; i += 8192) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
     const b64 = btoa(bin);
@@ -989,7 +1005,7 @@
     try {
       const resp = await fetch(`${GATEWAY}/v1/voice`, { method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: SESSION_ID, audio_b64: b64, max_tokens: 96 }),
+        body: JSON.stringify({ session_id: SESSION_ID, audio_b64: b64, max_tokens: 256 }),
         signal: abortCtrl.signal });
       const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = '';
       for (;;) {

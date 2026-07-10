@@ -175,6 +175,42 @@ WebAudio (console) is the capture surface — the same origin the console alread
 | G-VOICE-4 | GNA vocoder: POT recovery + RTF on silicon |
 | G-VOICE-LIVE | operator conversation: interrupt mid-reply, wake from cold, 3-turn voice chat, no keyboard |
 
+## 7.5 P1.5 — live-play findings (2026-07-11 operator voice session)
+
+First real-microphone conversation surfaced four things the synthetic gates could
+not:
+
+1. **Real-mic speech is OUT OF DISTRIBUTION for the SAPI-trained ear.** The ear
+   scored 0.796 on held-out SAPI sentences but confabulates on live mic input
+   (invented a gaming backstory, a different GPU spec each turn, mic-troubleshoot
+   patter) — mostly-blank CTC output + a few random tokens → the 12B free-
+   associates. FIX (P1.5): waveform **acoustic augmentation** (reverb, mic-EQ
+   tilt, colored noise at random SNR, gain/clip) in voice_frames (--aug_copies)
+   so the SAPI corpus better matches live capture; retrain. TRUE fix (P1.6) =
+   real-speech data — the console should offer a **speak → see transcript →
+   correct → becomes a training pair** loop (self-improving ear, the CosySim
+   pattern). Bank it.
+2. **AudioContext sample-rate mismatch** (the "getting out of sync"): the browser
+   often runs the context at 48k even when 16k is requested; the ear is trained
+   strictly on 16k, so the audio is time-warped. FIX: console resamples the
+   captured utterance to EXACTLY 16k before send.
+3. **Replies truncated mid-sentence.** Voice max_tokens 96 → 256; console sends
+   256. (Chat path already 512.)
+4. **Control-token leakage on the injected-frame path** (`<0x0D>`, stray ```` ``` ````,
+   `[audio]`). FIX: voice service strips them from the stream; a graceful-framing
+   system note tells the model to answer what it can make out and ASK rather than
+   invent when the audio is unclear.
+
+**★ ROLEPLAY (bank for later — a genuine emergent strength).** The 12B runs
+scenario roleplay beautifully UNPROMPTED ("The Cosmic Adventure: Journey to Alpha
+Centauri", coherent multi-turn GM). This is a natural harness feature: a
+`roleplay`/`scenario` mode (spine decider + a scene-state memory tier, mirroring
+CosySim's scenario engine) that formalizes what the model already does well —
+scene setup, character state, turn structure, an exit verb. NOT built now;
+tracked as a KAI/harness backlog item so it is not lost. Do NOT over-engineer:
+the model's unprompted quality is the bar; the harness should scaffold
+persistence + structure, not replace the model's improvisation.
+
 ## 8. Decision (answers Gemini's closing question)
 
 Input first — because it is already built. P0 wires the PROVEN ear to a microphone
