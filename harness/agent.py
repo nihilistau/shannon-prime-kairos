@@ -101,10 +101,27 @@ def all_tools() -> List[ToolSpec]:
     from harness.skills.conversation_memory import CONVERSATION_TOOLS
     from harness.skills.system_tools import SYSTEM_TOOLS
     tools = MEMORY_TOOLS + MEMORY_TOOLS_EXTRA + CONVERSATION_TOOLS + SYSTEM_TOOLS
+    # HINDSIGHT live-play 4: coding tools live in the load-on-demand INDEX tier so they
+    # are reachable WITHOUT the per-turn toolset swap (SP_SPINE_TOOLSET) — that swap
+    # rewrites the system prompt mid-session, which diverges the persist-KV cache at
+    # token 0 and re-prefills the whole conversation (= the '[aborted]' turns whenever
+    # a message merely mentioned building/code). One stable system prompt per session.
+    try:
+        from harness.skills.builtin.coding import CODING_TOOLS
+        tools = tools + CODING_TOOLS
+    except ImportError:
+        pass
     if os.environ.get("SP_PERSONALITY", "0") == "1":
         from harness.personality.tools import PERSONALITY_TOOLS
         tools = tools + PERSONALITY_TOOLS
-    specs = [ToolSpec.from_callable(fn) for fn in tools]
+    # dedupe by tool name, first wins (system read_file/write_file over the coding pack's).
+    seen: set = set()
+    specs = []
+    for fn in tools:
+        s = ToolSpec.from_callable(fn)
+        if s.name not in seen:
+            seen.add(s.name)
+            specs.append(s)
     # MCP bridge (AUDIT 2026-07-10): tools from mcp_servers.json join the set when
     # SP_MCP_TOOLS=1. Native names win on collision; bridged extras land in the
     # extra_tools index tier (load_tools on demand), so the ≤6-tool rule holds.

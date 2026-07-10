@@ -39,7 +39,11 @@ policy = true            # SP_MEM_POLICY (per-entry delivery dispatch)
 qkey_mint = true         # question-space ep.l5 keys
 
 [agent]
-spine_toolset = true
+# OFF (live-play 4): the per-turn toolset swap REWRITES THE SYSTEM PROMPT, which
+# diverges the persist-KV cache at token 0 and re-prefills the whole conversation —
+# any message mentioning building/code stalled for minutes. Coding tools are in the
+# load-on-demand index tier instead (all_tools); one stable system prompt per session.
+spine_toolset = false
 spine_recall = true
 personality = true
 mcp_tools = true
