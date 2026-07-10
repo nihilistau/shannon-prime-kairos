@@ -279,7 +279,7 @@ def _voice_status() -> Dict[str, Any]:
 def _voice_corpus() -> Dict[str, Any]:
     """ADR-KAI4 P1.6: the in-vocab sentences to read aloud for real-voice training."""
     import os as _os
-    p = _os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    p = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(__file__))),
                       "var", "voice", "corpus.jsonl")
     try:
         sents = [json.loads(l)["text"] for l in open(p, encoding="utf-8") if l.strip()]
