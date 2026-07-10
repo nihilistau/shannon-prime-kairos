@@ -1,0 +1,81 @@
+"""PF-B4 — @personality decorators: model-CALLABLE self-modify tools.
+
+PF-B3 lets the model self-modify via inline tags (a shortcut). PF-B4 makes it a first-class,
+DURABLE action: `@personality`-decorated tools the model INVOKES through the existing @skill +
+run_with_tools loop (same registry, same tool_code protocol) to change its own mood/voice/traits
+or record a self-fact. `@personality` is just `@skill(pack="personality")`, so the advertise +
+parse + dispatch machinery is 100% reused (anti-rebuild).
+
+ADR-002: the tool call is the clean symbolic DECISION; the tool body (write_state / remember_self)
+is the EXECUTOR. Advertise the "personality" pack in run_with_tools to give the model the controls.
+"""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from harness.skills.skill import skill
+from harness.personality.persona_file import parse_persona, write_state
+from harness.personality.self_model import remember_self as _remember_self
+
+
+def personality(func=None, *, name=None, description="", cooldown: float = 0.0):
+    """@personality — register a personality-control tool (a @skill in the 'personality' pack)."""
+    return skill(func, name=name, description=description, pack="personality",
+                 category="system", cooldown=cooldown)
+
+
+def _persona_path() -> str:
+    return os.environ.get("SP_PERSONA_FILE") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "persona.md")
+
+
+def _state() -> dict:
+    p = Path(_persona_path())
+    _, st = parse_persona(p.read_text(encoding="utf-8")) if p.exists() else ("", {})
+    return st
+
+
+def _set(key: str, value: str) -> None:
+    st = _state()
+    st[key] = value
+    write_state(_persona_path(), st)
+
+
+@personality(description="Set your current mood (e.g. playful, focused, tender). Persists to your persona.")
+def adjust_mood(mood: str) -> str:
+    _set("mood", mood.strip())
+    return f"mood set to {mood.strip()}"
+
+
+@personality(description="Set your speaking voice/style (e.g. dry, warm, terse). Persists to your persona.")
+def set_voice(voice: str) -> str:
+    _set("voice", voice.strip())
+    return f"voice set to {voice.strip()}"
+
+
+@personality(description="Add or remove one of your personality traits. action is 'add' or 'remove'.")
+def set_trait(trait: str, action: str = "add") -> str:
+    trait = trait.strip()
+    st = _state()
+    traits = [t.strip() for t in st.get("traits", "").split(",") if t.strip()]
+    if action.lower() == "remove":
+        traits = [t for t in traits if t.lower() != trait.lower()]
+        verb = "removed"
+    else:
+        if trait.lower() not in (t.lower() for t in traits):
+            traits.append(trait)
+        verb = "added"
+    st["traits"] = ", ".join(traits)
+    write_state(_persona_path(), st)
+    return f"trait {verb}: {trait} (now: {st['traits']})"
+
+
+@personality(description="Record a durable fact about YOURSELF (your self-model), e.g. a capability.")
+def remember_self(fact: str) -> str:
+    _remember_self(fact.strip())
+    return f"noted about myself: {fact.strip()}"
+
+
+# the tool set (for run_with_tools advertising / the SkillAwareness pack)
+PERSONALITY_TOOLS = [adjust_mood, set_voice, set_trait, remember_self]

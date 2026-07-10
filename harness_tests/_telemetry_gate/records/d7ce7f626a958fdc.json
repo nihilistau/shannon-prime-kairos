@@ -1,0 +1,1 @@
+{"kind":"turn","query":"#2fec8ea30710a2ca","redacted":true,"ts":1783088300,"turn":{"class":"private-secret","decode_s":0.48,"entry":"a144237bff2ffbf1","n_out":10,"obeyed":true,"out_len":41,"output":{"len":41,"redacted":true,"sha":"#80d986e8f55d555a"},"tok_s":20.84}}

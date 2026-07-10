@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "shannon": {
+      "command": "python",
+      "args": ["-m", "harness.mcp_server"]
+    }
+  }
+}

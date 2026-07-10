@@ -90,8 +90,9 @@ forward, CRT/NTT, 24/24 gates); the kvdecode resident-cache lane + SWA ring +
 persist-KV LCP; capture/mint verbs; L5 recall + attr-gate + MEM-OKF v2 policy
 dispatch + SP_QKEY_MINT; B4 admission + registry persistence (+ memory_doctor);
 the harness (spine, run_with_tools with fence-drift parsing, skills, PF-B1..B5
-personality, MCP layer); MTP T8 (40.8 tok/s bit-identical — re-gate and turn ON
-in the agent profile); ADR-011 CPU FFN offload (VRAM lever, default-off);
+personality, MCP layer); the MTP/spec_step VERIFY machinery (byte-exact, proven —
+blocked on a high-acceptance drafter, see §4); ADR-011 CPU FFN offload (VRAM
+lever, default-off);
 the console; OKFS/MEM-OKF tooling; the decision heads (spectest veto armed;
 route/W_c/INT2 carried unarmed).
 
@@ -129,14 +130,16 @@ default-off**. The minutes-long agent turns decompose as:
 | ~1.5k-tok re-prefill EVERY turn | SP_B4_NIGHTSHIFT force-disabled persist-KV (routes.rs:1390) | SP_PERSIST_B4=1 (capture runs on the batched forward, not the session; pos==cl guards the rest) | **fixed 2026-07-10**, gate G-PERSIST-B4 pending seal |
 | fresh-conversation cold prefill | LCP reuse bounded by REWIND_BOUND=32 → new chats re-prefill the constant preamble | preamble **prefix snapshot** (engine has snapshot/rewind verbs from KAI-1b): snapshot after the system prefix once, restore + suffix-prefill per new chat | kairos P1 |
 | prefill ms/tok itself (~75–233ms) | byte-exact integer-attention prefill; float path produces garbage; ADR-009 batch (~7×) DECLINES under persist | (a) fix batch→persist handoff (batch-prefill the suffix, then continue per-token), (b) the float-path repair = the single biggest engine unlock | kairos P1–P2 |
-| decode 24.4 vs 53 | MTP off; per-token launch overheads | enable MTP (40.8 proven); profile the residual gap to llama.cpp with pinned clocks | kairos P1 |
+| decode 24.4 vs 53 | speculative decode lacks a DRAFTER (correction 2026-07-10: the "MTP 40.8 tok/s" was a degenerate-prompt artifact — real text = 0.87× with prompt-lookup drafts, accept ~0/8; the byte-exact verify machinery IS proven) | train/adopt a high-acceptance draft source (EAGLE/Medusa-style head or small draft model), THEN wire spec_step into /v1/chat | kairos P5 (training project) |
 | tool-round turnaround | preamble re-sent as text each round | rounds are strict extensions (persist already covers); preamble snapshot covers round 1 | mostly free after persist fix |
 | numeric garbling of tool results | 0.6/1.3 sampling paraphrases numbers | post-tool rounds at temp 0.15/rep 1.05 + verbatim rule | **fixed 2026-07-10** |
 
 Gate for the program: **G-KAIROS-PERF** — agent profile, warm session: simple
-tool turn ≤ 15 s end-to-end; plain chat turn ≤ 5 s to first token; decode ≥ 40
-tok/s (MTP); cold new-chat ≤ 20 s (snapshot restore + suffix). Stretch: within
-15% of llama.cpp decode on the same weights.
+tool turn ≤ 15 s end-to-end; plain chat turn ≤ 5 s to first token; cold
+new-chat ≤ 20 s (snapshot restore + suffix). Decode ≥ 40 tok/s moves to P5
+(needs the drafter). Stretch: within 15% of llama.cpp decode on the same
+weights. Measured 2026-07-10 after SP_PERSIST_B4: extensions 6.7–9.2 s,
+capture-turn survival, recall 13.8 s, cold ~30 ms/tok prefill.
 
 ## 5. Memory architecture (unchanged doctrine, cleaner seams)
 
@@ -156,9 +159,9 @@ registry lives under `var/memory/` with the backup/remint discipline from the
 - **P1: the kernel.** Copy tools/sp_daemon → engine/ (history pointer in OKFS),
   math-core submodule, slim the routes policy region behind a `legacy_policy`
   feature flag (on = byte-identical today-behavior; off = verbs only). Land
-  preamble prefix-snapshot + batch→persist handoff + MTP-on profile.
-  Gate G-KAIROS-P1 = today's serve byte-identical under legacy_policy=on +
-  G-KAIROS-PERF numbers under the new profile.
+  preamble prefix-snapshot (new CUDA-lane verb: save/restore KV[0..P) + ring
+  state) + batch→persist handoff. Gate G-KAIROS-P1 = today's serve
+  byte-identical under legacy_policy=on + G-KAIROS-PERF numbers.
 - **P2: the harness.** Copy harness → harness/, move recall/memory/persona
   policy from kernel to harness executors (spine verify law). Gate = the
   2026-07-10 audit suite (persistence across restart, personality 5/5,

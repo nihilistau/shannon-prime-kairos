@@ -1,0 +1,503 @@
+"""
+SSE Gateway
+==========
+
+The harness's server side: an OpenAI-compatible HTTP gateway that wraps the
+Shannon-Prime native daemon. External callers get the familiar
+``POST /v1/chat/completions`` (streaming SSE or blocking); internally each
+request is governed by the interceptor pipeline and forwarded to ``sp-daemon``.
+
+This is the "custom server" half of replacing LMStudio: the daemon speaks
+Shannon-Prime native ``/v1/chat``; this gateway speaks OpenAI so existing tools
+(and the harness CLI) can talk to it unchanged.
+
+Uses Flask if installed; otherwise a stdlib ``http.server`` fallback so the
+gateway runs with zero third-party deps.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+from typing import Any, Dict, Iterator
+
+from harness.inference import InferenceConfig, get_client
+from harness.observability import get_logger
+
+logger = get_logger(__name__)
+
+
+# ──── Request handling (framework-agnostic core) ─────────────────────────
+def _to_config(body: Dict[str, Any]) -> InferenceConfig:
+    return InferenceConfig(
+        temperature=body.get("temperature"),
+        top_p=body.get("top_p"),
+        max_tokens=body.get("max_tokens", 512),
+        stop=body.get("stop"),
+        seed=body.get("seed"),
+        model=body.get("model"),
+        # Shannon-Prime extensions, passed through if present
+        byteexact=body.get("byteexact"),
+        auto_recall=body.get("auto_recall"),
+    )
+
+
+def _chunk(delta: str, model: str, finish: str | None = None) -> str:
+    obj = {
+        "id": f"chatcmpl-{int(time.time()*1000)}",
+        "object": "chat.completion.chunk",
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "delta": {"content": delta} if delta else {},
+            "finish_reason": finish,
+        }],
+    }
+    return f"data: {json.dumps(obj)}\n\n"
+
+
+def _agent_text(body: Dict[str, Any]) -> str:
+    """Run the request through the AGENT loop (Gemma tool calling) unless tools are disabled.
+    This is the unification: the model CALLS its tools (memory/system/web) in the chat, instead
+    of a passthrough with no tool calling. Set body['tools']=false (or 'use_tools':false) to skip."""
+    use_tools = body.get("tools", body.get("use_tools", True)) is not False
+    msgs = body.get("messages", [])
+    if not use_tools:
+        return get_client().chat(messages=msgs, config=_to_config(body)).text
+    from harness.agent import agent_chat
+    from harness.inference import InferenceConfig
+    cfg = InferenceConfig(
+        temperature=body.get("temperature", 0.0),
+        max_tokens=body.get("max_tokens", 256),
+        auto_recall=False,  # the model uses tools, not the daemon's heuristic recall
+    )
+    return agent_chat(msgs, config=cfg)
+
+
+def stream_completion(body: Dict[str, Any]) -> Iterator[str]:
+    """Yield OpenAI-style SSE chunks. Runs the agent (tool calling) then streams the final answer."""
+    model = body.get("model", "gemma4-12b-b1")
+    try:
+        text = _agent_text(body)
+    except Exception as exc:
+        logger.error("[gateway] stream failed (operation=completions): %s", exc)
+        text = f"[error: {exc}]"
+    for i in range(0, len(text), 24):  # chunked after the agent loop completes
+        yield _chunk(text[i:i + 24], model)
+    yield _chunk("", model, finish="stop")
+    yield "data: [DONE]\n\n"
+
+
+def blocking_completion(body: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a full OpenAI-style chat-completion object (through the agent tool loop)."""
+    model = body.get("model", "gemma4-12b-b1")
+    try:
+        text = _agent_text(body)
+    except Exception as exc:
+        text = f"[error: {exc}]"
+    return {
+        "id": f"chatcmpl-{int(time.time()*1000)}",
+        "object": "chat.completion",
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": text},
+            "finish_reason": "stop",
+        }],
+        "usage": {},
+    }
+
+
+# ──── PK2 §U: read-only introspection surfaces for the operator UI ─────────
+# The console needs to SHOW the new subsystems (memory, task queue, persona). These are
+# small JSON endpoints the UI polls; all read-only except persona POST (the editor).
+def _memory_json() -> Dict[str, Any]:
+    """The fact registry as JSON rows (text + provenance) for the memory-browser pane."""
+    try:
+        from harness.skills.memory import _load, _text, verify_registry
+        rows = [{"text": _text(e), "src": e.get("src", ""), "ts": e.get("ts", ""),
+                 "npos": e.get("npos", 0)} for e in _load()]
+        return {"count": len(rows), "facts": rows, "health": verify_registry()}
+    except Exception as exc:
+        return {"error": str(exc), "count": 0, "facts": []}
+
+
+def _tasks_json() -> Dict[str, Any]:
+    """The agentic work queue (task_loop states) for the task pane."""
+    try:
+        from harness.control.task_loop import list_tasks
+        ts = list_tasks()
+        return {"count": len(ts), "tasks": [
+            {"id": t.task_id, "goal": t.goal, "status": t.status,
+             "steps": len(t.steps), "result": t.result} for t in ts]}
+    except Exception as exc:
+        return {"error": str(exc), "count": 0, "tasks": []}
+
+
+def _persona_path() -> str:
+    import os
+    return os.environ.get("SP_PERSONA_FILE") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "persona.md")
+
+
+def _persona_get() -> Dict[str, Any]:
+    try:
+        with open(_persona_path(), encoding="utf-8") as f:
+            return {"ok": True, "persona": f.read(), "path": _persona_path()}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _spine_json() -> Dict[str, Any]:
+    """ADR-008: the recent spine receipts (decide→execute→verify audit trail) for the panel."""
+    try:
+        from harness.control.spine import get_recent_receipts
+        rs = get_recent_receipts(50)
+        return {"count": len(rs), "receipts": rs}
+    except Exception as exc:
+        return {"error": str(exc), "count": 0, "receipts": []}
+
+
+def _persona_state() -> Dict[str, Any]:
+    """The parsed ## Personality state block (voice/mood/traits) — the UI's personality chip."""
+    try:
+        from harness.personality.persona_file import parse_persona
+        with open(_persona_path(), encoding="utf-8") as f:
+            _, state = parse_persona(f.read())
+        return {"ok": True, "state": state}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "state": {}}
+
+
+def _persona_set(text: str) -> Dict[str, Any]:
+    """The persona editor: write persona.md (voice changes on the next turn). Records a
+    provenance memory that the operator edited it (MEM-OKF v2 §M1 / §P1)."""
+    try:
+        with open(_persona_path(), "w", encoding="utf-8") as f:
+            f.write(text)
+        try:
+            from harness.skills.memory import remember
+            remember("The operator edited Shannon-Prime's persona.", source="operator")
+        except Exception:
+            pass
+        return {"ok": True, "bytes": len(text)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+# ──── Flask app (preferred) ───────────────────────────────────────────────
+def create_flask_app():
+    from flask import Flask, Response, jsonify, request  # type: ignore
+
+    app = Flask("harness-gateway")
+
+    @app.get("/health")
+    def health():
+        return jsonify({"ok": True, "daemon": get_client().health()})
+
+    @app.get("/v1/models")
+    def models():
+        from harness.config import get_config
+        m = get_config().get("inference.default_model", "gemma4-12b-b1")
+        return jsonify({"object": "list", "data": [{"id": m, "object": "model"}]})
+
+    @app.post("/v1/chat/completions")
+    def completions():
+        body = request.get_json(force=True)
+        if body.get("stream"):
+            return Response(stream_completion(body), mimetype="text/event-stream")
+        return jsonify(blocking_completion(body))
+
+    @app.get("/v1/memory")
+    def memory():
+        return jsonify(_memory_json())
+
+    @app.get("/v1/tasks")
+    def tasks():
+        return jsonify(_tasks_json())
+
+    @app.get("/v1/persona")
+    def persona_get():
+        return jsonify(_persona_get())
+
+    @app.get("/v1/persona/state")
+    def persona_state():
+        return jsonify(_persona_state())
+
+    @app.get("/v1/spine")
+    def spine():
+        return jsonify(_spine_json())
+
+    @app.post("/v1/persona")
+    def persona_set():
+        return jsonify(_persona_set(request.get_json(force=True).get("persona", "")))
+
+    return app
+
+
+# ──── Stdlib agent server (zero-dep) ──────────────────────────────────────
+def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
+    """The console's native /v1/chat: {messages} -> SSE data: {...} -> [DONE], run through the
+    streaming AGENT (tool calling).
+
+    ADR-006 §D3 — SSE v2 TYPED EVENTS. The stream now carries, alongside the {delta} token
+    events (unchanged, backward-compatible), typed events a product UI can render:
+      {"tool": {...}}     a tool call the model made (render as a card)
+      {"persona": {...}}  the live personality state (render as a chip)
+    A client that only reads `delta` is unaffected (it ignores the others)."""
+    from harness.agent import agent_chat_stream
+    from harness.inference import InferenceConfig
+    import queue as _queue
+    import threading as _threading
+    # auto_recall PASSTHROUGH (ADR-008 composition gate): default False (the agent uses tools,
+    # not the daemon's recall), but a client may arm the daemon-side L5 path per request —
+    # required to gate recall∘L5 composition through the gateway.
+    cfg = InferenceConfig(temperature=body.get("temperature", 0.6),
+                          repetition_penalty=body.get("repetition_penalty", 1.3),
+                          eot_bias=body.get("eot_bias", 4.0),
+                          max_tokens=body.get("max_tokens", 192),
+                          auto_recall=bool(body.get("auto_recall", False)))
+    typed = body.get("typed_events", True) is not False   # opt-out for pure-delta clients
+
+    # persona-state event (once, up front) so the UI can show voice/mood/traits for this turn.
+    if typed:
+        try:
+            path = _persona_path()
+            with open(path, encoding="utf-8") as f:
+                from harness.personality.persona_file import parse_persona
+                _, state = parse_persona(f.read())
+            if state:
+                yield ("data: " + json.dumps({"persona": state}) + "\n\n").encode()
+        except Exception:
+            pass
+
+    # The agent's on_tool callback fires on a worker thread; funnel tool events through a queue
+    # so they interleave with the streamed answer tokens on the SSE wire.
+    evq: "_queue.Queue" = _queue.Queue()
+
+    def on_tool(name, args, result):
+        evq.put({"tool": {"name": name, "args": args, "result": str(result)[:600]}})
+
+    # ── ADR-008 PRE-TURN SPINE (both default-off; null floor = wave-3 behavior) ──
+    #  SP_SPINE_RECALL=1  : ranked memory recall → inject the facts as a system note +
+    #                       emit a typed {"recall": facts} event (observable, gateable).
+    #  SP_SPINE_TOOLSET=1 : adaptive tool tier — the turn advertises the RIGHT ≤6 tools
+    #                       (coding/memory/core) instead of one fixed set.
+    import os as _os
+    msgs = list(body.get("messages", []))
+    turn_tools = None
+    turn_extra = None
+    user_text = next((m.get("content", "") for m in reversed(msgs)
+                      if m.get("role") == "user"), "")
+    want_recall = _os.environ.get("SP_SPINE_RECALL", "0") == "1"
+    want_toolset = _os.environ.get("SP_SPINE_TOOLSET", "0") == "1"
+    # ONE-AUTHORITY GUARD (G-PK2-RECALL-L5-COMPOSE, 2026-07-08): free composition of BOTH
+    # recall authorities is REFUTED on the metal — with L5 armed, its systemecho SYSTEM
+    # delivery overrides the harness note, and an L5 selection cross-pick surfaces to the
+    # user ("favorite color?" -> "Human blood is green"). Rule made structural: when the
+    # request arms the daemon's recall (auto_recall=true => L5 is the authority), the spine
+    # recall auto-disarms. Receipt: the {"authority":"L5"} event.
+    if cfg.auto_recall and want_recall:
+        want_recall = False
+        if typed:
+            yield ("data: " + json.dumps({"authority": "L5"}) + "\n\n").encode()
+    if (want_recall or want_toolset) and user_text:
+        try:
+            from harness.control.spine import run_pre_turn, toolset_for
+            _, decisions = run_pre_turn(user_text, recall=want_recall, toolset=want_toolset)
+            for dec in decisions:
+                if dec.kind == "inject_recall":
+                    facts = dec.payload.get("facts", [])
+                    if facts:
+                        note = ("Relevant facts from your long-term memory (use them faithfully; "
+                                "never contradict them): " + " | ".join(facts))
+                        # inject as a SYSTEM note right before the last user message
+                        msgs = msgs[:-1] + [{"role": "system", "content": note}, msgs[-1]]
+                        if typed:
+                            yield ("data: " + json.dumps({"recall": facts}) + "\n\n").encode()
+                elif dec.kind == "select_toolset":
+                    core, extra = toolset_for(dec.payload.get("tier", "core"))
+                    if core:
+                        turn_tools, turn_extra = core, extra
+                        if typed:
+                            yield ("data: " + json.dumps(
+                                {"toolset": dec.payload.get("tier")}) + "\n\n").encode()
+        except Exception as exc:
+            logger.warning("[gateway] pre-turn spine skipped: %s", exc)
+
+    reply_parts: list = []
+
+    def _run():
+        try:
+            kw = {"config": cfg, "on_tool": on_tool}
+            if turn_tools is not None:
+                kw["tools"] = turn_tools
+            for delta in agent_chat_stream(msgs, **kw):
+                reply_parts.append(delta)
+                evq.put({"delta": delta})
+        except Exception as exc:
+            logger.error("[gateway] native chat failed: %s", exc)
+            evq.put({"delta": f"[error: {exc}]"})
+        evq.put(None)   # sentinel
+
+    t = _threading.Thread(target=_run, daemon=True)
+    t.start()
+    while True:
+        # ADR-006 §D3 heartbeat: during a long prefill nothing streams for minutes and the UI
+        # looks dead. Emit {"hb": ts} keep-alives while we wait (typed clients show a spinner;
+        # pure-delta clients never see them).
+        try:
+            ev = evq.get(timeout=5.0)
+        except _queue.Empty:
+            if typed:
+                yield ("data: " + json.dumps({"hb": int(time.time())}) + "\n\n").encode()
+            continue
+        if ev is None:
+            break
+        if not typed and "delta" not in ev:
+            continue
+        yield ("data: " + json.dumps(ev) + "\n\n").encode()
+    # ADR-007 post-turn SPINE: persona tags in the reply are persisted (decide → execute →
+    # VERIFY per ADR-006) and, on a verified shift, the new state is emitted as a final
+    # persona event so the UI chip updates live.
+    if typed:
+        try:
+            from harness.control.spine import run_post_turn
+            msgs = body.get("messages", [])
+            user_text = next((m.get("content", "") for m in reversed(msgs)
+                              if m.get("role") == "user"), "")
+            receipts = run_post_turn(user_text, "".join(reply_parts))
+            if any(r.kind == "persona_shift" and r.ok and r.verified is not False for r in receipts):
+                from harness.personality.persona_file import parse_persona
+                with open(_persona_path(), encoding="utf-8") as f:
+                    _, state = parse_persona(f.read())
+                yield ("data: " + json.dumps({"persona": state, "changed": True}) + "\n\n").encode()
+        except Exception as exc:
+            logger.warning("[gateway] post-turn spine skipped: %s", exc)
+        # ADR-005 flywheel: flush spine receipts (pre-turn recall/toolset + post-turn persona)
+        # to the durable telemetry-okf tier. Cheap (content-addressed dedup), best-effort.
+        try:
+            from harness.control.spine import persist_receipts
+            persist_receipts()
+        except Exception:
+            pass
+    yield b"data: [DONE]\n\n"
+
+
+def _prewarm() -> None:
+    """Pre-warm the static persona+tools prefix into the daemon's persist cache, in the BACKGROUND,
+    so the FIRST real user turn reuses it (persist longest-common-prefix) instead of paying the
+    ~2-3 min O(n) prefill live. A short max_tokens=1 warm-up leaves a tiny tail the LCP rewind drops.
+    Waits for the daemon, fires once, non-fatal on any error."""
+    import threading
+    import time
+
+    def _go():
+        try:
+            from harness.agent import core_tools, extra_tools, load_agent_system
+            from harness.mcp.tools import build_tool_system
+            from harness.inference import InferenceConfig
+            from harness.inference.client import get_client
+            client = get_client()
+            for _ in range(120):                       # wait up to ~120s for the daemon to be up
+                if client.health():
+                    break
+                time.sleep(1)
+            system_content, _ = build_tool_system(core_tools(), extra_tools(),
+                                                  system_prefix=load_agent_system())
+            msgs = [{"role": "system", "content": system_content},
+                    {"role": "user", "content": "hi"}]
+            cfg = InferenceConfig(temperature=0.6, repetition_penalty=1.3, eot_bias=4.0,
+                                  max_tokens=1, auto_recall=False)
+            t0 = time.time()
+            logger.info("[gateway] pre-warming persona+tools prefix (one-time O(n) prefill, ~2-3 min)...")
+            client.chat(messages=msgs, config=cfg)
+            logger.info("[gateway] pre-warm complete in %.0fs; prefix is hot, first user turn is fast.",
+                        time.time() - t0)
+        except Exception as exc:
+            logger.warning("[gateway] pre-warm failed (non-fatal; first turn will just be slow): %s", exc)
+
+    threading.Thread(target=_go, daemon=True).start()
+
+
+def _run_stdlib(host: str, port: int) -> None:
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    def _cors(h):
+        h.send_header("Access-Control-Allow-Origin", "*")
+        h.send_header("Access-Control-Allow-Headers", "Content-Type")
+        h.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *a):  # quiet
+            pass
+
+        def do_OPTIONS(self):  # noqa: N802  CORS preflight
+            self.send_response(204); _cors(self); self.end_headers()
+
+        def _body(self):
+            length = int(self.headers.get("Content-Length", 0))
+            return json.loads(self.rfile.read(length) or b"{}")
+
+        def do_POST(self):  # noqa: N802
+            if self.path == "/v1/chat":  # console-native, agent-driven, streaming
+                body = self._body()
+                self.send_response(200); _cors(self)
+                self.send_header("Content-Type", "text/event-stream"); self.end_headers()
+                for chunk in _native_chat_sse(body):
+                    self.wfile.write(chunk); self.wfile.flush()
+            elif self.path == "/v1/persona":  # PK2 §P1 persona editor (write persona.md)
+                body = self._body()
+                payload = json.dumps(_persona_set(body.get("persona", ""))).encode()
+                self.send_response(200); _cors(self)
+                self.send_header("Content-Type", "application/json"); self.end_headers()
+                self.wfile.write(payload)
+            elif self.path == "/v1/chat/completions":  # OpenAI surface (also agent-driven)
+                body = self._body()
+                if body.get("stream"):
+                    self.send_response(200); _cors(self)
+                    self.send_header("Content-Type", "text/event-stream"); self.end_headers()
+                    for chunk in stream_completion(body):
+                        self.wfile.write(chunk.encode()); self.wfile.flush()
+                else:
+                    payload = json.dumps(blocking_completion(body)).encode()
+                    self.send_response(200); _cors(self)
+                    self.send_header("Content-Type", "application/json"); self.end_headers()
+                    self.wfile.write(payload)
+            else:
+                self.send_error(404)
+
+        def do_GET(self):  # noqa: N802
+            _json_routes = {
+                "/health": lambda: {"ok": True, "agent": True, "daemon": get_client().health()},
+                "/v1/memory": _memory_json,      # PK2 §U1 memory-browser data
+                "/v1/tasks": _tasks_json,        # PK2 §U1 task-queue data
+                "/v1/persona": _persona_get,     # PK2 §P1 persona editor (load)
+                "/v1/persona/state": _persona_state,  # ADR-006 personality chip
+                "/v1/spine": _spine_json,        # ADR-008 receipts audit trail
+            }
+            fn = _json_routes.get(self.path)
+            if fn is not None:
+                self.send_response(200); _cors(self)
+                self.send_header("Content-Type", "application/json"); self.end_headers()
+                self.wfile.write(json.dumps(fn()).encode())
+            else:
+                self.send_error(404)
+
+    logger.info("[gateway] stdlib AGENT server on %s:%d (operation=serve)", host, port)
+    # Pre-warm is OPT-IN (SP_GATEWAY_PREWARM=1) until the byteexact-on prefill is fast OR the LCP
+    # rewind is proven byte-exact: with byteexact required, a pre-warm grinds the GPU ~5 min.
+    import os as _os
+    if _os.environ.get("SP_GATEWAY_PREWARM") == "1":
+        _prewarm()  # background: hydrate the persona+tools prefix into the persist cache
+    ThreadingHTTPServer((host, port), Handler).serve_forever()
+
+
+def run(host: str = "127.0.0.1", port: int = 8800) -> None:
+    """Start the agent gateway (zero-dep stdlib server with native /v1/chat + OpenAI surface)."""
+    _run_stdlib(host, port)
+
+
+if __name__ == "__main__":
+    run()

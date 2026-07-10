@@ -1,23 +1,42 @@
-# G-KAIROS-P3 target shape (P0 sketch - not yet consumed)
+# kairos agent profile — THE daily driver (G-KAIROS-P3).
+# serve.py maps this to the engine/gateway env and ECHOES the effective config.
+
+[paths]
+# Engine stays in staging until kairos P1 migrates the kernel tree.
+engine_exe = 'D:/F/shannon-prime-repos/shannon-prime-system-engine/tools/sp_daemon/target-wirecuda/release/sp-daemon.exe'
+model      = 'D:/F/shannon-prime-repos/models/gemma4-12b-b1-reason.sp-model'
+tokenizer  = 'D:/F/shannon-prime-repos/models/gemma4-12b-b1.sp-tokenizer'
+# Production memory: the LIVE registry (engine _memory_live) until P1 moves it
+# to kairos var/memory — rows carry absolute episode dirs, so this is seamless.
+registry   = 'D:/F/shannon-prime-repos/shannon-prime-system-engine/_memory_live/registry.jsonl'
+spectest_head = 'D:/F/shannon-prime-repos/shannon-prime-system-engine/_faithful_corpus/f3/spectest_head_f1.bin'
+llvm_bin   = 'C:/Program Files/LLVM/bin'   # libomp.dll for the daemon
+
 [serve]
-model = 'gemma4-12b-b1-reason.sp-model'
 port = 3000
 gateway_port = 8800
 
 [kv]
 persist = true
-persist_b4 = true
+persist_b4 = true        # HINDSIGHT: cache alive under B4 growth (minutes -> seconds)
 ring_w = 2048
 pmax = 12096
-prefix_snapshot = true   # P1
+prefix_snapshot = false  # P1: CUDA-lane snapshot verb not built yet
 
 [memory]
-recall_authority = 'L5'   # schema forbids two
-registry = 'var/memory/registry.jsonl'
-growth = true
-classify = true
-policy = true
-qkey_mint = true
+recall_authority = 'L5'  # exactly one; serve.py refuses profiles that arm two
+auto_recall_default = true
+l5_tau = 0.30
+attr_gate = true
+attr_tau = 0.5
+qonly = true
+delivery = 'plain'       # Hodor binding: never systemecho globally
+growth = true            # SP_B4_NIGHTSHIFT
+persist_growth = true    # SP_NIGHTSHIFT_PERSIST
+store_verb = true        # SP_MEM_STORE
+classify = true          # SP_MEM_CLASSIFY
+policy = true            # SP_MEM_POLICY (per-entry delivery dispatch)
+qkey_mint = true         # question-space ep.l5 keys
 
 [agent]
 spine_toolset = true
@@ -26,5 +45,11 @@ personality = true
 mcp_tools = true
 
 [decode]
-mtp = true   # P1 re-gate; 40.8 tok/s bit-identical proven
+mtp = false  # P5: verify machinery proven byte-exact, but prompt-lookup drafts are
+             # 0.87x on real text (the 40.8 headline was a degenerate-prompt artifact);
+             # needs a high-acceptance drafter before this flips.
 eot_bias = 4.0
+no_repeat_ngram = 3
+
+[veto]
+spectest = true

@@ -1,0 +1,1 @@
+{"ts": 1, "query": "What is the chemical symbol for gold now?", "redacted": false, "recall": {"class": "counterfact", "delivery": "systemecho", "decision": "deliver"}}

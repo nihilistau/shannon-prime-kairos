@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shannon-prime-harness"
+version = "0.1.0"
+description = "A local-first agent harness — MCP framework, NEXUS, interceptors, ephemeral tool calling, SSE and CLI — wired to Shannon-Prime inference backends instead of LMStudio."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "nihilistau" }]
+keywords = ["agent", "harness", "mcp", "llm", "inference", "shannon-prime", "tool-calling", "sse"]
+
+# The harness core runs with ZERO third-party deps (stdlib SSE server,
+# hashing embedder, sqlite store). Optional extras unlock the nicer paths.
+dependencies = []
+
+[project.optional-dependencies]
+http = ["httpx>=0.27"]          # SPDaemonClient transport
+server = ["flask>=3.0"]         # nicer gateway than the stdlib fallback
+config = ["pyyaml>=6.0"]        # YAML config files
+embeddings = ["sentence-transformers>=2.2"]  # real local embeddings
+all = ["httpx>=0.27", "flask>=3.0", "pyyaml>=6.0", "sentence-transformers>=2.2"]
+
+[project.scripts]
+harness = "harness.cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/nihilistau/shannon-prime-harness"
+"Shannon-Prime Lattice" = "https://github.com/nihilistau/shannon-prime-lattice"
+
+[tool.setuptools.packages.find]
+include = ["harness*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

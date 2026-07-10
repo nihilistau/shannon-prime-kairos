@@ -20,7 +20,7 @@ production path) · **DEAD** (refuted/convicted; receipts only).
 | web console (autodetect, cards, persona editor) | engine frontend_mockups | KEEP | console/ | live-play | 6baa9fa3 |
 | decision heads: spectest veto | engine + f3 head | KEEP (armed) | engine/heads/ | G-SPECTEST-V2 | c57745f1 |
 | decision heads: route / INT2 / W_c | engine | RESEARCH (carried unarmed) | staging | — | 96642630 |
-| MTP T8 speculative decode | engine | KEEP — **turn ON in agent profile** | engine/ | re-gate bit-identity + tok/s | mtp-t8 |
+| MTP/spec_step verify machinery | engine (spec.rs unwired; cpu_forward qwen3_mtp_*) | KEEP machinery; **blocked on a high-acceptance drafter** (prompt-lookup = 0.87× on real text — degenerate-prompt 1.76× was an artifact) | engine/ (P5) | drafter H2H gate first | mtp-t8 honest correction |
 | ADR-011 FFN offload / ADR-012 full tail | engine + submodule | KEEP default-off (VRAM levers + refutation receipts) | engine/ | G-ADR11/12 receipts carried | project notes |
 | batched prefill under ring (ADR-009) | engine | REWRITE (make it a valid persist base / suffix-batch) | engine/ | G-KAIROS-PERF | ADR-009 |
 | dp4a prefill GEMM | engine | DEAD (honest negative) | — | — | PK2 wave 2 |

@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>shannon-prime-lattice · operator console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg: #08090d;
+    --panel: #0d1117;
+    --panel-2: #11161d;
+    --panel-hi: #161c25;
+    --rule: rgba(29,110,122,0.35);
+    --rule-faint: rgba(29,110,122,0.15);
+    --gold: #d4a14a;
+    --gold-hot: #f4c860;
+    --cyan: #1d6e7a;
+    --cyan-bright: #5fb8c4;
+    --q1: #d94aa1;
+    --q2: #4adba0;
+    --q3: #6ea6ff;
+    --q4: #e89a3c;
+    --q5: #b478ff;
+    --text: #dcdfe4;
+    --text-dim: #7d848e;
+    --text-faint: #4a525d;
+    --ok: #4adba0;
+    --warn: #e89a3c;
+    --err: #d94a4a;
+    --font: 'JetBrains Mono', monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    display: flex; flex-direction: column;
+    background:
+      radial-gradient(ellipse at 15% -10%, rgba(29,110,122,0.08), transparent 40%),
+      radial-gradient(ellipse at 85% 110%, rgba(212,161,74,0.06), transparent 40%),
+      var(--bg);
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(29,110,122,0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(29,110,122,0.06) 1px, transparent 1px);
+    background-size: 60px 60px;
+    pointer-events: none;
+    z-index: 0;
+    mask-image: radial-gradient(ellipse at center, #000 30%, transparent 80%);
+  }
+
+  /* TOP STATUS BAR */
+  .topbar {
+    height: 48px; flex-shrink: 0;
+    display: flex; align-items: center;
+    padding: 0 18px; gap: 18px;
+    border-bottom: 1px solid var(--rule);
+    background: rgba(13,17,23,0.7);
+    backdrop-filter: blur(6px);
+    z-index: 5; position: relative;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-size: 12px; letter-spacing: 3px; color: var(--gold); font-weight: 600; }
+  .brand .small { color: var(--cyan-bright); font-size: 9px; letter-spacing: 2px; opacity: 0.85; font-weight: 400; }
+  .brand svg { width: 26px; height: 26px; }
+  .telemetry { display: flex; align-items: center; gap: 20px; margin-left: auto; font-size: 10.5px; letter-spacing: 1.5px; color: var(--text-dim); }
+  .telemetry .seg { display: flex; align-items: center; gap: 8px; }
+  .telemetry .seg label { font-size: 9px; letter-spacing: 2.5px; color: var(--text-faint); text-transform: uppercase; }
+  .telemetry .seg .v { color: var(--cyan); font-weight: 600; font-size: 12px; min-width: 50px; display: inline-block; transition: color 0.2s; }
+  .topbar .connection { display: flex; align-items: center; gap: 6px; font-size: 9px; letter-spacing: 2px; padding: 4px 10px; border-radius: 12px; border: 1px solid rgba(74,219,160,0.4); background: rgba(74,219,160,0.08); color: var(--ok); cursor: pointer; }
+  .topbar .connection .dot { width: 6px; height: 6px; border-radius: 3px; background: currentColor; box-shadow: 0 0 6px currentColor; animation: dotPulse 1.6s ease-in-out infinite; }
+  .topbar .connection.dead { border-color: rgba(217,74,74,0.4); background: rgba(217,74,74,0.08); color: var(--err); }
+  @keyframes dotPulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+
+  /* MAIN GRID */
+  .shell {
+    flex: 1; display: grid;
+    grid-template-columns: 300px 1fr 320px;
+    grid-template-rows: 1fr auto;
+    grid-template-areas: "left canvas right" "left input right";
+    min-height: 0; gap: 0; position: relative; z-index: 1;
+  }
+  .pane { border: 0; background: rgba(13,17,23,0.55); backdrop-filter: blur(4px); display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
+  .left   { grid-area: left;   border-right: 1px solid var(--rule); }
+  .right  { grid-area: right;  border-left:  1px solid var(--rule); }
+  .canvas-pane { grid-area: canvas; background: transparent; padding: 18px 24px 4px; display: flex; flex-direction: column; min-height: 0; }
+  .input-pane  { grid-area: input;  background: rgba(8,9,13,0.85); border-top: 1px solid var(--rule); padding: 14px 24px 18px; }
+
+  .ph { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--rule); background: rgba(8,9,13,0.6); flex-shrink: 0; }
+  .ph .t { font-size: 10px; letter-spacing: 3px; color: var(--gold); font-weight: 600; }
+  .ph .badge { font-size: 9px; letter-spacing: 1.5px; color: var(--cyan-bright); padding: 2px 8px; border-radius: 10px; border: 1px solid var(--rule); background: rgba(29,110,122,0.1); }
+  .ph .badge.live::before { content: '●'; margin-right: 5px; color: var(--ok); animation: dotPulse 1.6s ease-in-out infinite; }
+
+  .pb { flex: 1; overflow-y: auto; padding: 6px 12px 14px; min-height: 0; }
+  .pb::-webkit-scrollbar { width: 6px; }
+  .pb::-webkit-scrollbar-track { background: transparent; }
+  .pb::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 3px; }
+
+  #mesh-container > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 4px; border-bottom: 1px solid var(--rule-faint); font-size: 11px; animation: rowIn 0.4s ease-out; }
+  @keyframes rowIn { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+  .mesh-mini { height: 200px; margin: 8px 8px 14px; border: 1px solid var(--rule); background: radial-gradient(circle at center, rgba(29,110,122,0.08), transparent 60%), rgba(13,17,23,0.5); position: relative; overflow: hidden; }
+  .mesh-mini svg { width: 100%; height: 100%; display: block; }
+  .mesh-mini .lbl { position: absolute; top: 8px; left: 10px; font-size: 8.5px; letter-spacing: 2.5px; color: var(--cyan-bright); opacity: 0.75; }
+  .mesh-mini .lbl-r { position: absolute; bottom: 8px; right: 10px; font-size: 8.5px; letter-spacing: 2px; color: var(--text-faint); }
+
+  .canvas-shell { flex: 1; border: 1px solid var(--rule); background: radial-gradient(ellipse at top, rgba(29,110,122,0.06), transparent 60%), rgba(8,9,13,0.4); display: flex; flex-direction: column; overflow: hidden; position: relative; box-shadow: 0 0 0 1px rgba(212,161,74,0.05), 0 30px 60px rgba(0,0,0,0.35); }
+  .canvas-shell::before, .canvas-shell::after { content: ''; position: absolute; width: 14px; height: 14px; border: 1px solid var(--gold); opacity: 0.7; }
+  .canvas-shell::before { top: -1px; left: -1px; border-right: none; border-bottom: none; }
+  .canvas-shell::after  { bottom: -1px; right: -1px; border-left: none; border-top: none; }
+  .canvas-head { height: 44px; padding: 0 18px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--rule); background: rgba(8,9,13,0.6); flex-shrink: 0; }
+  .canvas-head .title { font-size: 11px; letter-spacing: 3px; color: var(--gold); font-weight: 600; }
+  .canvas-head .sub { font-size: 9px; letter-spacing: 2px; color: var(--text-faint); }
+  .canvas-head .right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  /* A2 sampler controls */
+  .sampler-row { display: flex; flex-direction: column; align-items: stretch; gap: 7px; font-size: 9px; letter-spacing: 1px; color: var(--text-faint); padding: 12px 10px; flex-shrink: 0; }
+  .sampler-row label { display: flex; align-items: center; justify-content: space-between; gap: 6px; text-transform: uppercase; }
+  .sampler-row input { width: 66px; background: rgba(8,9,13,0.8); border: 1px solid var(--rule); color: var(--gold); font-family: var(--font); font-size: 10px; padding: 2px 4px; border-radius: 2px; }
+  .sampler-row input:focus { outline: none; border-color: var(--gold); }
+  .toolbtn { border: 1px solid var(--rule); background: transparent; color: var(--text-dim); font-family: var(--font); font-size: 10px; letter-spacing: 2px; padding: 6px 12px; cursor: pointer; border-radius: 2px; transition: all 0.15s; display: flex; align-items: center; gap: 6px; }
+  .toolbtn:hover { color: var(--gold); border-color: var(--gold); background: rgba(212,161,74,0.08); }
+  .toolbtn:active { transform: translateY(1px); }
+  .toolbtn.danger:hover { color: var(--err); border-color: var(--err); background: rgba(217,74,74,0.08); }
+
+  #chat-window { flex: 1; overflow-y: auto; padding: 24px 36px; font-size: 14px; line-height: 1.7; scroll-behavior: smooth; }
+  #chat-window::-webkit-scrollbar { width: 8px; }
+  #chat-window::-webkit-scrollbar-track { background: transparent; }
+  #chat-window::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 4px; }
+  .msg { padding: 14px 0; border-bottom: 1px solid var(--rule-faint); position: relative; }
+  .msg:last-child { border-bottom: none; }
+  .msg .who { font-size: 9px; letter-spacing: 3px; margin-bottom: 8px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .msg.user .who { color: var(--cyan-bright); }
+  .msg.ai .who   { color: var(--gold); }
+  .msg.err .who  { color: var(--err); }
+  .msg .who .meta { color: var(--text-faint); font-weight: 400; font-size: 8.5px; letter-spacing: 2px; margin-left: auto; }
+  .msg .msg-content { color: var(--text); text-wrap: pretty; word-break: break-word; white-space: pre-wrap; }
+  .msg.err .msg-content { color: var(--err); }
+  .msg .tok { display: inline; animation: tokFade 0.3s ease-out forwards; opacity: 0; }
+  @keyframes tokFade { from { opacity: 0; filter: blur(1.5px); color: var(--gold-hot); } to { opacity: 1; filter: blur(0); color: var(--text); } }
+  .msg.dimmed .tok { opacity: 0.25; }
+  .gen-icon { display: inline-flex; width: 14px; height: 14px; position: relative; }
+  .gen-icon svg { width: 100%; height: 100%; }
+  .gen-icon .pulse { animation: nodePulse 1.4s ease-in-out infinite; transform-origin: center; }
+  .gen-icon .ring { animation: ringSpin 3.2s linear infinite; transform-origin: center; }
+  @keyframes nodePulse { 0%, 100% { transform: scale(0.8); opacity: 0.6; } 50% { transform: scale(1.2); opacity: 1; } }
+  @keyframes ringSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .ctc-flash { display: inline-block; color: var(--gold-hot); transition: opacity 0.5s ease-out; text-shadow: 0 0 6px var(--gold-hot), 0 0 14px rgba(244,200,96,0.5); animation: flashIn 0.18s ease-out; }
+  @keyframes flashIn { from { transform: scale(1.8); } to { transform: scale(1); } }
+
+  .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; color: var(--text-faint); padding: 32px; }
+  .empty .glyph { width: 120px; height: 120px; opacity: 0.65; }
+  .empty .title { font-size: 16px; letter-spacing: 4px; color: var(--gold); font-weight: 600; }
+  .empty .hint { font-size: 11px; letter-spacing: 1.5px; color: var(--text-dim); max-width: 520px; text-align: center; line-height: 1.7; }
+  .empty .kbd { color: var(--gold-hot); background: rgba(212,161,74,0.08); padding: 2px 8px; border-radius: 3px; border: 1px solid rgba(212,161,74,0.2); font-size: 10px; }
+
+  .rewind-bar { height: 0; overflow: hidden; transition: height 0.22s ease-out; background: rgba(8,9,13,0.7); border-top: 1px solid var(--rule); flex-shrink: 0; }
+  .rewind-bar.open { height: 56px; }
+  .rewind-bar-inner { height: 100%; padding: 0 24px; display: flex; align-items: center; gap: 14px; }
+  .rewind-bar .lab { font-size: 9px; letter-spacing: 3px; color: var(--gold); }
+  .rewind-bar .ts { font-size: 10px; letter-spacing: 1.5px; color: var(--cyan-bright); font-variant-numeric: tabular-nums; min-width: 120px; }
+  .rewind-bar input[type="range"] { flex: 1; -webkit-appearance: none; background: transparent; height: 16px; }
+  .rewind-bar input[type="range"]::-webkit-slider-runnable-track { height: 4px; background: var(--rule); border-radius: 2px; }
+  .rewind-bar input[type="range"]::-moz-range-track { height: 4px; background: var(--rule); border-radius: 2px; }
+  .rewind-bar input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--gold-hot); box-shadow: 0 0 0 2px var(--bg), 0 0 10px var(--gold-hot); margin-top: -5px; cursor: pointer; }
+  .rewind-bar input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--gold-hot); border: none; box-shadow: 0 0 0 2px var(--bg), 0 0 10px var(--gold-hot); cursor: pointer; }
+
+  .composer { display: flex; align-items: center; gap: 12px; background: rgba(13,17,23,0.7); border: 1px solid var(--rule); padding: 4px 4px 4px 18px; transition: border-color 0.2s, box-shadow 0.2s; }
+  .composer:focus-within { border-color: var(--gold); box-shadow: 0 0 0 1px rgba(212,161,74,0.3), 0 0 24px rgba(212,161,74,0.08); }
+  .composer .prefix { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-faint); }
+  .composer .prefix .caret { color: var(--gold); font-weight: 700; }
+  .composer .prefix .path  { color: var(--cyan-bright); }
+  #chat-input { flex: 1; background: transparent; border: 0; outline: 0; color: var(--text); font-family: var(--font); font-size: 14px; padding: 14px 8px; caret-color: var(--gold-hot); }
+  #chat-input::placeholder { color: var(--text-faint); }
+  .send-btn { height: 40px; padding: 0 18px; background: var(--gold); color: var(--bg); border: 0; cursor: pointer; font-family: var(--font); font-size: 11px; font-weight: 700; letter-spacing: 3px; transition: background 0.15s, transform 0.05s; display: flex; align-items: center; gap: 8px; }
+  .send-btn:hover { background: var(--gold-hot); }
+  .send-btn:active { transform: translateY(1px); }
+  .send-btn:disabled { background: var(--rule); color: var(--text-faint); cursor: not-allowed; opacity: 0.6; }
+  .composer .hint { font-size: 9px; letter-spacing: 2px; color: var(--text-faint); padding-right: 4px; }
+
+  #ledger-window > div { animation: rowIn 0.4s ease-out; }
+  #ledger-window strong { font-weight: 600; }
+  .wallet { margin: 8px 8px 12px; display: flex; gap: 8px; }
+  .wallet > div { flex: 1; padding: 12px; border: 1px solid var(--rule); background: rgba(13,17,23,0.5); }
+  .wallet .lbl { font-size: 8px; letter-spacing: 2.5px; opacity: 0.85; }
+  .wallet .big { font-size: 18px; font-weight: 600; margin-top: 4px; }
+  .wallet .delta { font-size: 8px; letter-spacing: 1.5px; color: var(--text-faint); margin-top: 2px; }
+  .stream-empty { padding: 16px 8px; color: var(--text-faint); font-size: 10.5px; letter-spacing: 1.5px; text-align: center; border: 1px dashed var(--rule-faint); margin: 8px; }
+  .stream-empty .dot { display: inline-block; width: 6px; height: 6px; border-radius: 3px; background: var(--cyan); margin-right: 6px; animation: dotPulse 1.6s ease-in-out infinite; }
+
+  @media (max-width: 1100px) { .shell { grid-template-columns: 220px 1fr 240px; } #chat-window { padding: 18px 22px; } }
+</style>
+</head>
+<body>
+
+<!-- TOP STATUS BAR -->
+<div class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 48 48" fill="none">
+      <circle cx="24" cy="24" r="21" stroke="#1d6e7a" stroke-opacity="0.7"/>
+      <circle cx="24" cy="24" r="2.5" fill="#f4c860"/>
+      <g fill="#d4a14a">
+        <circle cx="15" cy="19" r="1.6"/><circle cx="33" cy="19" r="1.6"/>
+        <circle cx="9"  cy="13" r="1.4"/><circle cx="39" cy="13" r="1.4"/>
+        <circle cx="6"  cy="22" r="1.3"/><circle cx="42" cy="22" r="1.3"/>
+        <circle cx="9"  cy="32" r="1.3"/><circle cx="39" cy="32" r="1.3"/>
+        <circle cx="11" cy="38" r="1.3"/><circle cx="37" cy="38" r="1.3"/>
+        <circle cx="24" cy="38" r="1.6"/>
+        <circle cx="20" cy="33" r="1.3"/><circle cx="28" cy="33" r="1.3"/>
+      </g>
+      <g stroke="#d4a14a" stroke-opacity="0.6" stroke-width="0.6">
+        <line x1="24" y1="24" x2="15" y2="19"/><line x1="24" y1="24" x2="33" y2="19"/>
+        <line x1="24" y1="24" x2="24" y2="38"/>
+        <line x1="15" y1="19" x2="9" y2="13"/><line x1="15" y1="19" x2="6" y2="22"/>
+        <line x1="33" y1="19" x2="39" y2="13"/><line x1="33" y1="19" x2="42" y2="22"/>
+      </g>
+    </svg>
+    <div>
+      <div>shannon-prime-lattice</div>
+      <div class="small">operator console · v0.2 · gemma-4-12B</div>
+    </div>
+  </div>
+
+  <div class="telemetry">
+    <div class="seg"><label>tok/s</label> <span class="v" id="tel-tps">--</span></div>
+    <div class="seg"><label>temp</label> <span class="v" id="tel-temp">--°C</span></div>
+    <div class="seg"><label>svm</label> <span class="v" id="tel-svm">-- GiB</span></div>
+    <div class="seg"><label>pos</label> <span class="v" id="tel-pos">--</span></div>
+    <div class="seg"><label>peers</label> <span class="v" id="tel-peers">--/--</span></div>
+    <div class="seg"><label>frontier</label> <span class="v" id="tel-frontier">--</span></div>
+    <div class="connection" id="conn-pill" title="click to set the daemon endpoint"><span class="dot"></span><span id="conn-text">connecting…</span></div>
+  </div>
+</div>
+
+<!-- MAIN GRID -->
+<div class="shell">
+
+  <!-- LEFT -->
+  <div class="pane left">
+    <div class="ph">
+      <span class="t">active dht peers</span>
+      <span class="badge live" id="mesh-badge">--</span>
+    </div>
+    <div class="mesh-mini" id="mesh-topology">
+      <div class="lbl">position-as-arithmetic</div>
+      <div class="lbl-r">l4 · gossip</div>
+      <svg id="mesh-svg" viewBox="0 0 280 200" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+    <div class="ph"><span class="t">sampler · knobs</span></div>
+    <div class="sampler-row" id="sampler-row" title="L2 sampler knobs (flow into the /v1/chat body)">
+      <label title="temperature: 0 = greedy/deterministic.">temp <input type="number" id="s-temp" min="0" max="2" step="0.05" value="0.7"></label>
+      <label title="nucleus sampling top_p.">top_p <input type="number" id="s-topp" min="0" max="1" step="0.01" value="0.95"></label>
+      <label title="top_k.">top_k <input type="number" id="s-topk" min="0" max="200" step="1" value="40"></label>
+      <label title="repetition penalty.">rep <input type="number" id="s-rep" min="1" max="2" step="0.05" value="1.1"></label>
+      <label title="eot_bias: logit bias on the end-of-turn token so the model STOPS cleanly. 0=off, ~4=clean.">eot <input type="number" id="s-eot" min="-10" max="20" step="0.5" value="4"></label>
+      <label title="max_tokens per turn.">max <input type="number" id="s-maxtok" min="8" max="512" step="8" value="128"></label>
+      <label title="sampler seed (blank = random).">seed <input type="text" id="s-seed" placeholder="rand" style="width:66px"></label>
+      <label title="byte-exact auditable decode (pair with temp=0)."><input type="checkbox" id="s-byteexact"> auditable</label>
+      <label title="auto-recall: the model self-selects + replays a relevant stored memory."><input type="checkbox" id="s-autorecall" checked> auto-recall</label>
+      <label title="single-entry: ingest text through the one residual seam."><input type="checkbox" id="s-singleentry"> single-entry</label>
+    </div>
+    <div class="pb">
+      <div id="mesh-container">
+        <div class="stream-empty"><span class="dot"></span>polling /v1/mesh/peers</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CANVAS -->
+  <div class="canvas-pane">
+    <div class="canvas-shell">
+      <div class="canvas-head">
+        <span class="title">canvas</span>
+        <span class="sub">/v1/chat · sse · text/event-stream</span>
+        <!-- sampler/knob controls live in the LEFT pane now (id=sampler-row there). -->
+        <div class="right">
+          <button class="toolbtn" id="rewind-toggle" title="Scrub the response timeline">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M5 1 L1 5 L5 9 L5 6 L9 6 L9 4 L5 4 Z"/></svg>
+            rewind
+          </button>
+          <button class="toolbtn" id="copy-btn" title="Copy last response">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="1" width="6" height="6"/><rect x="3.5" y="2.5" width="5.5" height="6.5"/></svg>
+            copy
+          </button>
+          <button class="toolbtn danger" id="clear-btn" title="Clear canvas + reset context">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M2 3h6M3.5 3v5h3V3M3 5h4M3 7h4"/></svg>
+            clear
+          </button>
+        </div>
+      </div>
+
+      <div id="chat-window">
+        <div class="empty" id="empty-state">
+          <svg class="glyph" viewBox="0 0 120 120">
+            <defs>
+              <radialGradient id="emptyGlow" cx="0.5" cy="0.5" r="0.5">
+                <stop offset="0" stop-color="#f4c860" stop-opacity="0.9"/>
+                <stop offset="1" stop-color="#f4c860" stop-opacity="0"/>
+              </radialGradient>
+            </defs>
+            <circle cx="60" cy="60" r="52" fill="none" stroke="#1d6e7a" stroke-opacity="0.55" stroke-width="0.6"/>
+            <g stroke="#d4a14a" stroke-opacity="0.7" stroke-width="0.5">
+              <line x1="60" y1="60" x2="38" y2="50"/><line x1="60" y1="60" x2="82" y2="50"/>
+              <line x1="60" y1="60" x2="60" y2="92"/><line x1="38" y1="50" x2="22" y2="38"/>
+              <line x1="38" y1="50" x2="20" y2="62"/><line x1="82" y1="50" x2="98" y2="38"/>
+              <line x1="82" y1="50" x2="100" y2="62"/>
+            </g>
+            <circle cx="60" cy="60" r="14" fill="url(#emptyGlow)"/>
+            <g fill="#d4a14a">
+              <circle cx="60" cy="60" r="3.5"/>
+              <circle cx="38" cy="50" r="2"/><circle cx="82" cy="50" r="2"/>
+              <circle cx="60" cy="92" r="2"/><circle cx="22" cy="38" r="1.5"/>
+              <circle cx="20" cy="62" r="1.5"/><circle cx="98" cy="38" r="1.5"/>
+              <circle cx="100" cy="62" r="1.5"/>
+            </g>
+          </svg>
+          <div class="title">canvas idle</div>
+          <div class="hint">
+            ask the lattice anything. responses stream live from gemma-4-12B across the full
+            L0 · L1 · L2 stack via SSE. press <span class="kbd">⏎</span> to send ·
+            <span class="kbd">⌃c</span> to abort · <span class="kbd">rewind</span> to scrub the last reply.
+          </div>
+        </div>
+      </div>
+
+      <!-- Rewind scrubber -->
+      <div class="rewind-bar" id="rewind-bar">
+        <div class="rewind-bar-inner">
+          <span class="lab">⏮ rewind</span>
+          <input type="range" id="rewind-scrub" min="0" max="100" value="100" step="1"/>
+          <span class="ts" id="rewind-ts">100% · live</span>
+          <button class="toolbtn" id="rewind-close">close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT -->
+  <div class="pane right">
+    <div class="ph">
+      <span class="t">pouw receipt ledger</span>
+      <span class="badge live" id="ledger-badge">SSE</span>
+    </div>
+    <div class="wallet">
+      <div style="border-color: rgba(212,161,74,0.45); background: rgba(212,161,74,0.06);">
+        <div class="lbl" style="color: var(--gold)">TOK/S · live</div>
+        <div class="big" style="color: var(--gold-hot)" id="wallet-tps">--</div>
+        <div class="delta" id="wallet-tps-d">decode throughput</div>
+      </div>
+      <div style="border-color: rgba(217,74,161,0.45); background: rgba(217,74,161,0.06);">
+        <div class="lbl" style="color: var(--q1)">FRONTIER · spl-d</div>
+        <div class="big" style="color: var(--q1)" id="wallet-frontier">--</div>
+        <div class="delta">pouw receipts</div>
+      </div>
+    </div>
+    <div class="pb">
+      <div id="ledger-window">
+        <div class="stream-empty"><span class="dot"></span>connecting EventSource /v1/pouw/ledger</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- INPUT -->
+  <div class="input-pane">
+    <div class="composer">
+      <div class="prefix">
+        <span class="caret">spctl</span>
+        <span class="path" id="composer-path">~/sp-lattice</span>
+        <span style="color:var(--gold-hot)">›</span>
+      </div>
+      <input type="text" id="chat-input" autocomplete="off" spellcheck="false"
+             placeholder="ask gemma-4-12B through the lattice — anything"/>
+      <span class="hint">⏎ send · ⌃c abort · ⌃l clear · ⌃r rewind</span>
+      <button class="send-btn" id="send-btn">
+        send
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M1 5h7l-3-3 1-1 5 5-5 5-1-1 3-3H1z"/></svg>
+      </button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ===== endpoint resolution =====================================
+     Served BY the daemon (frontend_mockups/) -> same origin.
+     Opened as file:// -> fall back to the configured/default daemon.
+     The daemon ships CorsLayer::permissive() so file:// works too. */
+  const isHttp = location.protocol === 'http:' || location.protocol === 'https:';
+  const DEFAULT_DAEMON = 'http://127.0.0.1:3000';
+  let DAEMON = isHttp ? location.origin : (localStorage.getItem('sp_endpoint') || DEFAULT_DAEMON);
+  const wsBase = () => DAEMON.replace(/^http/, 'ws');
+
+  const $ = (id) => document.getElementById(id);
+
+  /* ===== 1. TELEMETRY WEBSOCKET  (/v1/node/telemetry) ============ */
+  let ws = null, wsTimer = null;
+  const connPill = $('conn-pill'), connText = $('conn-text');
+
+  function setConn(ok, label) {
+    connPill.classList.toggle('dead', !ok);
+    connText.textContent = label || (ok ? `daemon · ${DAEMON.replace(/^https?:\/\//,'')}` : 'daemon offline · retrying…');
+  }
+
+  function connectTelemetry() {
+    try { ws = new WebSocket(wsBase() + '/v1/node/telemetry'); }
+    catch (e) { setConn(false); scheduleReconnect(); return; }
+    ws.onopen = () => setConn(true);
+    ws.onmessage = (ev) => {
+      try {
+        const d = JSON.parse(ev.data);
+        if (typeof d.cpu_temp_c === 'number')  $('tel-temp').textContent = `${d.cpu_temp_c.toFixed(1)}°C`;
+        if (typeof d.svm_mem_gb === 'number')  $('tel-svm').textContent  = `${d.svm_mem_gb.toFixed(1)} GiB`;
+        if (typeof d.dht_peers_active === 'number') $('tel-peers').textContent = `${d.dht_peers_active}/${d.dht_peers_total}`;
+        if (typeof d.pouw_frontier !== 'undefined') { $('tel-frontier').textContent = d.pouw_frontier; $('wallet-frontier').textContent = d.pouw_frontier; }
+        const t = $('tel-temp');
+        if (d.cpu_temp_c > 80) t.style.color = 'var(--err)';
+        else if (d.cpu_temp_c > 62) t.style.color = 'var(--warn)';
+        else t.style.color = 'var(--cyan-bright)';
+      } catch (_) {}
+    };
+    ws.onclose = () => { setConn(false); $('tel-temp').textContent = 'DISC'; $('tel-temp').style.color = 'var(--err)'; scheduleReconnect(); };
+    ws.onerror = () => { try { ws.close(); } catch (_) {} };
+  }
+  function scheduleReconnect() { if (wsTimer) return; wsTimer = setTimeout(() => { wsTimer = null; connectTelemetry(); }, 3000); }
+
+  /* ===== 2. METRICS POLL  (/v1/metrics -> tok/s, session pos) ==== */
+  async function pollMetrics() {
+    try {
+      const r = await fetch(`${DAEMON}/v1/metrics`, { signal: AbortSignal.timeout(4000) });
+      if (!r.ok) throw 0;
+      const m = await r.json();
+      const tps = (typeof m.tokens_per_sec === 'number') ? m.tokens_per_sec.toFixed(1) : '--';
+      $('tel-tps').textContent = tps;
+      $('wallet-tps').textContent = tps;
+      if (typeof m.session_pos !== 'undefined') {
+        $('tel-pos').textContent = m.session_pos;
+        $('composer-path').textContent = `~/sp-lattice/@${m.session_pos}`;
+      }
+      if (m.phase) $('wallet-tps-d').textContent = m.phase;
+      if (connPill.classList.contains('dead')) setConn(true);
+    } catch (_) { $('tel-tps').textContent = '--'; }
+  }
+
+  /* ===== 3. DHT MESH POLL  (/v1/mesh/peers) ===================== */
+  const meshContainer = $('mesh-container'), meshBadge = $('mesh-badge'), meshSvg = $('mesh-svg');
+  const Q_COLORS = { q1:'#d94aa1', q2:'#4adba0', q3:'#6ea6ff', q4:'#e89a3c', q5:'#b478ff' };
+
+  async function fetchMesh() {
+    try {
+      const r = await fetch(`${DAEMON}/v1/mesh/peers`, { signal: AbortSignal.timeout(4000) });
+      const data = await r.json();
+      const peers = Array.isArray(data) ? data : (data.peers || []);   // daemon returns {peers,active,total}
+      meshBadge.textContent = `${peers.length} peers`;
+      if (peers.length === 0) {
+        meshContainer.innerHTML = '<div class="stream-empty">[ DHT solo · no peers connected ]</div>';
+        drawMesh([]);
+        return;
+      }
+      meshContainer.innerHTML = '';
+      peers.forEach(p => {
+        const col = Q_COLORS[p.shard_id] || 'var(--cyan-bright)';
+        const div = document.createElement('div');
+        div.innerHTML =
+          `<span><strong style="color:${col}">[${p.shard_id}]</strong> <span style="color:var(--text)">${p.node_id}</span></span>` +
+          `<span style="color:var(--text-dim);font-size:9.5px;letter-spacing:1px;">${p.address} · ${p.latency_ms}ms</span>`;
+        meshContainer.appendChild(div);
+      });
+      drawMesh(peers);
+    } catch (_) {
+      if (!meshContainer.dataset.solo) { meshContainer.dataset.solo = '1';
+        meshContainer.innerHTML = '<div class="stream-empty"><span class="dot"></span>daemon offline · /v1/mesh/peers</div>'; }
+    }
+  }
+
+  function drawMesh(peers) {
+    const W = 280, H = 200, cx = W/2, cy = H/2;
+    let s = '<defs><radialGradient id="msGlow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#f4c860" stop-opacity="0.9"/><stop offset="1" stop-color="#f4c860" stop-opacity="0"/></radialGradient></defs>';
+    [40,70,95].forEach((r,i)=>{ s += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#1d6e7a" stroke-opacity="${0.4-i*0.1}" stroke-width="0.5" stroke-dasharray="2 6"/>`; });
+    const N = Math.min(peers.length, 10);
+    for (let i=0;i<N;i++){ const a=(i/N)*Math.PI*2-Math.PI/2; const ring=40+(i%3)*25; const px=cx+Math.cos(a)*ring, py=cy+Math.sin(a)*ring; const col=Q_COLORS[peers[i].shard_id]||'#5fb8c4';
+      s += `<line x1="${cx}" y1="${cy}" x2="${px}" y2="${py}" stroke="${col}" stroke-opacity="0.55" stroke-width="0.6"/><circle cx="${px}" cy="${py}" r="6" fill="${col}" fill-opacity="0.18"/><circle cx="${px}" cy="${py}" r="2.4" fill="${col}"/>`; }
+    s += `<circle cx="${cx}" cy="${cy}" r="18" fill="url(#msGlow)"/><circle cx="${cx}" cy="${cy}" r="4.5" fill="#f4c860"/><text x="${cx+8}" y="${cy+14}" font-family="JetBrains Mono" font-size="7" fill="#5fb8c4" letter-spacing="1">SELF · q3</text>`;
+    meshSvg.innerHTML = s;
+  }
+
+  /* ===== 4. PoUW LEDGER  (SSE /v1/pouw/ledger) ================== */
+  const ledgerWindow = $('ledger-window'), ledgerBadge = $('ledger-badge');
+  const MAX_RECEIPTS = 120; let ledgerCount = 0, ledgerSrc = null;
+
+  function fmtReceipt(txt) {
+    return String(txt)
+      .replace(/\[KSTE\]/g, '<strong style="color: var(--gold-hot)">[KSTE]</strong>')
+      .replace(/\[FRONTIER\]/g, '<strong style="color: var(--q1)">[FRONTIER]</strong>')
+      .replace(/\[VERIFY\]/g, '<strong style="color: var(--q2)">[VERIFY]</strong>')
+      .replace(/\[DEDUP\]/g, '<strong style="color: var(--q3)">[DEDUP]</strong>')
+      .replace(/\[MINT\]/g, '<strong style="color: var(--gold)">[MINT]</strong>')
+      .replace(/(0x[a-fA-F0-9]+)/g, '<span style="color: var(--cyan-bright)">$1</span>')
+      .replace(/(\+\d+\.\d+\s*spl-[wd])/gi, '<span style="color: var(--gold-hot); font-weight:600">$1</span>');
+  }
+  function addReceipt(txt) {
+    if (ledgerCount === 0) ledgerWindow.innerHTML = '';
+    const div = document.createElement('div');
+    div.style.cssText = "font-family:'JetBrains Mono',monospace;font-size:12px;padding:6px 4px;border-bottom:1px solid var(--rule-faint);line-height:1.55;word-break:break-all;";
+    div.innerHTML = fmtReceipt(txt);
+    ledgerWindow.appendChild(div);
+    ledgerCount++;
+    ledgerBadge.textContent = `SSE · ${ledgerCount}`;
+    while (ledgerWindow.children.length > MAX_RECEIPTS) ledgerWindow.removeChild(ledgerWindow.firstChild);
+    ledgerWindow.scrollTop = ledgerWindow.scrollHeight;
+  }
+  function connectLedger() {
+    try { ledgerSrc = new EventSource(`${DAEMON}/v1/pouw/ledger`); }
+    catch (e) { return; }
+    ledgerSrc.onmessage = (ev) => addReceipt(ev.data);
+    ledgerSrc.onerror = () => { ledgerBadge.textContent = 'SSE · idle'; };
+  }
+
+  /* ===== 5. CHAT  (POST /v1/chat -> SSE JSON {delta,chat_id}) ==== */
+  const chatInput = $('chat-input'), chatWindow = $('chat-window'), sendBtn = $('send-btn');
+  const clearBtn = $('clear-btn'), copyBtn = $('copy-btn'), emptyState = $('empty-state');
+  const rewindBar = $('rewind-bar'), rewindToggle = $('rewind-toggle'),
+        rewindScrub = $('rewind-scrub'), rewindTs = $('rewind-ts'), rewindClose = $('rewind-close');
+
+  const history = [];          // [{role, content}] multi-turn context
+  let curMsg = null, curSpan = null, abortCtrl = null, curChatId = null;
+  let lastTokenNodes = [], genT0 = 0, genCount = 0;
+
+  function clearEmpty() { if (emptyState && emptyState.parentNode) emptyState.remove(); }
+
+  function appendMessage(role, text) {
+    clearEmpty();
+    const msg = document.createElement('div');
+    msg.className = `msg ${role}`;
+    const who = document.createElement('div'); who.className = 'who';
+    const t = new Date(), p = (n)=>String(n).padStart(2,'0');
+    const ts = `${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}`;
+    if (role === 'ai') {
+      who.innerHTML = `<span class="gen-icon"><svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="none" stroke="#1d6e7a" stroke-opacity="0.6" stroke-width="0.8" class="ring"/><circle cx="7" cy="7" r="2.6" fill="#f4c860" class="pulse"/></svg></span> ‹ gemma-4-12B <span class="meta">${ts} · sse</span>`;
+    } else if (role === 'err') {
+      who.innerHTML = `‹ error <span class="meta">${ts}</span>`;
+    } else {
+      who.innerHTML = `› you <span class="meta">${ts}</span>`;
+    }
+    const body = document.createElement('div'); body.className = 'msg-content'; body.textContent = text || '';
+    msg.appendChild(who); msg.appendChild(body);
+    chatWindow.appendChild(msg);
+    chatWindow.scrollTop = chatWindow.scrollHeight;
+    return { msg, body };
+  }
+  function stopGenIcon() { if (curMsg) { const ic = curMsg.querySelector('.gen-icon'); if (ic) ic.style.display = 'none'; } }
+
+  function pushToken(text) {
+    if (!curSpan) return;
+    const wrap = document.createElement('span'); wrap.className = 'tok'; wrap.textContent = text;
+    curSpan.appendChild(wrap);
+    lastTokenNodes.push(wrap);
+    chatWindow.scrollTop = chatWindow.scrollHeight;
+  }
+  function pushFlash() {
+    if (!curSpan) return;
+    const f = document.createElement('span'); f.className = 'ctc-flash'; f.textContent = ' ⚡ ';
+    curSpan.appendChild(f); lastTokenNodes.push(f);
+    setTimeout(() => { f.style.opacity = '0'; }, 500);
+  }
+
+  // gemma chat template — used as fallback if the daemon has no server-side template
+  function gemmaPrompt(msgs) {
+    let s = '';
+    for (const m of msgs) s += `<start_of_turn>${m.role === 'assistant' ? 'model' : 'user'}\n${m.content}<end_of_turn>\n`;
+    return s + '<start_of_turn>model\n';
+  }
+
+  /* A2: read the sampler controls into the /v1/chat body (flattened
+     SamplingParams). Blank/invalid fields are omitted so the server default
+     applies. temp=0 ⇒ greedy argmax (deterministic null floor). */
+  function samplerBody() {
+    const num = (id) => { const v = parseFloat($(id).value); return Number.isFinite(v) ? v : undefined; };
+    const out = {};
+    const t = num('s-temp'); if (t !== undefined) out.temperature = t;
+    const p = num('s-topp'); if (p !== undefined) out.top_p = p;
+    const k = num('s-topk'); if (k !== undefined) out.top_k = Math.round(k);
+    const r = num('s-rep');  if (r !== undefined) out.repetition_penalty = r;
+    const e = num('s-eot');  if (e !== undefined) out.eot_bias = e;                   // N5: end-of-turn coherence bias
+    const mt = num('s-maxtok'); if (mt !== undefined) out.max_tokens = Math.round(mt); // N5: per-turn token cap
+    const seedRaw = ($('s-seed').value || '').trim();
+    if (seedRaw !== '') { const sd = parseInt(seedRaw, 10); if (Number.isFinite(sd)) out.seed = sd; }
+    // B1: byte-exact "auditable mode" — top-level (not a SamplingParam).
+    if ($('s-byteexact') && $('s-byteexact').checked) out.byteexact = true;
+    // B5: the single latent entry point — ingest text through the one residual
+    // seam (the same seam audio + memory enter through). Bit-identical to prefill.
+    if ($('s-singleentry') && $('s-singleentry').checked) out.single_entry = true;
+    // B3: autonomous memory recall — the daemon self-selects + replays a relevant
+    // stored episode by matching this turn's C2 signature (no manual replay field).
+    if ($('s-autorecall')) out.auto_recall = $('s-autorecall').checked; // explicit bool => unchecking truly disables recall
+    return out;
+  }
+
+  async function streamChat(bodyObj) {
+    const resp = await fetch(`${DAEMON}/v1/chat`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(bodyObj), signal: abortCtrl.signal,
+    });
+    if (resp.status === 400) {
+      let j = null; try { j = await resp.json(); } catch (_) {}
+      if (j && j.error === 'chat_template_unavailable') return { retryPrompt: true };
+      throw new Error(j && j.error ? j.error : `http 400`);
+    }
+    if (!resp.ok || !resp.body) throw new Error(`http ${resp.status}`);
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buf = '', acc = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // SSE frames are separated by a blank line
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        for (const raw of frame.split('\n')) {
+          const line = raw.replace(/\r$/, '');
+          if (!line.startsWith('data:')) continue;            // ignore ':keepalive', 'event:' etc.
+          let payload = line.slice(5).trimStart();
+          if (payload === '[DONE]') return { text: acc };
+          // B3: the `event: recall` frame carries {recalled: <name|null>, agree}.
+          // Surface a badge before the answer tokens; it has no `delta`.
+          try {
+            const ro = JSON.parse(payload);
+            if (Object.prototype.hasOwnProperty.call(ro, 'recalled')) {
+              const badge = ro.recalled
+                ? `\u{1F9E0} recalled episode: ${ro.recalled} (agree ${ro.agree}/256)`
+                : `\u{1F9E0} auto-recall: no episode matched (baseline answer)`;
+              try { pushToken(`\n[${badge}]\n`); } catch (_) {}
+              continue;
+            }
+          } catch (_) {}
+          let delta = null;
+          try { const o = JSON.parse(payload); if (o.error) throw new Error(o.error); delta = o.delta; }
+          catch (e) { if (e.message && e.message !== 'Unexpected end of JSON input') throw e; delta = null; }
+          if (delta == null) continue;
+          if (curChatId == null && false) {}                  // (chat_id captured below)
+          // capture chat_id for server-side abort
+          try { const o = JSON.parse(payload); if (o.chat_id != null) curChatId = o.chat_id; } catch (_) {}
+          if (delta.includes('[REWIND]')) { delta = delta.replace('[REWIND]',''); pushFlash(); }
+          if (delta) { acc += delta; genCount++; pushToken(delta);
+            const dt = (performance.now() - genT0) / 1000;
+            if (dt > 0.2) { const tps = (genCount / dt).toFixed(1); $('tel-tps').textContent = tps; $('wallet-tps').textContent = tps; } }
+        }
+      }
+    }
+    return { text: acc };
+  }
+
+  async function submitPrompt() {
+    const text = chatInput.value.trim();
+    if (!text || abortCtrl) return;
+    chatInput.value = ''; sendBtn.disabled = true;
+
+    appendMessage('user', text);
+    history.push({ role: 'user', content: text });
+    const { msg, body } = appendMessage('ai', '');
+    curMsg = msg; curSpan = body; lastTokenNodes = []; curChatId = null;
+    genT0 = performance.now(); genCount = 0;
+    abortCtrl = new AbortController();
+
+    try {
+      // Prefer multi-turn messages (server applies the chat template);
+      // fall back to a client-side gemma prompt if no server template exists.
+      const s = samplerBody();
+      let res = await streamChat({ messages: history, max_tokens: 128, ...s });
+      if (res && res.retryPrompt) res = await streamChat({ prompt: gemmaPrompt(history), max_tokens: 128, ...s });
+      const finalText = (res && res.text || '').trim();
+      history.push({ role: 'assistant', content: finalText });
+    } catch (err) {
+      if (err.name === 'AbortError') { pushToken('  [aborted]'); }
+      else {
+        if (curSpan && curSpan.textContent.length === 0) {
+          curMsg.className = 'msg err';
+          curSpan.textContent = `⚠ ${err.message}. Is the daemon running?  Launch:  run_console.bat  (then reload).`;
+        } else { pushToken(`  [stream error: ${err.message}]`); }
+        history.pop(); // drop the failed assistant turn from context
+      }
+    } finally {
+      stopGenIcon();
+      sendBtn.disabled = false; abortCtrl = null;
+      resetRewind();
+      chatInput.focus();
+    }
+  }
+
+  async function abortChat() {
+    if (curChatId != null) { try { await fetch(`${DAEMON}/v1/abort/${curChatId}`, { method: 'POST' }); } catch (_) {} }
+    if (abortCtrl) abortCtrl.abort();
+  }
+
+  /* ===== 6. REWIND (client-side scrub of the last reply) ========= */
+  function openRewind()  { rewindBar.classList.add('open'); rewindScrub.value = 100; applyRewind(100); }
+  function closeRewind() { rewindBar.classList.remove('open'); lastTokenNodes.forEach(n => n.style.opacity = ''); }
+  function resetRewind() { rewindScrub.value = 100; rewindTs.textContent = '100% · live'; }
+  function applyRewind(pct) {
+    const n = lastTokenNodes.length; if (!n) { rewindTs.textContent = 'no tokens'; return; }
+    const visible = Math.round(n * pct / 100);
+    for (let i = 0; i < n; i++) lastTokenNodes[i].style.opacity = i < visible ? '1' : '0.06';
+    rewindTs.textContent = pct >= 100 ? '100% · live' : `${pct}% · ${visible}/${n} tok`;
+  }
+  rewindToggle.addEventListener('click', () => rewindBar.classList.contains('open') ? closeRewind() : openRewind());
+  rewindClose.addEventListener('click', closeRewind);
+  rewindScrub.addEventListener('input', (e) => applyRewind(+e.target.value));
+
+  /* ===== 7. UI WIRING =========================================== */
+  sendBtn.addEventListener('click', submitPrompt);
+  chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitPrompt(); }
+    if (e.ctrlKey && e.key === 'c') { abortChat(); }
+    if (e.ctrlKey && e.key === 'l') { e.preventDefault(); clearCanvas(); }
+    if (e.ctrlKey && e.key === 'r') { e.preventDefault(); rewindBar.classList.contains('open') ? closeRewind() : openRewind(); }
+  });
+  clearBtn.addEventListener('click', clearCanvas);
+  function clearCanvas() {
+    chatWindow.innerHTML = ''; chatWindow.appendChild(emptyState);
+    curMsg = null; curSpan = null; lastTokenNodes = []; history.length = 0; curChatId = null;
+    closeRewind();
+  }
+  copyBtn.addEventListener('click', () => {
+    if (!curSpan) return;
+    navigator.clipboard && navigator.clipboard.writeText(curSpan.innerText);
+    copyBtn.style.color = 'var(--ok)'; setTimeout(() => copyBtn.style.color = '', 700);
+  });
+  connPill.addEventListener('click', () => {
+    if (isHttp) { alert('Served by the daemon — endpoint is fixed to this origin:\n' + DAEMON); return; }
+    const v = prompt('Daemon endpoint:', DAEMON);
+    if (v) { DAEMON = v.replace(/\/+$/, ''); localStorage.setItem('sp_endpoint', DAEMON); location.reload(); }
+  });
+
+  /* ===== boot ==================================================== */
+  setConn(false, 'connecting…');
+  connectTelemetry();
+  connectLedger();
+  pollMetrics();   setInterval(pollMetrics, 1000);
+  fetchMesh();     setInterval(fetchMesh, 2000);
+  chatInput.focus();
+})();
+</script>
+</body>
+</html>
