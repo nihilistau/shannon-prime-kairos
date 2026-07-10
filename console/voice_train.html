@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/>
+<title>Shannon · voice training capture</title>
+<style>
+  :root{--bg:#08090d;--panel:#0d1117;--gold:#d4a14a;--goldh:#f4c860;--cyan:#5fb8c4;
+        --ok:#4adba0;--err:#d94a4a;--text:#dcdfe4;--dim:#7d848e;--rule:rgba(29,110,122,.35)}
+  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);
+    font-family:'JetBrains Mono',ui-monospace,monospace;display:flex;min-height:100vh;
+    align-items:center;justify-content:center;padding:24px}
+  .card{width:min(760px,94vw);background:var(--panel);border:1px solid var(--gold);
+    box-shadow:0 0 60px rgba(212,161,74,.12);padding:0}
+  .hd{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;
+    border-bottom:1px solid var(--rule)}
+  .hd .t{letter-spacing:3px;color:var(--gold);font-size:12px;font-weight:600}
+  .hd .st{font-size:11px;color:var(--cyan)}
+  .body{padding:26px 22px}
+  .prompt{font-size:26px;line-height:1.5;text-align:center;min-height:96px;
+    display:flex;align-items:center;justify-content:center;color:#fff}
+  .sub{text-align:center;color:var(--dim);font-size:11px;letter-spacing:1px;margin-top:6px}
+  .row{display:flex;gap:12px;justify-content:center;align-items:center;margin-top:26px;flex-wrap:wrap}
+  button{font-family:inherit;font-size:13px;letter-spacing:2px;padding:12px 22px;cursor:pointer;
+    border:1px solid var(--rule);background:transparent;color:var(--text);border-radius:3px}
+  button:hover{border-color:var(--gold);color:var(--gold)}
+  #rec{background:var(--gold);color:#08090d;border:0;font-weight:700;min-width:220px}
+  #rec.recording{background:#b3402f;color:#fff}
+  .bar{height:6px;background:rgba(255,255,255,.06);margin:22px 22px 0;border-radius:3px;overflow:hidden}
+  .bar>div{height:100%;background:var(--gold);width:0%;transition:width .2s}
+  .foot{padding:14px 18px;border-top:1px solid var(--rule);font-size:11px;color:var(--dim);
+    display:flex;justify-content:space-between}
+  .level{height:4px;background:rgba(74,219,160,.15);margin:12px 40px 0;border-radius:2px;overflow:hidden}
+  .level>div{height:100%;background:var(--ok);width:0%}
+  a{color:var(--cyan)}
+</style></head><body>
+<div class="card">
+  <div class="hd"><span class="t">VOICE TRAINING · read to teach Shannon your voice</span>
+    <span class="st" id="status">connecting…</span></div>
+  <div class="bar"><div id="prog"></div></div>
+  <div class="body">
+    <div class="prompt" id="prompt">…</div>
+    <div class="sub" id="sub">speak naturally, in your normal voice, in this room</div>
+    <div class="level"><div id="lvl"></div></div>
+    <div class="row">
+      <button id="rec">● hold / click to record</button>
+      <button id="skip">skip →</button>
+      <button id="replay" style="display:none">▶ replay</button>
+    </div>
+  </div>
+  <div class="foot"><span id="saved">0 saved</span>
+    <span>gateway :8800 · <a href="/">back to console</a></span></div>
+</div>
+<script>
+const GW='http://127.0.0.1:8800';
+let sents=[], idx=0, saved=0, recording=false, stream=null, ctx=null, node=null, buf=[], lastB64=null;
+const $=id=>document.getElementById(id);
+async function boot(){
+  try{
+    const r=await fetch(GW+'/v1/voice/corpus'); const j=await r.json();
+    sents=j.sentences||[]; $('status').textContent=(j.ok?('corpus '+sents.length):'no corpus');
+    const s=await (await fetch(GW+'/v1/voice/record/status')).json(); saved=s.total||0;
+    $('saved').textContent=saved+' saved'; show();
+  }catch(e){ $('status').textContent='gateway offline — run serve.bat agent'; }
+}
+function show(){ $('prompt').textContent=sents.length?('“'+sents[idx%sents.length]+'”'):'(no sentences)';
+  $('prog').style.width=(sents.length?((idx/sents.length)*100):0)+'%'; $('replay').style.display='none'; lastB64=null; }
+async function startRec(){
+  if(recording) return;
+  try{ stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}}); }
+  catch(e){ $('status').textContent='mic blocked: '+e.message; return; }
+  ctx=new (window.AudioContext||window.webkitAudioContext)();
+  const src=ctx.createMediaStreamSource(stream); node=ctx.createScriptProcessor(2048,1,1);
+  buf=[]; node.onaudioprocess=e=>{ const d=e.inputBuffer.getChannelData(0);
+    buf.push(new Float32Array(d));
+    let s=0; for(let i=0;i<d.length;i++)s+=d[i]*d[i]; $('lvl').style.width=Math.min(100,Math.sqrt(s/d.length)*400)+'%'; };
+  src.connect(node); node.connect(ctx.destination); recording=true;
+  $('rec').classList.add('recording'); $('rec').textContent='■ recording — release/click to save';
+}
+async function stopRec(){
+  if(!recording) return; recording=false;
+  try{node.disconnect();}catch(_){}
+  const sr=ctx.sampleRate; try{ctx.close();}catch(_){}
+  stream.getTracks().forEach(t=>t.stop());
+  $('rec').classList.remove('recording'); $('rec').textContent='● hold / click to record'; $('lvl').style.width='0%';
+  const total=buf.reduce((n,b)=>n+b.length,0); const flat=new Float32Array(total);
+  {let k=0;for(const b of buf){flat.set(b,k);k+=b.length;}}
+  // resample to EXACT 16k (context is usually 48k)
+  const ratio=16000/sr, outLen=Math.round(flat.length*ratio); const mono=new Float32Array(outLen);
+  for(let i=0;i<outLen;i++){const t=i/ratio,i0=Math.floor(t),f=t-i0;mono[i]=(flat[i0]||0)*(1-f)+(flat[i0+1]||0)*f;}
+  if(mono.length<3200){ $('status').textContent='too short — try again'; return; }
+  const pcm=new Int16Array(mono.length);
+  for(let i=0;i<mono.length;i++)pcm[i]=Math.max(-32768,Math.min(32767,Math.round(mono[i]*32767)));
+  let bin='';const u8=new Uint8Array(pcm.buffer);
+  for(let i=0;i<u8.length;i+=8192)bin+=String.fromCharCode.apply(null,u8.subarray(i,i+8192));
+  const b64=btoa(bin); lastB64=b64;
+  try{
+    const r=await fetch(GW+'/v1/voice/record',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:sents[idx%sents.length],audio_b64:b64})});
+    const j=await r.json();
+    if(j.ok){ saved=j.total; $('saved').textContent=saved+' saved'; $('status').textContent='✓ '+j.saved+' ('+j.seconds+'s)';
+      $('replay').style.display=''; idx++; setTimeout(show,350); }
+    else $('status').textContent='save failed: '+(j.error||'?');
+  }catch(e){ $('status').textContent='save error: '+e.message; }
+}
+$('rec').addEventListener('mousedown',startRec); $('rec').addEventListener('mouseup',stopRec);
+$('rec').addEventListener('click',()=>{ if(recording) stopRec(); else startRec(); });
+$('skip').addEventListener('click',()=>{idx++;show();});
+$('replay').addEventListener('click',()=>{ if(!lastB64)return; const b=atob(lastB64);const u=new Uint8Array(b.length);
+  for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i); const pcm=new Int16Array(u.buffer);
+  const ac=new AudioContext(); const bufr=ac.createBuffer(1,pcm.length,16000); const ch=bufr.getChannelData(0);
+  for(let i=0;i<pcm.length;i++)ch[i]=pcm[i]/32768; const s=ac.createBufferSource();s.buffer=bufr;s.connect(ac.destination);s.start(); });
+boot();
+</script></body></html>

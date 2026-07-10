@@ -276,6 +276,32 @@ def _voice_status() -> Dict[str, Any]:
         return {"ear": {"ok": False, "error": str(exc)}}
 
 
+def _voice_corpus() -> Dict[str, Any]:
+    """ADR-KAI4 P1.6: the in-vocab sentences to read aloud for real-voice training."""
+    import os as _os
+    p = _os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                      "var", "voice", "corpus.jsonl")
+    try:
+        sents = [json.loads(l)["text"] for l in open(p, encoding="utf-8") if l.strip()]
+        # a compact, phonetically varied reading set (prioritize wake + questions)
+        import random
+        wake = [s for s in sents if "shannon" in s]
+        rest = [s for s in sents if "shannon" not in s]
+        random.Random(7).shuffle(rest)
+        pick = wake[:15] + rest[:85]
+        return {"ok": True, "sentences": pick, "total_corpus": len(sents)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "sentences": []}
+
+
+def _voice_record_status() -> Dict[str, Any]:
+    try:
+        from harness.voice.record import record_status
+        return record_status()
+    except Exception as exc:
+        return {"total": 0, "error": str(exc)}
+
+
 def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
     """The console's native /v1/chat: {messages} -> SSE data: {...} -> [DONE], run through the
     streaming AGENT (tool calling).
@@ -517,6 +543,17 @@ def _run_stdlib(host: str, port: int) -> None:
                 self.send_header("Content-Type", "text/event-stream"); self.end_headers()
                 for chunk in _native_chat_sse(body):
                     self.wfile.write(chunk); self.wfile.flush()
+            elif self.path == "/v1/voice/record":  # ADR-KAI4 P1.6: save a real training sample
+                body = self._body()
+                try:
+                    from harness.voice.record import save_recording
+                    res = save_recording(body.get("text", ""), body.get("audio_b64", ""))
+                except Exception as exc:
+                    res = {"ok": False, "error": str(exc)}
+                payload = json.dumps(res).encode()
+                self.send_response(200); _cors(self)
+                self.send_header("Content-Type", "application/json"); self.end_headers()
+                self.wfile.write(payload)
             elif self.path == "/v1/voice":  # ADR-KAI4 P0: one VAD-segmented utterance
                 body = self._body()
                 self.send_response(200); _cors(self)
@@ -556,6 +593,8 @@ def _run_stdlib(host: str, port: int) -> None:
             _json_routes = {
                 "/health": lambda: {"ok": True, "agent": True, "daemon": get_client().health()},
                 "/v1/voice/status": _voice_status,   # ADR-KAI4: ear device/artifacts state
+                "/v1/voice/corpus": _voice_corpus,   # ADR-KAI4 P1.6: sentences to read for training
+                "/v1/voice/record/status": _voice_record_status,
                 "/v1/memory": _memory_json,      # PK2 §U1 memory-browser data
                 "/v1/tasks": _tasks_json,        # PK2 §U1 task-queue data
                 "/v1/persona": _persona_get,     # PK2 §P1 persona editor (load)

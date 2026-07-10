@@ -25,6 +25,7 @@ sys.path.insert(0, sys_path)
 from harness.voice.dsp import logmel, N_MELS  # noqa: E402
 
 OUT = os.path.join(ROOT, "var", "voice")
+REAL_REPEAT = 8   # each real recording counted 8x (1 clean + 7 lightly-augmented)
 
 
 def read_wav16(path: str) -> np.ndarray:
@@ -51,24 +52,22 @@ def augment(x: np.ndarray, rng: np.random.Generator, real: bool) -> np.ndarray:
         t = np.linspace(0, len(x) - 1, int(len(x) / sp))
         x = np.interp(t, np.arange(len(x)), x).astype(np.float32)
     if real:
-        # reverb: convolve with a short exponential-decay impulse (RT60-ish)
-        if rng.random() < 0.7:
-            rt = float(rng.uniform(0.05, 0.25))
+        # MODERATE, realistic quiet-room mic (heavy aug underfit at 0.38): light
+        # reverb, subtle mic-EQ, 20-40 dB SNR noise, gentle gain.
+        if rng.random() < 0.5:
+            rt = float(rng.uniform(0.03, 0.12))
             L = max(2, int(rt * 16000))
             imp = (rng.normal(0, 1, L) * np.exp(-np.arange(L) / (rt * 16000 / 3))).astype(np.float32)
-            imp[0] = 1.0
+            imp[0] = 3.0                                    # strong direct path (dry-ish)
             x = np.convolve(x, imp / (np.abs(imp).sum() + 1e-6))[: len(x)].astype(np.float32)
-        # EQ tilt (first-order shelf): color like a cheap mic
-        tilt = float(rng.uniform(-0.5, 0.5))
+        tilt = float(rng.uniform(-0.25, 0.25))              # mild mic coloration
         if abs(tilt) > 0.05:
             x = x + tilt * np.diff(x, prepend=x[:1]).astype(np.float32)
-        # additive noise at a random SNR
         rms = float(np.sqrt((x ** 2).mean()) + 1e-8)
-        snr = float(rng.uniform(8, 30))
+        snr = float(rng.uniform(20, 40))
         nstd = rms / (10 ** (snr / 20))
         x = x + rng.normal(0, nstd, size=x.shape).astype(np.float32)
-        # gain
-        x = x * float(rng.uniform(0.5, 1.4))
+        x = x * float(rng.uniform(0.7, 1.3))
         x = np.clip(x, -1.0, 1.0)
     else:
         x = x + rng.normal(0, 0.003, size=x.shape).astype(np.float32)
@@ -110,6 +109,39 @@ def main() -> int:
             flens.append(mel.shape[0])
             tlens.append(len(row["ids"]))
             sent_ids.append(sid)
+
+    # ── REAL microphone samples (ADR-KAI4 P1.6): fold in operator recordings,
+    #    heavily UPWEIGHTED (repeated) since they are the TRUE target distribution.
+    real_dir = os.path.join(OUT, "real")
+    real_manifest = os.path.join(real_dir, "manifest.jsonl")
+    real_n = 0
+    if os.path.isfile(real_manifest):
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from tools.voice_corpus import tok_batch  # type: ignore
+        rows = [json.loads(l) for l in open(real_manifest, encoding="utf-8") if l.strip()]
+        vset = {int(t): i for i, t in enumerate(vsub)}
+        texts = list({r["text"] for r in rows})
+        toks = tok_batch(texts)
+        for r in rows:
+            gids = toks.get(r["text"])
+            if not gids or any(t not in vset for t in gids):
+                continue
+            ids = [vset[t] for t in gids]
+            wp = os.path.join(real_dir, r["wav"])
+            if not os.path.isfile(wp):
+                continue
+            base = read_wav16(wp)
+            for c in range(REAL_REPEAT):        # upweight real samples
+                x = augment(base, rng, real=(c > 0))   # 1 clean + light aug copies
+                mel = logmel(x)
+                if mel.shape[0] < len(ids) + 1:
+                    continue
+                feats.append(mel); targs.append(np.array(ids, dtype=np.int64))
+                flens.append(mel.shape[0]); tlens.append(len(ids))
+                sent_ids.append(1_000_000 + hash(r["text"]) % 900_000)  # keep real in TRAIN
+                real_n += 1
+    print(f"real samples folded in: {real_n}")
 
     N = len(feats)
     Tmax = max(f.shape[0] for f in feats)
