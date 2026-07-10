@@ -55,46 +55,66 @@ CHAT = [
     "you are funny", "i like your sense of humour", "tell me more",
     "what do you think", "why do you say that", "how does that work"]
 
-# ── compositional templates: many sentences from a small reused vocabulary, so
-#    the CTC ear generalizes across contexts (the KAI-3 data-starvation fix). ──
+# ── compositional templates: thousands of sentences from a small reused word
+#    bank so the CTC ear generalizes across contexts (the KAI-3 data-starvation
+#    fix). Every word here is deliberately common so vsub stays <= ~250. ──
 def _templated() -> list[str]:
     out = list(ALL_BASE)
     subj = ["my name", "my cat", "the time", "the date", "the weather",
-            "the status", "my memory", "the system"]
-    for s in subj:
-        out += [f"what is {s}", f"do you know {s}", f"can you tell me {s}",
-                f"tell me {s}", f"what about {s}"]
-    verbs = ["like", "love", "enjoy", "want", "need", "remember", "forget"]
+            "the status", "my memory", "the system", "my flight", "my day",
+            "the plan", "the news"]
+    qwords = ["what is", "where is", "when is", "how is", "do you know",
+              "can you tell me", "tell me", "what about", "remind me of"]
+    tails = ["", " today", " right now", " please", " for me", " again"]
+    for q in qwords:
+        for s in subj:
+            for t in tails:
+                out.append(f"{q} {s}{t}".strip())
+    verbs = ["like", "love", "enjoy", "want", "need", "remember", "forget",
+             "hate", "miss", "know"]
     objs = ["tea", "coffee", "this", "that", "talking to you", "the weather",
-            "my cat", "the quiet", "a joke", "the time"]
-    for v in verbs:
-        for o in objs:
-            out.append(f"i {v} {o}")
+            "my cat", "the quiet", "a joke", "the time", "the morning",
+            "good music", "the ocean", "a good story"]
+    subs = ["i", "i really", "i still", "i do not", "you", "we"]
+    for su in subs:
+        for v in verbs:
+            for o in objs:
+                out.append(f"{su} {v} {o}")
     acts = ["tell me a joke", "check the time", "check the weather",
             "search the web", "save that", "start over", "keep listening",
-            "stop listening", "run a check", "give me the status"]
-    pre = ["can you", "could you", "please", "will you", "would you"]
+            "stop listening", "run a check", "give me the status",
+            "read the news", "set a reminder", "play some music",
+            "tell me a story", "help me out"]
+    pre = ["can you", "could you", "please", "will you", "would you",
+           "i want you to", "i need you to", "go ahead and"]
     for p in pre:
         for act in acts:
             out.append(f"{p} {act}")
     fillers = ["that is nice", "that is great", "that is interesting", "i see",
                "i agree", "i am not sure", "let me think", "sounds good",
-               "makes sense", "tell me more", "why is that", "how so"]
-    out += fillers * 2
-    # richer combinations for the bake: question x subject, greeting x follow,
-    # wake x request — heavy word reuse keeps vsub bounded while sentences grow.
-    qwords = ["what is", "where is", "when is", "how is", "do you know"]
-    for q in qwords:
-        for s in subj:
-            out.append(f"{q} {s} today")
+               "makes sense", "tell me more", "why is that", "how so",
+               "that is funny", "well said", "good point", "fair enough",
+               "i guess so", "not really", "maybe later", "go on"]
+    out += fillers * 3
     follow = ["how are you", "what is new", "what can you do", "are you there",
-              "can you hear me", "what time is it"]
-    for g in ["hi", "hey", "hello", "hey shannon", "good morning"]:
+              "can you hear me", "what time is it", "how is it going",
+              "how have you been", "what is up", "you good"]
+    for g in ["hi", "hey", "hello", "hey shannon", "good morning",
+              "good evening", "okay shannon", "hey there"]:
         for fw in follow:
             out.append(f"{g} {fw}")
-    for w in ["hey shannon", "okay shannon", "shannon"]:
+    for w in ["hey shannon", "okay shannon", "shannon", "hey there shannon"]:
         for act in acts:
             out.append(f"{w} {act}")
+    # short "tell it a fact" utterances (memory-store shape)
+    facts = ["my name is knack", "my cat is called tuffy", "i live in australia",
+             "i like tea", "i work at night", "my favourite colour is teal",
+             "i am doing well", "i am a bit tired", "the weather is nice",
+             "i had a good day", "i am building you", "we are a team"]
+    lead = ["", "remember that ", "just so you know ", "by the way ", "for the record "]
+    for f in facts:
+        for l in lead:
+            out.append(f"{l}{f}".strip())
     return out
 
 
@@ -103,16 +123,32 @@ ALL_BASE = (WAKE * 4 + GREET * 3 + ACK * 2 + QUESTION * 3 + TELL * 3
 ALL = _templated()
 
 
-def tok(text: str) -> list[int]:
+NL = 107  # gemma newline token — the batch separator (verified)
+
+
+def tok_batch(sentences: list[str]) -> dict[str, list[int]]:
+    """Tokenize ALL sentences in ONE sp_tok_enc call: join by newline, split the
+    output token stream on NL (107). ~2500 sentences -> 1 subprocess (was 1 each)."""
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:
-        f.write(text)
+        f.write("\n".join(sentences))
         p = f.name
     try:
-        out = subprocess.run([SP_TOK_ENC, TOKENIZER, p], capture_output=True, text=True, timeout=30)
-        ids = [int(x) for x in out.stdout.splitlines() if x.strip().isdigit()]
-        return ids[1:] if ids and ids[0] == 2 else ids   # drop forced BOS
+        out = subprocess.run([SP_TOK_ENC, TOKENIZER, p, str(len(sentences) * 24 + 8)],
+                             capture_output=True, text=True, timeout=120)
+        ids = [int(x) for x in out.stdout.splitlines() if x.strip().lstrip("-").isdigit()]
     finally:
         os.unlink(p)
+    if ids and ids[0] == 2:
+        ids = ids[1:]                                # drop forced BOS
+    segs, cur = [], []
+    for t in ids:
+        if t == NL:
+            segs.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    segs.append(cur)
+    return {s: segs[i] for i, s in enumerate(sentences) if i < len(segs) and segs[i]}
 
 
 def main() -> int:
@@ -122,7 +158,8 @@ def main() -> int:
     os.makedirs(OUT, exist_ok=True)
 
     sentences = sorted(set(s.strip().lower() for s in ALL if s.strip()))
-    toks = {s: tok(s) for s in sentences}
+    toks = tok_batch(sentences)
+    sentences = [s for s in sentences if s in toks]   # keep only cleanly split
     freq = collections.Counter()
     for ids in toks.values():
         freq.update(ids)

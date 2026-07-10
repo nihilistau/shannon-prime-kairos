@@ -119,8 +119,15 @@ def hear(mel: np.ndarray) -> np.ndarray:
     if not kept:
         return np.zeros((0, s["E"]), dtype=np.float32)
 
-    lg = logits[kept, :v] / tau
-    lg -= lg.max(axis=-1, keepdims=True)
-    p = np.exp(lg)
-    p /= p.sum(axis=-1, keepdims=True)
-    return (p @ wsub).astype(np.float32)                   # [k, E]
+    # HARD-SELECT the argmax embed row per kept frame (KAI-4 P1 fix): at V=217 the
+    # softmax(τ=0.2) blend is too soft — injecting a blurry mix of embed rows is
+    # harder for the 12B to read than the EXACT row it was trained on. os.environ
+    # SP_VOICE_SOFT=1 restores the soft blend (KAI-3 V=32 behaviour).
+    if os.environ.get("SP_VOICE_SOFT") == "1":
+        lg = logits[kept, :v] / tau
+        lg -= lg.max(axis=-1, keepdims=True)
+        p = np.exp(lg)
+        p /= p.sum(axis=-1, keepdims=True)
+        return (p @ wsub).astype(np.float32)               # [k, E] soft blend
+    sel = logits[kept, :v].argmax(axis=-1)                 # per-frame token index
+    return wsub[sel].astype(np.float32)                    # [k, E] exact embed rows

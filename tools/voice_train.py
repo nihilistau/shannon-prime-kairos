@@ -27,6 +27,8 @@ def main() -> int:
     ap.add_argument("--batch_size", type=int, default=64)
     ap.add_argument("--hidden", type=int, default=256)   # GNA out-ch <=256
     ap.add_argument("--gpu", action="store_true", help="use CUDA (only when the daemon is down)")
+    ap.add_argument("--dropout", type=float, default=0.15)
+    ap.add_argument("--wd", type=float, default=1e-4)
     ap.add_argument("--out", default=os.path.join(OUT, "voice_ctc.pt"))
     a = ap.parse_args()
 
@@ -59,9 +61,11 @@ def main() -> int:
         def __init__(s):
             super().__init__()
             h = a.hidden
+            # GNA-legal (conv/relu only); dropout (train-only, folds away at export)
+            # curbs the overfit seen at scale (peak ep~20 then decline).
             s.net = nn.Sequential(
-                nn.Conv1d(n_mels, h, 3, padding=1), nn.ReLU(),
-                nn.Conv1d(h, h, 3, padding=1), nn.ReLU(),
+                nn.Conv1d(n_mels, h, 3, padding=1), nn.ReLU(), nn.Dropout(a.dropout),
+                nn.Conv1d(h, h, 3, padding=1), nn.ReLU(), nn.Dropout(a.dropout),
                 nn.Conv1d(h, h, 3, padding=1), nn.ReLU())
             s.head = nn.Conv1d(h, V + 1, 1)
 
@@ -69,7 +73,7 @@ def main() -> int:
             return s.head(s.net(x.transpose(1, 2))).transpose(1, 2)
 
     net = Enc().to(dev)
-    opt = torch.optim.Adam(net.parameters(), lr=a.lr)
+    opt = torch.optim.Adam(net.parameters(), lr=a.lr, weight_decay=a.wd)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, a.epochs), eta_min=1e-5)
 
     def ctc(X, Y, FL, TL):

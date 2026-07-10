@@ -33,11 +33,13 @@ def main() -> int:
     print(f"ckpt: V={V} n_mels={n_mels} hidden={hidden} best={ck.get('best'):.3f} Tmax={tmax}")
 
     class Enc(nn.Module):
+        # MUST mirror the trainer's Sequential indexing (Dropout shifts indices;
+        # eval-mode dropout folds to identity at export).
         def __init__(s):
             super().__init__()
             s.net = nn.Sequential(
-                nn.Conv1d(n_mels, hidden, 3, padding=1), nn.ReLU(),
-                nn.Conv1d(hidden, hidden, 3, padding=1), nn.ReLU(),
+                nn.Conv1d(n_mels, hidden, 3, padding=1), nn.ReLU(), nn.Dropout(0.0),
+                nn.Conv1d(hidden, hidden, 3, padding=1), nn.ReLU(), nn.Dropout(0.0),
                 nn.Conv1d(hidden, hidden, 3, padding=1), nn.ReLU())
             s.head = nn.Conv1d(hidden, V + 1, 1)
 
