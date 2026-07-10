@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 # Fence tolerance (AUDIT + live console 2026-07-10): the reason-SFT model emits
 # '``` tool_code', '```toolcode', '```tool code', and — when generation hits
 # max_tokens mid-block — UNCLOSED fences. (?:```|\Z) accepts the truncated tail.
-_TOOLCODE_RE = re.compile(r"```[ \t]*tool[_ ]?code\s*(.*?)(?:```|\Z)", re.DOTALL | re.IGNORECASE)
+_TOOLCODE_RE = re.compile(r"```[ \t]*tool[-_ ]?code\s*(.*?)(?:```|\Z)", re.DOTALL | re.IGNORECASE)  # live census: also 'Tool-Code'
 _TOOL_RE = re.compile(r'<tool\s+name="([^"]+)"\s*>(.*?)</tool>', re.DOTALL)
 # ```python / ```py / ```tool fences are accepted ONLY when the parsed call names are
 # known tools (see _parse_tool_calls(known=...)) so code-example answers pass through.

@@ -48,7 +48,13 @@ def parse_persona(text: str) -> Tuple[str, Dict[str, str]]:
 def render_state(state: Dict[str, str]) -> str:
     """Compact current-state line for the system prefix. '' if nothing renderable."""
     parts = [f"{k}: {state[k]}" for k in KNOWN if state.get(k)]
-    return ("Current personality state — " + "; ".join(parts) + ".") if parts else ""
+    if not parts:
+        return ""
+    # Live-play 2026-07-10: "how are you feeling?" got the literal answer "Neutral." —
+    # the model recited the state label. Tell it these are internal dials, not lines.
+    return ("Current personality state — " + "; ".join(parts) + ". "
+            "(These are internal dials that COLOR how you speak — express them naturally; "
+            "never recite the labels when asked how you feel.)")
 
 
 def write_state(path: str, state: Dict[str, str]) -> None:

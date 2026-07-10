@@ -224,6 +224,17 @@ def agent_chat_stream(
         # past the hold window). known-name filtering keeps code examples inert.
         calls = _parse_tool_calls(buf, known=set(tool_index))
         if not calls:
+            # MALFORMED-FENCE RECOVERY (live: '```Tool-Code # just a comment' flushed raw):
+            # the model opened a tool-ish fence but nothing parsed — re-prompt it once with
+            # the format instead of showing the broken fence (mirrors run_with_tools).
+            import re as _re
+            if is_tool and _re.search(r"```[ \t]*tool", buf, _re.IGNORECASE):
+                convo.append({"role": "assistant", "content": buf})
+                convo.append({"role": "user", "content":
+                    "```tool_output\n[parse error] That call could not be parsed. Emit ONE fenced "
+                    "block exactly like:\n```tool_code\nget_time()\n```\nwith a REAL function call "
+                    "from the list (not a comment), or answer in plain text with no fence.\n```"})
+                continue
             if is_tool is not False:  # never streamed -> flush it as the answer
                 yield buf
             return
