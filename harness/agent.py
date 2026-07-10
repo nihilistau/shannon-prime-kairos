@@ -206,32 +206,34 @@ def agent_chat_stream(
             buf += delta
             if is_tool is None:
                 s = buf.lstrip()
-                # AUDIT 2026-07-10: ANY fence-leading generation is a tool CANDIDATE —
-                # the reason model drifts to '``` tool_code' / '```python' variants.
-                # The parser resolves it at generation end (unparsed fences flush as-is);
-                # cost = fence-leading answers are flushed whole, not token-streamed.
-                if s.startswith("```") or "```tool" in s:
+                # Live-console fix 2026-07-10: the model often emits PROSE-THEN-FENCE
+                # ("Certainly! Let me check... ```toolcode web_search(...)"), so deciding
+                # "answer" on the first characters leaked raw fences to the UI. Hold the
+                # buffer until a fence appears ANYWHERE (tool candidate, resolved by the
+                # parser at generation end) or ~80 chars arrive fence-free (stream it).
+                if "```" in s:
                     is_tool = True
-                elif s and s[0] != "`" and len(s) >= 4:
+                elif len(s) >= 80:
                     is_tool = False
                     yield buf  # flush the buffered answer prefix
             elif is_tool is False:
                 yield delta  # stream the answer live
             # is_tool True -> keep buffering silently
-        # generation finished
-        if not is_tool:
-            if is_tool is None:  # ambiguous/short -> it was an answer; flush
-                yield buf
-            return
+        # generation finished — parse regardless of how it streamed: short/ambiguous
+        # generations and streamed answers may still carry a late fence (prose-then-fence
+        # past the hold window). known-name filtering keeps code examples inert.
         calls = _parse_tool_calls(buf, known=set(tool_index))
-        if not calls:  # looked like a tool fence but parsed nothing -> show it
-            yield buf
+        if not calls:
+            if is_tool is not False:  # never streamed -> flush it as the answer
+                yield buf
             return
         convo.append({"role": "assistant", "content": buf})
         outputs = []
+        from harness.mcp.tools import resolve_tool
         for name, args, kwargs in calls:
-            spec = tool_index.get(name)
-            result = spec.call(*args, **kwargs) if spec else f"[unknown tool: {name}]"
+            spec = resolve_tool(tool_index, name)
+            result = spec.call(*args, **kwargs) if spec else \
+                f"[unknown tool: {name} — available: {', '.join(sorted(tool_index))}]"
             if on_tool:
                 on_tool(name, {"args": args, "kwargs": kwargs}, result)
             outputs.append(f"{name} -> {result}")

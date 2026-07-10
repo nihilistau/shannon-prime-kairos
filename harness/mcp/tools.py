@@ -34,12 +34,31 @@ logger = logging.getLogger(__name__)
 # Gemma-native: the model wraps calls in a ```tool_code fenced block (Python-style
 # calls), and results return in ```tool_output. This is what Gemma is trained to emit.
 # We also accept the legacy <tool …>{json}</tool> form as a fallback.
-_TOOLCODE_RE = re.compile(r"```[ \t]*tool_code\s*(.*?)```", re.DOTALL)  # tolerates '``` tool_code'
+# Fence tolerance (AUDIT + live console 2026-07-10): the reason-SFT model emits
+# '``` tool_code', '```toolcode', '```tool code', and — when generation hits
+# max_tokens mid-block — UNCLOSED fences. (?:```|\Z) accepts the truncated tail.
+_TOOLCODE_RE = re.compile(r"```[ \t]*tool[_ ]?code\s*(.*?)(?:```|\Z)", re.DOTALL | re.IGNORECASE)
 _TOOL_RE = re.compile(r'<tool\s+name="([^"]+)"\s*>(.*?)</tool>', re.DOTALL)
-# AUDIT 2026-07-10: the reason-SFT model also emits ```python / ```py / ```tool fences
-# around tool calls. Those are accepted ONLY when the parsed call names are known tools
-# (see _parse_tool_calls(known=...)) so genuine code-example answers pass through.
-_ANYFENCE_RE = re.compile(r"```[ \t]*(?:python|py|tool)[ \t]*\n(.*?)```", re.DOTALL)
+# ```python / ```py / ```tool fences are accepted ONLY when the parsed call names are
+# known tools (see _parse_tool_calls(known=...)) so code-example answers pass through.
+_ANYFENCE_RE = re.compile(r"```[ \t]*(?:python|py|tool)[ \t]*\n?(.*?)(?:```|\Z)", re.DOTALL | re.IGNORECASE)
+# live mutation 'get _time()' — heal a space split around an underscore in a call name.
+_NAME_SPLIT_RE = re.compile(r"\b(\w+)\s+_\s*(\w+)\s*\(")
+
+
+def resolve_tool(tool_index: Dict[str, "ToolSpec"], name: str) -> Optional["ToolSpec"]:
+    """Exact, then normalized (case/underscore/hyphen-insensitive) tool lookup —
+    the 12B emits 'gettime()' for get_time; don't fail the round on a typo."""
+    spec = tool_index.get(name)
+    if spec is not None:
+        return spec
+    def norm(s: str) -> str:
+        return s.lower().replace("_", "").replace("-", "")
+    n = norm(name)
+    for k, v in tool_index.items():
+        if norm(k) == n:
+            return v
+    return None
 
 
 # ──── ToolSpec ────────────────────────────────────────────────────────────
@@ -230,6 +249,7 @@ def build_tool_system(
 def _calls_from_code(code: str) -> List[tuple]:
     """AST-parse a code block into [(name, args, kwargs)] call tuples."""
     calls: List[tuple] = []
+    code = _NAME_SPLIT_RE.sub(r"\1_\2(", code)  # heal 'get _time()' -> 'get_time()'
     try:
         tree = ast.parse(code, mode="exec")
     except SyntaxError:
@@ -273,8 +293,32 @@ def _parse_tool_calls(text: str, known: Optional[set] = None) -> List[tuple]:
                 kw = {}
             calls.append((name, [], kw if isinstance(kw, dict) else {}))
     if not calls and known:  # fence-drift fallback: only KNOWN tool names count
-        for block in _ANYFENCE_RE.findall(text):
-            calls.extend(c for c in _calls_from_code(block.strip()) if c[0] in known)
+        def _norm(s: str) -> str:
+            return s.lower().replace("_", "").replace("-", "")
+        known_norm = {_norm(k) for k in known}
+        py_blocks: List[str] = []
+        for m in re.finditer(r"```[ \t]*(python|py|tool)\b[ \t]*\n?(.*?)(?:```|\Z)",
+                             text, re.DOTALL | re.IGNORECASE):
+            tag, block = m.group(1), m.group(2).strip()
+            # model mashups seen live: '```python\ntool_code websearch(...)' — strip the
+            # stray tool_code token so the call underneath parses.
+            block = re.sub(r"^\s*tool_?code\b[:\s]*", "", block)
+            cs = [c for c in _calls_from_code(block) if _norm(c[0]) in known_norm]
+            calls.extend(cs)
+            if not cs and tag in ("python", "py") and block:
+                py_blocks.append(block)
+        # AUTO-ROUTE (live console 2026-07-10): when the model writes a GENUINE python
+        # block instead of calling a tool ('```python\nimport datetime...'), run it
+        # through the sandboxed run_python tool — identical power to the explicit call
+        # it was supposed to make, and the feedback loop shows it the real output.
+        if not calls and "run_python" in known:
+            for block in py_blocks:
+                try:
+                    if ast.parse(block, mode="exec").body:
+                        calls.append(("run_python", [block], {}))
+                        break
+                except SyntaxError:
+                    continue
     return calls
 
 
@@ -329,8 +373,9 @@ def run_with_tools(
         convo.append({"role": "assistant", "content": text})
         outputs = []
         for name, args, kwargs in calls:
-            spec = tool_index.get(name)
-            result = spec.call(*args, **kwargs) if spec else f"[unknown tool: {name}]"
+            spec = resolve_tool(tool_index, name)
+            result = spec.call(*args, **kwargs) if spec else \
+                f"[unknown tool: {name} — available: {', '.join(sorted(tool_index))}]"
             if on_tool:
                 on_tool(name, {"args": args, "kwargs": kwargs}, result)
             outputs.append(f"{name} -> {result}")

@@ -322,6 +322,16 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
                       if m.get("role") == "user"), "")
     want_recall = _os.environ.get("SP_SPINE_RECALL", "0") == "1"
     want_toolset = _os.environ.get("SP_SPINE_TOOLSET", "0") == "1"
+    # HINDSIGHT recall hygiene (live console): spine recall fired on greetings/acks and
+    # surfaced junk episodes ("hi there!" x3) into the note. QONLY-style gate: only
+    # inject recall on turns that actually ASK something (mirrors the daemon L5 QONLY).
+    _t = (user_text or "").strip().lower()
+    _first = _t.split()[0] if _t.split() else ""
+    _looks_q = _t.endswith("?") or _first in {
+        "what", "who", "where", "when", "why", "how", "which", "do", "does",
+        "did", "is", "are", "am", "can", "could", "remind", "recall", "tell"}
+    if want_recall and not _looks_q:
+        want_recall = False
     # ── HINDSIGHT 2026-07-10: PROFILE-SELECTED RECALL AUTHORITY ──
     # SP_GATEWAY_AUTHORITY=spine (the kairos agent profile) makes the HARNESS the one
     # recall authority and refuses the client's auto_recall passthrough. Why: the
