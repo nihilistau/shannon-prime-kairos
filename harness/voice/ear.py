@@ -19,7 +19,11 @@ import numpy as np
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 VOICE_DIR = os.environ.get("SP_VOICE_DIR", os.path.join(_ROOT, "var", "voice"))
-IR_XML = os.path.join(VOICE_DIR, "audio_ctc_pot_gna.xml")
+# newest ear first: the P1 conversational IR (voice_ctc), else the gated KAI-3 POT IR.
+_CANDIDATE_IRS = ("voice_ctc.xml", "audio_ctc_pot_gna.xml")
+IR_XML = next((os.path.join(VOICE_DIR, n) for n in _CANDIDATE_IRS
+               if os.path.isfile(os.path.join(VOICE_DIR, n))),
+              os.path.join(VOICE_DIR, _CANDIDATE_IRS[0]))
 WSUB_NPZ = os.path.join(VOICE_DIR, "wsub.npz")
 
 _state: dict = {}

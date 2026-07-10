@@ -80,14 +80,23 @@ def find_embed_shard(bucket: str) -> tuple[str, str]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--bucket", default=r"D:\Files\Models\Gemma4\gemma-4-12b-bucket")
-    ap.add_argument("--frames", default=os.path.join(KAI3, "audio_frames.npz"))
+    ap.add_argument("--frames", default=None,
+                    help="npz with vsub_ids (default: var/voice/vsub.npy, else KAI-3 frames)")
     ap.add_argument("--tau", type=float, default=0.2)
     a = ap.parse_args()
 
     os.makedirs(OUT_DIR, exist_ok=True)
-    z = np.load(a.frames)
-    vsub = z["vsub_ids"].astype(np.int64)
-    print(f"vsub_ids: {len(vsub)} tokens from {a.frames}")
+    vsub_npy = os.path.join(OUT_DIR, "vsub.npy")
+    if a.frames:
+        vsub = np.load(a.frames)["vsub_ids"].astype(np.int64)
+        src = a.frames
+    elif os.path.isfile(vsub_npy):
+        vsub = np.load(vsub_npy).astype(np.int64)
+        src = vsub_npy
+    else:
+        vsub = np.load(os.path.join(KAI3, "audio_frames.npz"))["vsub_ids"].astype(np.int64)
+        src = "KAI-3 audio_frames.npz"
+    print(f"vsub_ids: {len(vsub)} tokens from {src}")
 
     shard, name = find_embed_shard(a.bucket)
     print(f"embed shard: {shard} :: {name}")
