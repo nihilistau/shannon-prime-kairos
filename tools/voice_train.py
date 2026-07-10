@@ -26,13 +26,17 @@ def main() -> int:
     ap.add_argument("--lr", type=float, default=2e-3)
     ap.add_argument("--batch_size", type=int, default=64)
     ap.add_argument("--hidden", type=int, default=256)   # GNA out-ch <=256
+    ap.add_argument("--gpu", action="store_true", help="use CUDA (only when the daemon is down)")
     ap.add_argument("--out", default=os.path.join(OUT, "voice_ctc.pt"))
     a = ap.parse_args()
 
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
-    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    # CPU by DESIGN: the 2060 is Gemma's — a tiny 3-conv CTC net trains fine on CPU
+    # in ~1 min, and a cuda-init here contends with the serving daemon (observed
+    # stall). Pass --gpu to override when the daemon is down.
+    dev = "cuda" if (a.gpu and torch.cuda.is_available()) else "cpu"
 
     d = np.load(a.frames, allow_pickle=True)
     vsub = d["vsub_ids"]
