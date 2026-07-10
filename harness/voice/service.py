@@ -21,7 +21,7 @@ from typing import Any, Dict, Iterator
 
 import numpy as np
 
-from harness.voice import dsp, ear
+from harness.voice import dsp, ear, native
 
 VOICE_PH = 258881          # the gemma-4 audio placeholder (KAI-3 constant)
 VAD_RMS = float(os.environ.get("SP_VOICE_VAD_RMS", "0.010"))
@@ -54,37 +54,46 @@ def voice_turn(body: Dict[str, Any], transcript: list) -> Iterator[bytes]:
         yield b"data: [DONE]\n\n"
         return
 
-    mel = dsp.logmel(pcm)
-    try:
-        frames = ear.hear(mel)
-    except ear.EarUnavailable as exc:
-        yield ev({"error": f"ear unavailable: {exc}"})
-        yield b"data: [DONE]\n\n"
-        return
+    # ── NATIVE encoder-free audio path (THE POINT: raw audio -> the model's own
+    #    embed_audio.embedding_projection -> inject at audio token 258881). The CTC
+    #    "ear" was a transcription substitute; the native path is what Gemma was
+    #    trained to interpret as sound. SP_VOICE_EAR=1 forces the legacy CTC path. ──
+    use_native = native.available() and os.environ.get("SP_VOICE_EAR") != "1"
+    if use_native:
+        frames = native.encode(pcm)
+        path = f"native (embed_audio {native.status().get('E')}d)"
+    else:
+        try:
+            frames = ear.hear(dsp.logmel(pcm))
+        except ear.EarUnavailable as exc:
+            yield ev({"error": f"ear unavailable: {exc}"})
+            yield b"data: [DONE]\n\n"
+            return
+        path = f"ctc-ear ({ear.status().get('device')})"
 
-    st = ear.status()
-    yield ev({"voice": {"frames": int(frames.shape[0]), "device": st.get("device"),
-                        "seconds": round(pcm.size / dsp.SR, 2)}})
-    if frames.shape[0] == 0:
-        yield ev({"delta": "(I heard sound but nothing I could make out yet — my "
-                           "spoken vocabulary is still small. P1 fixes that.)"})
-        yield b"data: [DONE]\n\n"
-        return
-
-    # P1.5 graceful framing: the ear is still learning REAL-mic speech (trained on
-    # synthetic voices), so injected tokens are often partial. Tell the model to
-    # respond to what it CAN make out and ASK rather than confabulate — this stops
-    # the "invent a whole backstory" failure mode on unclear audio.
     n_fr = int(frames.shape[0])
-    guide = ("The user just SPOKE to you; their words were transcribed to audio "
-             "frames but the transcription is imperfect and may be partial. Reply "
-             "naturally and briefly to what you can make out. If it is unclear or "
-             "too short to tell, say you didn't quite catch it and ask them to "
-             "repeat — do NOT invent facts or a backstory.")
+    yield ev({"voice": {"frames": n_fr, "path": path,
+                        "seconds": round(pcm.size / dsp.SR, 2)}})
+    if n_fr == 0:
+        yield ev({"delta": "(I heard sound but couldn't extract audio frames.)"})
+        yield b"data: [DONE]\n\n"
+        return
+
+    # NATIVE audio: the daemon appends the injected frames right AFTER the full
+    # prompt (each minted as the <|audio|> token 258881 — HF masked_scatter parity).
+    # So the LAST message's text must be the instruction that immediately precedes
+    # the audio, and it must NOT mention "frames"/counts or add <|audio> boa/eoa
+    # markers — doing so makes the model ECHO the text or double-count the audio
+    # (proven: a clean "listen and reply" prompt transcribes real speech; adding
+    # frame-count text or boa/eoa breaks it). The audio itself IS the user turn.
+    instr = os.environ.get(
+        "SP_VOICE_PROMPT",
+        "The user just spoke to you out loud. First understand exactly what they "
+        "said, then reply directly and briefly to their actual words — do not "
+        "invent content you did not hear:")
     turn = list(transcript)
-    turn.append({"role": "system", "content": guide})
-    turn.append({"role": "user", "content": f"[voice utterance, {n_fr} audio frames]"})
-    transcript.append({"role": "user", "content": f"[voice utterance, {n_fr} audio frames]"})
+    turn.append({"role": "user", "content": instr})
+    transcript.append({"role": "user", "content": "[voice message]"})
 
     from harness.inference.client import get_client
     client = get_client()
@@ -94,9 +103,9 @@ def voice_turn(body: Dict[str, Any], transcript: list) -> Iterator[bytes]:
         "inject_ph": VOICE_PH,
         # P1.5: double the ceiling — voice replies were truncating mid-sentence.
         "max_tokens": int(body.get("max_tokens", 256)),
-        "temperature": float(body.get("temperature", 0.6)),
-        "repetition_penalty": 1.3,
-        "eot_bias": 4.0,
+        "temperature": float(body.get("temperature", 0.3)),
+        "repetition_penalty": 1.15,
+        "eot_bias": float(body.get("eot_bias", 1.0)),
     }
     reply_parts: list = []
     try:
