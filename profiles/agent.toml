@@ -1,0 +1,30 @@
+# G-KAIROS-P3 target shape (P0 sketch - not yet consumed)
+[serve]
+model = 'gemma4-12b-b1-reason.sp-model'
+port = 3000
+gateway_port = 8800
+
+[kv]
+persist = true
+persist_b4 = true
+ring_w = 2048
+pmax = 12096
+prefix_snapshot = true   # P1
+
+[memory]
+recall_authority = 'L5'   # schema forbids two
+registry = 'var/memory/registry.jsonl'
+growth = true
+classify = true
+policy = true
+qkey_mint = true
+
+[agent]
+spine_toolset = true
+spine_recall = true
+personality = true
+mcp_tools = true
+
+[decode]
+mtp = true   # P1 re-gate; 40.8 tok/s bit-identical proven
+eot_bias = 4.0
