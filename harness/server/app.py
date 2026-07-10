@@ -267,6 +267,15 @@ def _session_transcript(body: Dict[str, Any]) -> list:
     return canon
 
 
+def _voice_status() -> Dict[str, Any]:
+    """ADR-KAI4: is the GNA ear loadable, and on which device?"""
+    try:
+        from harness.voice.service import voice_status
+        return voice_status()
+    except Exception as exc:
+        return {"ear": {"ok": False, "error": str(exc)}}
+
+
 def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
     """The console's native /v1/chat: {messages} -> SSE data: {...} -> [DONE], run through the
     streaming AGENT (tool calling).
@@ -508,6 +517,20 @@ def _run_stdlib(host: str, port: int) -> None:
                 self.send_header("Content-Type", "text/event-stream"); self.end_headers()
                 for chunk in _native_chat_sse(body):
                     self.wfile.write(chunk); self.wfile.flush()
+            elif self.path == "/v1/voice":  # ADR-KAI4 P0: one VAD-segmented utterance
+                body = self._body()
+                self.send_response(200); _cors(self)
+                self.send_header("Content-Type", "text/event-stream"); self.end_headers()
+                try:
+                    from harness.voice.service import voice_turn
+                    transcript = _session_transcript({"session_id": body.get("session_id"),
+                                                      "messages": body.get("messages", [])})
+                    for chunk in voice_turn(body, transcript):
+                        self.wfile.write(chunk); self.wfile.flush()
+                except Exception as exc:
+                    self.wfile.write(("data: " + json.dumps(
+                        {"error": f"voice: {exc}"}) + "\n\ndata: [DONE]\n\n").encode())
+                    self.wfile.flush()
             elif self.path == "/v1/persona":  # PK2 §P1 persona editor (write persona.md)
                 body = self._body()
                 payload = json.dumps(_persona_set(body.get("persona", ""))).encode()
@@ -532,6 +555,7 @@ def _run_stdlib(host: str, port: int) -> None:
         def do_GET(self):  # noqa: N802
             _json_routes = {
                 "/health": lambda: {"ok": True, "agent": True, "daemon": get_client().health()},
+                "/v1/voice/status": _voice_status,   # ADR-KAI4: ear device/artifacts state
                 "/v1/memory": _memory_json,      # PK2 §U1 memory-browser data
                 "/v1/tasks": _tasks_json,        # PK2 §U1 task-queue data
                 "/v1/persona": _persona_get,     # PK2 §P1 persona editor (load)
