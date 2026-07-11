@@ -218,7 +218,9 @@ def agent_chat_stream(
 
     for _round in range(max_rounds):
         buf = ""
-        is_tool = None  # None = undecided, True = tool call (silent), False = answer (streamed)
+        flushed = 0     # chars already yielded to the client (never re-sent)
+        is_tool = None  # None = undecided, True = tool call (silent), False = answer
+                        # (streaming), "late" = fence appeared MID-STREAM (held)
         for delta in client.chat_stream(messages=[system] + convo, config=cfg):
             buf += delta
             if is_tool is None:
@@ -233,9 +235,23 @@ def agent_chat_stream(
                 elif len(s) >= 80:
                     is_tool = False
                     yield buf  # flush the buffered answer prefix
+                    flushed = len(buf)
             elif is_tool is False:
-                yield delta  # stream the answer live
-            # is_tool True -> keep buffering silently
+                # P1b-2 live-play fix (2026-07-11): a LATE fence past the 80-char
+                # hold streamed RAW to the UI ("```tool web_search('who is the
+                # user')```" visible in the console) and never re-entered the
+                # recovery path. HOLD from the first fence marker onward; the
+                # end-of-generation parse decides (execute / re-prompt / flush).
+                fi = buf.find("```", max(0, flushed - 2))  # marker may straddle deltas
+                if fi >= 0:
+                    if fi > flushed:
+                        yield buf[flushed:fi]
+                        flushed = fi
+                    is_tool = "late"
+                else:
+                    yield buf[flushed:]
+                    flushed = len(buf)
+            # is_tool True/"late" -> keep buffering silently
         # generation finished — parse regardless of how it streamed: short/ambiguous
         # generations and streamed answers may still carry a late fence (prose-then-fence
         # past the hold window). known-name filtering keeps code examples inert.
@@ -252,8 +268,8 @@ def agent_chat_stream(
                     "block exactly like:\n```tool_code\nget_time()\n```\nwith a REAL function call "
                     "from the list (not a comment), or answer in plain text with no fence.\n```"})
                 continue
-            if is_tool is not False:  # never streamed -> flush it as the answer
-                yield buf
+            if is_tool is not False:  # never/partially streamed -> flush the unsent tail
+                yield buf[flushed:]   # (flushed=0 when nothing streamed = whole buf)
             return
         convo.append({"role": "assistant", "content": buf})
         outputs = []

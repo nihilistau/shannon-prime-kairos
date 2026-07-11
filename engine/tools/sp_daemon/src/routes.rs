@@ -1491,6 +1491,11 @@ fn run_kvdecode_chat(
         // Byte-exact: the reused prefix K/V is the same deterministic compute; the new suffix is
         // prefilled fresh, overwriting the rewound positions.
         const REWIND_BOUND: usize = 32;
+        // P1b-2 diagnostics: a silent guard miss = a silent FULL re-prefill
+        // (minutes). Name the reason so log forensics never has to guess again.
+        if cl >= 1 && pos as usize != cl {
+            tracing::info!("PERSIST-KV: guard miss (pos={} != committed {}) — full prefill", pos, cl);
+        }
         if cl >= 1 && pos as usize == cl {
             let maxp = cl.min(tokens.len().saturating_sub(1));
             let mut lcp = 0usize;
@@ -1821,7 +1826,15 @@ fn run_kvdecode_chat(
         if outcome.recalled.is_some() { recalled = outcome.recalled; }
         if outcome.symbolic_decline.is_some() { symbolic_decline = outcome.symbolic_decline; }
         syn_last = outcome.syn_last;
-    } else if auto_recall && replay_dir.is_none() && !forget_done {
+    // P1b-2 (rehomed console, 2026-07-11): the in-kernel L5 DELIVERY lane is
+    // legacy. The harness (spine executors, gateway authority) is the ONE
+    // recall authority; the console reaches it via :8800 and falls back to
+    // daemon-direct with auto_recall:false when the gateway is down (verbs
+    // only — degraded but honest). legacy_policy keeps the lane compiled for
+    // the default build (rollback + byte-identical today-behavior); the
+    // kernel build (-legacy_policy) folds it to false ⇒ verbs only.
+    } else if cfg!(feature = "legacy_policy")
+        && auto_recall && replay_dir.is_none() && !forget_done {
         if let Some(registry) = app.recall_registry.as_ref() {
             let npos_q = unsafe { kv::position(handle) }; // = head.len() after prefill
             if npos_q > 0 {

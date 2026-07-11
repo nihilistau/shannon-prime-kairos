@@ -399,8 +399,48 @@
      The daemon ships CorsLayer::permissive() so file:// works too. */
   const isHttp = location.protocol === 'http:' || location.protocol === 'https:';
   const DEFAULT_DAEMON = 'http://127.0.0.1:3000';
-  let DAEMON = isHttp ? location.origin : (localStorage.getItem('sp_endpoint') || DEFAULT_DAEMON);
+  const DEFAULT_GATEWAY = 'http://127.0.0.1:8800';
+  // The daemon surface (metrics/telemetry/abort/mesh). If the console is being
+  // SERVED by the gateway (:8800 statics), origin is not the daemon — fall to default.
+  let DAEMON = (isHttp && !location.origin.includes(':8800'))
+    ? location.origin : (localStorage.getItem('sp_endpoint') || DEFAULT_DAEMON);
   const wsBase = () => DAEMON.replace(/^http/, 'ws');
+
+  /* ===== P1b-2 REHOMING (2026-07-11): chat goes through the GATEWAY — the
+     harness is the ONE recall authority (HINDSIGHT lesson 3); the kernel is
+     verbs. The daemon stays the metrics/telemetry/abort surface. Gateway down
+     ⇒ fall back to daemon-direct with recall EXPLICITLY OFF + a visible chip
+     (degraded but honest: plain chat still serves, memory policy does not). */
+  const GATEWAY = localStorage.getItem('sp_gateway') || DEFAULT_GATEWAY;
+  let CHAT_BASE = GATEWAY;      // resolved live by probeGateway()
+  let CHAT_FALLBACK = false;    // true ⇒ daemon-direct, recall offline
+  let sessionId = (crypto.randomUUID ? crypto.randomUUID() : ('s' + Date.now() + Math.random()));
+  let chatChip = null;
+  function setChatChip() {
+    if (!chatChip) {
+      const anchor = document.getElementById('conn-pill');
+      chatChip = document.createElement('span');
+      chatChip.id = 'chat-path-chip';
+      chatChip.style.cssText = 'margin-left:8px;padding:2px 8px;border-radius:10px;font-size:10px;border:1px solid var(--rule);white-space:nowrap;';
+      if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(chatChip, anchor.nextSibling);
+      else document.body.appendChild(chatChip);
+    }
+    if (CHAT_FALLBACK) {
+      chatChip.textContent = '⚠ recall offline — kernel-only (gateway down)';
+      chatChip.style.color = 'var(--warn)'; chatChip.style.borderColor = 'var(--warn)';
+    } else {
+      chatChip.textContent = 'gateway · spine recall';
+      chatChip.style.color = 'var(--ok)'; chatChip.style.borderColor = 'var(--rule)';
+    }
+  }
+  async function probeGateway() {
+    try {
+      const r = await fetch(`${GATEWAY}/health`, { signal: AbortSignal.timeout(2500) });
+      if (r.ok) { CHAT_BASE = GATEWAY; CHAT_FALLBACK = false; setChatChip(); return; }
+    } catch (_) {}
+    CHAT_BASE = DAEMON; CHAT_FALLBACK = true; setChatChip();
+  }
+  probeGateway(); setInterval(probeGateway, 15000);
 
   const $ = (id) => document.getElementById(id);
 
@@ -608,7 +648,7 @@
   }
 
   async function streamChat(bodyObj) {
-    const resp = await fetch(`${DAEMON}/v1/chat`, {
+    const resp = await fetch(`${CHAT_BASE || DAEMON}/v1/chat`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(bodyObj), signal: abortCtrl.signal,
     });
@@ -680,9 +720,14 @@
       // Prefer multi-turn messages (server applies the chat template);
       // fall back to a client-side gemma prompt if no server template exists.
       const s = samplerBody();
+      // P1b-2: session_id = the gateway's canonical-transcript key (strict
+      // persist-KV extensions); on fallback the kernel serves VERBS ONLY —
+      // recall explicitly off (policy lives in the harness, not routes.rs).
+      const extra = { session_id: sessionId };
+      if (CHAT_FALLBACK) extra.auto_recall = false;
       // 384 (3x the old 128): operator live-play 2026-07-11 — replies cut mid-sentence.
-      let res = await streamChat({ messages: history, max_tokens: 384, ...s });
-      if (res && res.retryPrompt) res = await streamChat({ prompt: gemmaPrompt(history), max_tokens: 384, ...s });
+      let res = await streamChat({ messages: history, max_tokens: 384, ...s, ...extra });
+      if (res && res.retryPrompt) res = await streamChat({ prompt: gemmaPrompt(history), max_tokens: 384, ...s, ...extra });
       const finalText = (res && res.text || '').trim();
       history.push({ role: 'assistant', content: finalText });
     } catch (err) {

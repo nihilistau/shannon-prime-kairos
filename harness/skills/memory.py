@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.request
 from typing import List
@@ -177,12 +178,24 @@ def count_memories() -> str:
 # ──── ADR-007: ranked memory search (scales past the list_memories dump) ─────
 def search_memories_ranked(query: str, k: int = 5, min_overlap: float = 0.25):
     """Internal: [(score, text)] of the top-k facts by token overlap with the query,
-    filtered at min_overlap. The RecallDecider + search tool ride this."""
+    filtered at min_overlap. The RecallDecider + search tool ride this.
+
+    P1b-2 live-play fix (2026-07-11): the query-normalized overlap dilutes under
+    polite prefixes — "quick check: what is my name?" tokenizes to {quick, check,
+    name} = 1/3 = 0.33, one hundredth UNDER the 0.34 recall threshold, while bare
+    "what is my name?" scores 1.0. The question is almost always the FINAL
+    clause, so score the last [.:;!]-separated clause too and take the max —
+    prefix chatter can no longer dilute a clean question. Deterministic; the
+    junk-recall floor (QONLY gate + threshold) is unchanged for single-clause turns.
+    """
+    clause = re.split(r"[.:;!]", query)[-1].strip() or query
     eps = _load()
     scored = []
     for e in eps:
         t = _text(e)
         ov = _overlap(query, t)
+        if clause != query:
+            ov = max(ov, _overlap(clause, t))
         if ov >= min_overlap:
             scored.append((ov, t))
     scored.sort(key=lambda x: -x[0])
