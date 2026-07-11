@@ -85,6 +85,15 @@ def remember(fact: str, source: str = "") -> str:
     p = _reg_path()
     if not p:
         return "[no registry configured]"
+    # ADMISSION AT THE STORE (2026-07-12). The daemon's B4 gate now refuses impersonal
+    # sentences — and she immediately stored one THROUGH THIS TOOL instead (G-ADMISSION
+    # caught an ep_tool_ row holding "The kind nurse painted the tall building..."). An
+    # invariant guarded in only ONE of the paths into memory is not guarded. Every path
+    # enforces it now.
+    from harness.skills import lifecycle as lc
+    ok, why = lc.is_memorable(fact)
+    if not ok:
+        return f"not stored — {why}"
     existing = _load()
     # Idempotent EXACT: never store a fact already in memory verbatim (prevents the agency
     # loop from accumulating duplicates when it re-asserts an existing fact).

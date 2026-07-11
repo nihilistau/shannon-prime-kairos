@@ -126,6 +126,49 @@ def find_superseded(new_fact: str, speaker: str, rows: Iterable[dict]) -> list[d
     return out
 
 
+# ── ADMISSION (the store enforces its own invariant) ───────────────────────────
+# The daemon's B4 gate now refuses impersonal sentences — and the model promptly stored
+# one THROUGH THE TOOL instead (g_admission caught it: an `ep_tool_` row holding "The
+# kind nurse painted the tall building..."). She is finally writing, but she has no
+# judgement yet about what counts as a fact.
+#
+# The fix belongs HERE, not in the prompt. A prompt is advice; the store is law. Every
+# path into long-term memory — auto-capture, store verb, remember() — must enforce the
+# same invariant, or the one that doesn't becomes the leak. That is the same shape as
+# the two-recall-authorities bug and the two-admission-authorities bug: an invariant
+# guarded in one place is not guarded.
+_PERSONAL_REF = re.compile(
+    r"\b(i|i'm|i've|im|my|me|mine|myself|you|you're|your|yours|we|our|us)\b", re.I)
+# A proper noun is decided by the WORD, not by its POSITION. Keying on "capitalised and
+# not sentence-initial" wrongly refused "Knack's lucky number is 7741" — a real fact that
+# happens to begin with the name. Instead: capitalised words minus the ones that are
+# merely starting a sentence.
+_CAP = re.compile(r"\b[A-Z][a-z]{2,}\b")
+_CAP_STOP = {
+    "The", "This", "That", "These", "Those", "There", "Here", "They", "Them", "Their",
+    "She", "Her", "His", "Him", "Its", "And", "But", "For", "Not", "Now", "Then",
+    "When", "While", "After", "Before", "Because", "But", "One", "Two", "Three",
+    "Today", "Yesterday", "Tomorrow", "Some", "Any", "Every", "Each", "Both", "Also",
+}
+
+
+def _has_proper_noun(t: str) -> bool:
+    return any(w not in _CAP_STOP for w in _CAP.findall(t))
+
+
+def is_memorable(fact: str) -> tuple[bool, str]:
+    """A memory is ABOUT SOMEONE. An impersonal declarative ("The kind nurse painted the
+    tall building as the sun went down") is a SENTENCE, not a memory — grammatical, in
+    range, and about nobody. 375 of 487 registry rows were exactly that."""
+    t = (fact or "").strip()
+    if len(t.split()) < 3:
+        return False, "too short to be a standalone fact"
+    if _PERSONAL_REF.search(t) or _has_proper_noun(t):
+        return True, ""
+    return False, ("that is a sentence, not a memory — it is not about anyone. "
+                   "Store facts about Knack, or about yourself.")
+
+
 # ── framing ────────────────────────────────────────────────────────────────────
 def strip_prefix(text: str) -> str:
     return text[len(USER_PREFIX):] if text.startswith(USER_PREFIX) else text

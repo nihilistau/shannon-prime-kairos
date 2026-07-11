@@ -1179,9 +1179,21 @@ fn capture_live_episode(app: &Arc<AppState>, text: &str) -> bool {
     let uniq = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis()).unwrap_or(0);
     let name = format!("ep_live_m{uniq}");
-    let engine_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().and_then(|p| p.parent()).unwrap_or_else(|| std::path::Path::new("."));
-    let dir = engine_root.join("_nightshift_live").join(&name);
+    // EPISODE HOME (2026-07-12): episodes used to land in <engine>/_nightshift_live —
+    // INSIDE THE ENGINE SOURCE TREE, beside the crate. That is why 323 of 405 registry
+    // rows still pointed at the OLD staging repo's path: the memories outlived the repo
+    // they were born in, and would have died with it. Episodes belong next to the
+    // registry they are indexed by (var/memory/eps), which is the operator's data, not
+    // the engine's build output. Falls back to the old location only if the registry
+    // env is unset (a bare daemon with no memory configured).
+    let dir = match std::env::var("SP_RECALL_REGISTRY") {
+        Ok(reg) if !reg.trim().is_empty() => std::path::Path::new(&reg)
+            .parent().unwrap_or_else(|| std::path::Path::new("."))
+            .join("eps").join(&name),
+        _ => std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent().and_then(|p| p.parent()).unwrap_or_else(|| std::path::Path::new("."))
+            .join("_nightshift_live").join(&name),
+    };
     let dir_str = dir.to_string_lossy().to_string();
     if std::fs::create_dir_all(&dir).is_err() { return false; }
     { let _ = std::fs::write(dir.join("ep.txt"), text);
@@ -1212,6 +1224,11 @@ fn capture_live_episode(app: &Arc<AppState>, text: &str) -> bool {
             row.insert("npos".into(), (ntok as i32).into());
             row.insert("topic".into(), text.into());
             row.insert("text".into(), text.into());
+            // MEM-OKF v2 lifecycle lane — the explicit store verb speaks the same schema
+            // as remember(), so a fact stored this way can be superseded like any other.
+            row.insert("speaker".into(), "user".into());
+            row.insert("lifecycle".into(), 0.into());
+            row.insert("src".into(), "store verb".into());
             row.insert("sig_bits".into(), sig_hex.into());
             if let Some(mc) = mem_class { row.insert("mem_class".into(), mc.into()); }
             let line = serde_json::Value::Object(row).to_string();
@@ -1772,7 +1789,8 @@ fn run_kvdecode_chat(
                     .trim_matches(|c: char| c == ':' || c == ',' || c.is_whitespace())
                     .to_string();
                 if payload.split_whitespace().count() >= 2 {
-                    if capture_live_episode(app, &format!("The user said: {payload}")) {
+                    // MEM-OKF v2: no "The user said: " prefix — the owner lives in `speaker`.
+                    if capture_live_episode(app, &payload) {
                         symbolic_decline = Some(format!("Stored to memory: {payload}"));
                         tracing::info!("LAYER-2 STORE: explicit verb -> captured + symbolic confirm ({})",
                             payload.chars().take(60).collect::<String>());
@@ -4021,13 +4039,43 @@ Tag of the answer (or [NULL]):");
         // memory via the explicit store verb, which the operator invokes
         // deliberately and can afford to wait for.
         const ADMIT_MAX_WORDS: usize = 120;
+        // ── B4 ADMISSION v2 (2026-07-12): A MEMORY IS ABOUT SOMEONE ──────────────────
+        // The old gate admitted ANY declarative of 4..120 words that wasn't a question.
+        // That is a firehose, and the audit showed what it caught: of 487 registry rows,
+        // 404 were auto-capture and ~375 were voice/ASR TEST CORPUS —
+        //     "The kind nurse painted the tall building as the sun went down."
+        //     "A lonely sailor polished the garden as the church bells rang."
+        // — plus, latterly, my own debug probes. All perfectly grammatical, all
+        // declarative, all 4..120 words, all about NOBODY. They then surfaced mid-answer
+        // as "recalled memories", which is the recall-misfire we keep chasing.
+        //
+        // A durable fact is about a PERSON: it carries a personal reference. This is the
+        // same discriminator that cleanly split the registry in tools/memory/triage.py
+        // (157 rows fell out as "impersonal declarative"). Impersonal sentences are still
+        // TRANSCRIPT — they just are not FACTS, and they no longer enter long-term memory.
+        // Anything genuinely worth keeping still gets there two ways that outrank this:
+        // the explicit store verb, and remember() / remember_about_self(), which she now
+        // actually uses. Escape hatch: SP_B4_ADMIT_PERSONAL=0 restores the old firehose.
+        let personal_ref = {
+            const PRONOUNS: &[&str] = &["i", "i'm", "i've", "im", "my", "me", "mine", "myself",
+                                        "you", "you're", "your", "yours", "we", "our", "us"];
+            lc.split(|c: char| !c.is_alphanumeric() && c != '\'')
+                .any(|w| PRONOUNS.contains(&w))
+        };
+        let require_personal = std::env::var("SP_B4_ADMIT_PERSONAL").as_deref() != Ok("0");
         let admit = !forget_done
             && !is_forget_turn
             && !is_question
             && !is_fenced
             && n_words >= 4
             && n_words <= ADMIT_MAX_WORDS
+            && (!require_personal || personal_ref)
             && !lc.is_empty();
+        if require_personal && !personal_ref && !is_question && !is_fenced
+            && n_words >= 4 && n_words <= ADMIT_MAX_WORDS && !lc.is_empty() {
+            tracing::info!("B4-NIGHTSHIFT: skip (impersonal — a sentence, not a memory): '{}'",
+                           lc.chars().take(56).collect::<String>());
+        }
         if !lc.is_empty() && (is_fenced || ((n_words < 4 || n_words > ADMIT_MAX_WORDS) && !is_question)) {
             tracing::info!("B4-NIGHTSHIFT: skip (admission hygiene: fenced={is_fenced} words={n_words})");
         }
@@ -4143,7 +4191,18 @@ Tag of the answer (or [NULL]):");
                                                         row.insert("dir".into(), dir_str.clone().into());
                                                         row.insert("npos".into(), (ntok as i32).into());
                                                         row.insert("topic".into(), text.clone().into());
-                                                        row.insert("text".into(), format!("The user said: {text}").into());
+                                                        // MEM-OKF v2 (2026-07-12): the OWNER lives in `speaker`, not inside the
+                                                        // sentence. The old "The user said: …" prefix put ownership in the TEXT,
+                                                        // where every reader had to re-derive it — and since 404/405 rows carried
+                                                        // it, the ONLY voice in her long-term memory was the user's. That is why
+                                                        // she slid into speaking as him. It also silently broke the harness's
+                                                        // exact-duplicate guard (the compare no longer matched). Bare text on
+                                                        // disk; harness lifecycle.render() frames it at read time; recall.rs:214
+                                                        // already strips the legacy prefix, so old rows still work.
+                                                        row.insert("text".into(), text.clone().into());
+                                                        row.insert("speaker".into(), "user".into());
+                                                        row.insert("lifecycle".into(), 0.into());
+                                                        row.insert("src".into(), "auto-capture".into());
                                                         row.insert("sig_bits".into(), sig_hex.into());
                                                         if let Some(mc) = mem_class { row.insert("mem_class".into(), mc.into()); }
                                                         let line = serde_json::Value::Object(row).to_string();
