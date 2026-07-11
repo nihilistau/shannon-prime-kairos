@@ -122,3 +122,7 @@ message(STATUS "sp_cuda_daemon_backend: CUDA PTX backend, daemon-link variant")
 message(STATUS "  sources: cuda_backend.cu + cuda_forward.cu + sp_daemon_cuda_glue.c")
 message(STATUS "  CUDA arch: ${CMAKE_CUDA_ARCHITECTURES}")
 message(STATUS "  output:    ${CMAKE_CURRENT_BINARY_DIR}/(lib)sp_cuda_daemon_backend.(lib|a)")
+
+# G-PERF-ATTN (2026-07-12): register/spill visibility. Nobody had ever seen the bx
+# attention kernels' register budget -- and __launch_bounds__(1024) caps Turing at 64.
+target_compile_options(sp_cuda_daemon_backend PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xptxas=-v>)
