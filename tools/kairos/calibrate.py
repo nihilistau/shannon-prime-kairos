@@ -22,7 +22,18 @@ import json
 import statistics
 import urllib.request
 
-DAEMON = "http://127.0.0.1:3000/v1/chat"
+# CALIBRATE ON THE PATH SHE ACTUALLY SERVES ON.
+#
+# The first calibration ran DAEMON-DIRECT (:3000) — bare prompt, no persona, no 1600-token
+# preamble. Production runs through the GATEWAY, and the margins land differently there:
+# the live gate then caught a genuinely cut-off turn at -13.29 against a threshold of
+# -13.75, derived daemon-direct. She was guillotined mid-sentence and stayed silent.
+#
+# A threshold measured on a path the product does not take is not a threshold. Same error
+# as the "-44% preamble" claim earlier today. So: calibrate through :8800, tools off (the
+# agent loop turns a tiny max_tokens into a broken TOOL CALL, not a cut sentence, and the
+# whole signal is about prose).
+GATEWAY = "http://127.0.0.1:8800/v1/chat/completions"
 
 # Turns where she should COMFORTABLY finish.
 #
@@ -60,37 +71,40 @@ def _hit_ceiling(text: str, max_tokens: int) -> bool:
 
 
 def turn(prompt: str, max_tokens: int):
+    """Run one turn through the GATEWAY (persona + preamble = the real serving path) and
+    read the impulse back from the gateway's kairos state."""
     body = json.dumps({
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": max_tokens, "temperature": 0, "auto_recall": False,
+        "max_tokens": max_tokens, "temperature": 0,
+        "tools": False,                      # prose, not a truncated tool call
+        "session": "calib",
     }).encode()
-    req = urllib.request.Request(DAEMON, data=body,
+    req = urllib.request.Request(GATEWAY, data=body,
                                  headers={"Content-Type": "application/json"})
-    raw = urllib.request.urlopen(req, timeout=300).read().decode("utf-8", "replace")
+    j = json.loads(urllib.request.urlopen(req, timeout=600).read().decode())
+    text = j["choices"][0]["message"]["content"]
+    margin = _last_margin()
+    return margin, text
 
-    margin, text = None, []
-    ev = None
-    for line in raw.splitlines():
-        if line.startswith("event:"):
-            ev = line[6:].strip()
-            continue
-        if not line.startswith("data:"):
-            continue
-        p = line[5:].strip()
-        if p == "[DONE]":
-            break
-        try:
-            j = json.loads(p)
-        except Exception:
-            continue
-        if ev == "kairos":
-            margin = j.get("eot_margin")
-            ev = None
-            continue
-        ev = None
-        if j.get("delta"):
-            text.append(j["delta"])
-    return margin, "".join(text)
+
+def _last_margin():
+    """The daemon logs `KAIROS: turn ended — eot_margin=...` for every turn; read the most
+    recent one. (The gateway consumes the SSE event internally, so this is the honest way
+    to observe it from outside without re-plumbing the OpenAI response shape.)"""
+    import os
+    import re
+    log = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "var", "daemon.log")
+    try:
+        with open(log, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return None
+    for ln in reversed(lines[-400:]):
+        m = re.search(r"KAIROS: turn ended .*?eot_margin=(-?[\d.]+)", ln)
+        if m:
+            return float(m.group(1))
+    return None
 
 
 def main() -> int:

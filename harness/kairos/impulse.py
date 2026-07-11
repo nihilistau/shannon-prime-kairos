@@ -72,14 +72,14 @@ class KairosConfig:
     # when she was already done" is the failure that matters, and a missed continuation
     # just means silence, which is the safe default.
     #
-    #     continue_margin = -13.75
+    #     continue_margin = -11.75
     #       0/6 finished turns interrupted   <- she NEVER talks over a completed thought
     #       5/6 genuine cut-offs resumed
     #
     # So on an ordinary turn she is silent BY CONSTRUCTION — not because a rule tells her
     # to be, but because the forward itself reports she had nothing left to say. Re-run
     # the calibration after ANY change to eot_bias, the sampler, or the model.
-    continue_margin: float = -13.75
+    continue_margin: float = -11.75
     max_chain: int = 1          # consecutive unprompted turns before she MUST wait
     cooldown_s: float = 45.0    # after speaking unprompted, be quiet at least this long
     max_per_hour: int = 6
@@ -221,11 +221,31 @@ def note_user(state: TurnState, now: float) -> None:
 
 # The nudge she is given when she speaks unprompted. It must not read as a new user
 # instruction — she is continuing HERSELF, and she should sound like it.
+def continue_nudge(previous_reply: str) -> str:
+    """The nudge must SHOW HER WHERE SHE WAS CUT.
+
+    The first version just said "carry on from where you left off" — and she restated the
+    whole reply verbatim, which worth_saying() then dropped ("100% a restatement"). The
+    safety net held, but the feature did nothing. The daemon templates an assistant
+    message as a COMPLETED turn, so she cannot be given her own text as a prefix to
+    continue from; she has to be TOLD where the sentence broke, and told in the strongest
+    terms not to start it again."""
+    tail = " ".join((previous_reply or "").split()[-14:])
+    return (
+        "(Your last message was cut off mid-sentence. These were your final words:\n"
+        f"    \"...{tail}\"\n"
+        "Continue the sentence from EXACTLY there, as if you had never stopped. Do NOT "
+        "repeat any of it, do NOT start over, do NOT greet him, do NOT apologise. Write "
+        "only the CONTINUATION — one or two sentences, then stop. If the thought was "
+        "actually complete, say nothing at all.)"
+    )
+
+
+# kept for the pure policy gate (no reply text needed there)
 CONTINUE_NUDGE = (
-    "(You stopped mid-thought a moment ago and nobody has said anything since. "
-    "Carry on from where you left off, in your own voice — do not greet, do not "
-    "re-introduce, do not apologise, and do not repeat what you already said. "
-    "One or two sentences. If you actually have nothing to add, say nothing at all.)"
+    "(You stopped mid-thought a moment ago. Continue from exactly where you broke off — "
+    "do not repeat yourself, do not greet, do not start over. One or two sentences. "
+    "If you actually have nothing to add, say nothing at all.)"
 )
 
 CHECK_IN_NUDGE = (
@@ -234,3 +254,4 @@ CHECK_IN_NUDGE = (
     "remembered, something you want to ask. Do not greet him. Do not ask if he is still "
     "there. If nothing is really on your mind, say nothing at all.)"
 )
+

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Shannon-Prime — Tuning</title>
+<style>
+  :root{--bg:#0c0d10;--panel:#14161b;--line:#232833;--txt:#dfe3ea;--dim:#8b93a3;
+        --accent:#7dd3fc;--warn:#fbbf24;--ok:#4ade80;--danger:#f87171;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;padding:28px}
+  h1{font-size:19px;margin:0 0 4px;font-weight:600}
+  .sub{color:var(--dim);font-size:12.5px;margin-bottom:26px}
+  .sub code{color:var(--accent)}
+  .group{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+         padding:18px 20px;margin-bottom:18px}
+  .group h2{font-size:14px;margin:0 0 14px;font-weight:600;color:var(--accent);
+            letter-spacing:.2px}
+  .knob{padding:13px 0;border-top:1px solid var(--line);display:grid;
+        grid-template-columns:1fr 220px;gap:18px;align-items:start}
+  .knob:first-of-type{border-top:none}
+  .name{font-weight:600;font-size:13.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .help{color:var(--dim);font-size:12.5px;margin-top:5px}
+  .tag{font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700;letter-spacing:.4px}
+  .measured{background:rgba(74,222,128,.14);color:var(--ok);border:1px solid rgba(74,222,128,.3)}
+  .chosen{background:rgba(139,147,163,.12);color:var(--dim);border:1px solid var(--line)}
+  .changed{background:rgba(125,211,252,.14);color:var(--accent);border:1px solid rgba(125,211,252,.3)}
+  .receipt{color:var(--ok);font-size:11.5px;margin-top:5px;opacity:.85}
+  .danger{color:var(--warn);font-size:11.5px;margin-top:5px}
+  .ctl{display:flex;flex-direction:column;gap:6px;align-items:stretch}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  input[type=number]{background:#0a0b0e;color:var(--txt);border:1px solid var(--line);
+                     border-radius:6px;padding:6px 8px;font:inherit;width:100%}
+  .row{display:flex;gap:8px;align-items:center}
+  .val{font-variant-numeric:tabular-nums;color:var(--accent);font-weight:600;min-width:58px;
+       text-align:right}
+  .sw{width:44px;height:24px;border-radius:99px;background:#2a2f3a;position:relative;
+      cursor:pointer;transition:background .15s;border:1px solid var(--line)}
+  .sw.on{background:rgba(125,211,252,.35)}
+  .sw i{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:99px;
+        background:var(--txt);transition:left .15s}
+  .sw.on i{left:22px;background:var(--accent)}
+  .bar{position:sticky;bottom:0;background:linear-gradient(transparent,var(--bg) 30%);
+       padding-top:22px;display:flex;gap:10px;align-items:center}
+  button{background:var(--accent);color:#06121a;border:0;border-radius:7px;padding:9px 18px;
+         font:600 13px inherit;cursor:pointer}
+  button.ghost{background:transparent;color:var(--dim);border:1px solid var(--line)}
+  button:disabled{opacity:.45;cursor:default}
+  .status{color:var(--dim);font-size:12.5px}
+  .reset{font-size:11px;color:var(--dim);cursor:pointer;text-decoration:underline;
+         background:none;border:0;padding:0}
+</style>
+
+<h1>Tuning</h1>
+<div class="sub">
+  Live knobs. Nothing here needs a restart — the next turn reads the new value.
+  Declared in <code>harness/tuning/registry.py</code>; this page renders whatever it finds,
+  so a knob added there shows up here on its own.
+</div>
+
+<div id="groups"></div>
+
+<div class="bar">
+  <button id="save" disabled>Save</button>
+  <button class="ghost" id="revert" disabled>Revert</button>
+  <span class="status" id="status"></span>
+</div>
+
+<script>
+const GW = 'http://127.0.0.1:8800';
+let SCHEMA = null, DIRTY = {};
+
+const fmt = (k, v) => k.type === 'float' ? (+v).toFixed(2) : String(v);
+
+async function load() {
+  const r = await fetch(`${GW}/v1/tuning`);
+  SCHEMA = await r.json();
+  DIRTY = {};
+  render();
+}
+
+function render() {
+  const root = document.getElementById('groups');
+  root.innerHTML = '';
+  for (const g of SCHEMA.groups) {
+    const sec = document.createElement('div');
+    sec.className = 'group';
+    sec.innerHTML = `<h2>${g}</h2>`;
+    for (const k of SCHEMA.knobs.filter(x => x.group === g)) sec.appendChild(knobEl(k));
+    root.appendChild(sec);
+  }
+  syncBar();
+}
+
+function knobEl(k) {
+  const el = document.createElement('div');
+  el.className = 'knob';
+  const cur = (k.key in DIRTY) ? DIRTY[k.key] : k.value;
+
+  const tag = k.provenance === 'measured'
+    ? `<span class="tag measured" title="This default was calibrated against the live model.">MEASURED</span>`
+    : `<span class="tag chosen">chosen</span>`;
+  const over = k.overridden ? `<span class="tag changed">overridden</span>` : '';
+
+  const left = document.createElement('div');
+  left.innerHTML =
+    `<div class="name">${k.label} ${tag} ${over}</div>
+     <div class="help">${k.help}</div>
+     ${k.receipt ? `<div class="receipt">✓ ${k.receipt}</div>` : ''}
+     ${k.danger ? `<div class="danger">⚠ ${k.danger}</div>` : ''}
+     ${k.overridden ? `<button class="reset" data-reset="${k.key}">reset to default (${fmt(k, k.default)})</button>` : ''}`;
+
+  const ctl = document.createElement('div');
+  ctl.className = 'ctl';
+  if (k.type === 'bool') {
+    ctl.innerHTML = `<div class="sw ${cur ? 'on' : ''}" data-bool="${k.key}"><i></i></div>`;
+  } else {
+    const hasRange = k.min !== null && k.max !== null;
+    ctl.innerHTML = `
+      <div class="row">
+        <span class="val" id="v-${CSS.escape(k.key)}">${fmt(k, cur)}</span>
+        <input type="number" data-num="${k.key}" value="${cur}"
+               ${k.min !== null ? `min="${k.min}"` : ''} ${k.max !== null ? `max="${k.max}"` : ''}
+               step="${k.step || 1}">
+      </div>
+      ${hasRange ? `<input type="range" data-rng="${k.key}" min="${k.min}" max="${k.max}"
+                          step="${k.step || 1}" value="${cur}">` : ''}`;
+  }
+  el.appendChild(left); el.appendChild(ctl);
+  return el;
+}
+
+function setVal(key, v) {
+  const k = SCHEMA.knobs.find(x => x.key === key);
+  DIRTY[key] = k.type === 'int' ? Math.round(+v) : (k.type === 'bool' ? !!v : +v);
+  const lbl = document.getElementById('v-' + key);
+  if (lbl) lbl.textContent = fmt(k, DIRTY[key]);
+  syncBar();
+}
+
+function syncBar() {
+  const n = Object.keys(DIRTY).length;
+  document.getElementById('save').disabled = !n;
+  document.getElementById('revert').disabled = !n;
+  document.getElementById('status').textContent = n ? `${n} unsaved change${n > 1 ? 's' : ''}` : '';
+}
+
+document.addEventListener('input', e => {
+  const t = e.target;
+  if (t.dataset.num) { setVal(t.dataset.num, t.value);
+    const r = document.querySelector(`[data-rng="${t.dataset.num}"]`); if (r) r.value = t.value; }
+  if (t.dataset.rng) { setVal(t.dataset.rng, t.value);
+    const n = document.querySelector(`[data-num="${t.dataset.rng}"]`); if (n) n.value = t.value; }
+});
+
+document.addEventListener('click', async e => {
+  const sw = e.target.closest('[data-bool]');
+  if (sw) { const key = sw.dataset.bool;
+    const cur = (key in DIRTY) ? DIRTY[key] : SCHEMA.knobs.find(k => k.key === key).value;
+    setVal(key, !cur); sw.classList.toggle('on', !cur); return; }
+
+  const rb = e.target.closest('[data-reset]');
+  if (rb) {
+    await fetch(`${GW}/v1/tuning/reset`, {method:'POST', headers:{'Content-Type':'application/json'},
+                                          body: JSON.stringify({key: rb.dataset.reset})});
+    await load(); flash('reset to default'); return;
+  }
+});
+
+document.getElementById('save').onclick = async () => {
+  const r = await fetch(`${GW}/v1/tuning`, {method:'POST', headers:{'Content-Type':'application/json'},
+                                            body: JSON.stringify({values: DIRTY})});
+  const j = await r.json();
+  if (!j.ok) { flash('✗ ' + (j.error || 'failed')); return; }
+  SCHEMA = j; DIRTY = {}; render(); flash('✓ saved — live from the next turn');
+};
+document.getElementById('revert').onclick = () => { DIRTY = {}; render(); };
+
+function flash(msg) {
+  const s = document.getElementById('status');
+  s.textContent = msg;
+  setTimeout(() => { if (s.textContent === msg) s.textContent = ''; }, 3500);
+}
+
+load();
+</script>

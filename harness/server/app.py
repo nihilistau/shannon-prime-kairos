@@ -64,7 +64,9 @@ def _agent_text(body: Dict[str, Any]) -> str:
     use_tools = body.get("tools", body.get("use_tools", True)) is not False
     msgs = body.get("messages", [])
     if not use_tools:
-        return get_client().chat(messages=msgs, config=_to_config(body)).text
+        text = get_client().chat(messages=msgs, config=_to_config(body)).text
+        _kairos_after_turn(body, text)
+        return text
     from harness.agent import agent_chat
     from harness.inference import InferenceConfig
     cfg = InferenceConfig(
@@ -72,7 +74,42 @@ def _agent_text(body: Dict[str, Any]) -> str:
         max_tokens=body.get("max_tokens", 256),
         auto_recall=False,  # the model uses tools, not the daemon's heuristic recall
     )
-    return agent_chat(msgs, config=cfg)
+    text = agent_chat(msgs, config=cfg)
+    _kairos_after_turn(body, text)
+    return text
+
+
+def _kairos_after_turn(body: Dict[str, Any], reply: str) -> None:
+    """KAIROS on the OpenAI-compatible path.
+
+    The first cut of this hooked ONLY _native_chat_sse (the console's /v1/chat) — and the
+    live gate, which speaks /v1/chat/completions, produced ZERO kairos activity: the
+    daemon was faithfully emitting the impulse and the gateway simply never looked. Two
+    entry points, one hook, so the other became a hole. That is the same shape as the two
+    recall authorities, the two admission paths, and the two write paths. An invariant
+    wired into one of N entry points is wired into none of them.
+
+    _agent_text() is where BOTH OpenAI paths (blocking + streaming) converge, so the hook
+    goes here and cannot be bypassed by choosing a different endpoint."""
+    try:
+        from harness.kairos import scheduler as ks
+        reply = (reply or "").strip()
+        if not reply:
+            return
+        session = str(body.get("session") or body.get("session_id") or "default")
+
+        def _continue(nudge: str) -> str:
+            from harness.agent import agent_chat_stream
+            from harness.inference import InferenceConfig as _IC
+            hist = list(body.get("messages", []))
+            hist.append({"role": "assistant", "content": reply})
+            hist.append({"role": "system", "content": nudge})
+            return "".join(agent_chat_stream(
+                hist, config=_IC(max_tokens=120, temperature=0.0, auto_recall=False), tools=[]))
+
+        ks.on_reply(session, reply, get_client().last_kairos, _continue)
+    except Exception as exc:
+        logger.warning("[gateway] kairos skipped: %s", exc)
 
 
 def stream_completion(body: Dict[str, Any]) -> Iterator[str]:
@@ -241,6 +278,47 @@ def create_flask_app():
     @app.post("/v1/persona")
     def persona_set():
         return jsonify(_persona_set(request.get_json(force=True).get("persona", "")))
+
+    # ── TUNING (2026-07-12) ───────────────────────────────────────────────────
+    # One generic surface over the declarative knob registry. The operator UI renders
+    # whatever it finds here, so a knob added to harness/tuning/registry.py appears in
+    # the panel with its bounds, help and PROVENANCE (measured vs chosen) — no UI edit,
+    # no endpoint edit. That is the point: a settings page that has to be hand-updated
+    # rots, and this system's recurring failure is capability that exists but is not
+    # reachable.
+    @app.get("/v1/tuning")
+    def tuning_get():
+        from harness.tuning import registry as tune
+        return jsonify(tune.schema())
+
+    @app.post("/v1/tuning")
+    def tuning_set():
+        from harness.tuning import registry as tune
+        body = request.get_json(force=True) or {}
+        try:
+            tune.set_many(body.get("values", {}))
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({"ok": True, **tune.schema()})
+
+    @app.post("/v1/tuning/reset")
+    def tuning_reset():
+        from harness.tuning import registry as tune
+        key = (request.get_json(force=True) or {}).get("key", "")
+        tune.reset(key)
+        return jsonify({"ok": True, **tune.schema()})
+
+    # ── KAIROS: what she has decided to say, unprompted ───────────────────────
+    @app.get("/v1/kairos/outbox")
+    def kairos_outbox():
+        from harness.kairos import scheduler as ks
+        s = request.args.get("session", "default")
+        return jsonify({"messages": ks.drain(s), "state": ks.peek_state(s)})
+
+    @app.get("/v1/kairos/state")
+    def kairos_state():
+        from harness.kairos import scheduler as ks
+        return jsonify(ks.peek_state(request.args.get("session", "default")))
 
     return app
 
@@ -470,6 +548,15 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
 
     _phase("pre-turn")
 
+    # KAIROS: HE spoke. Her chain resets, and if she was sitting on a pending
+    # continuation she yields it — he gets the floor. That is what keeps this a
+    # conversation instead of two monologues interleaving.
+    try:
+        from harness.kairos import scheduler as _ks0
+        _ks0.on_user_turn(str(body.get("session") or body.get("chat_id") or "default"))
+    except Exception:
+        pass
+
     reply_parts: list = []
 
     def _run():
@@ -507,6 +594,37 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
         if not typed and "delta" not in ev:
             continue
         yield ("data: " + json.dumps(ev) + "\n\n").encode()
+    # ── KAIROS: the turn is over. Does she have more to say? ───────────────────────
+    # Almost always: no. The policy (harness/kairos/impulse.py) is SILENT by default and
+    # every bound is checked before the impulse is even consulted — she cannot chain, she
+    # never speaks over a question she asked him, and a continuation that turns out to be
+    # a greeting or a restatement is dropped before he ever sees it.
+    #
+    # The impulse itself is not a heuristic: it is the RAW stop-vs-continue logit margin
+    # from the forward, which the engine computed anyway. Calibrated (tools/kairos/
+    # calibrate.py): finished turns sit at +2.0, guillotined turns at -14.8.
+    try:
+        from harness.kairos import scheduler as _ks
+        _final = "".join(reply_parts).strip()
+        _session = str(body.get("session") or body.get("chat_id") or "default")
+        if _final:
+            def _continue(nudge: str) -> str:
+                """Run ONE more turn with the nudge appended. She is continuing herself,
+                so the nudge is a SYSTEM aside — not a new user message. (If it were a
+                user message the transcript would grow a turn the operator never typed,
+                and the next prefill would diverge from the persist cache.)"""
+                from harness.agent import agent_chat_stream
+                from harness.inference import InferenceConfig
+                hist = list(body.get("messages", []))
+                hist.append({"role": "assistant", "content": _final})
+                hist.append({"role": "system", "content": nudge})
+                ccfg = InferenceConfig(max_tokens=120, temperature=cfg.temperature)
+                return "".join(agent_chat_stream(hist, config=ccfg, tools=[]))
+
+            _ks.on_reply(_session, _final, get_client().last_kairos, _continue)
+    except Exception as exc:
+        logger.warning("[gateway] kairos skipped: %s", exc)
+
     # ADR-007 post-turn SPINE: persona tags in the reply are persisted (decide → execute →
     # VERIFY per ADR-006) and, on a verified shift, the new state is emitted as a final
     # persona event so the UI chip updates live.
@@ -628,6 +746,24 @@ def _run_stdlib(host: str, port: int) -> None:
                 self.send_header("Content-Type", "text/event-stream"); self.end_headers()
                 for chunk in _native_chat_sse(body):
                     self.wfile.write(chunk); self.wfile.flush()
+            # TUNING: set / reset a knob. Live from the next turn — config that needs a
+            # restart is config nobody tunes.
+            elif self.path in ("/v1/tuning", "/v1/tuning/reset"):
+                from harness.tuning import registry as _tune
+                body = self._body()
+                code, res = 200, {}
+                try:
+                    if self.path == "/v1/tuning":
+                        _tune.set_many(body.get("values", {}))
+                    else:
+                        _tune.reset(body.get("key", ""))
+                    res = {"ok": True, **_tune.schema()}
+                except ValueError as exc:
+                    code, res = 400, {"ok": False, "error": str(exc)}
+                payload = json.dumps(res).encode()
+                self.send_response(code); _cors(self)
+                self.send_header("Content-Type", "application/json"); self.end_headers()
+                self.wfile.write(payload)
             elif self.path == "/v1/voice/record":  # ADR-KAI4 P1.6: save a real training sample
                 body = self._body()
                 try:
@@ -687,8 +823,25 @@ def _run_stdlib(host: str, port: int) -> None:
                 "/v1/persona/state": _persona_state,  # ADR-006 personality chip
                 "/v1/spine": _spine_json,        # ADR-008 receipts audit trail
                 "/v1/progress": _progress_json,  # HINDSIGHT dashboard data (phases/migration/git)
+                # TUNING (2026-07-12): the declarative knob registry. console/tuning.html
+                # renders whatever this returns, so a knob added to harness/tuning/
+                # registry.py appears in the panel by itself — no UI edit, no route edit.
+                "/v1/tuning": lambda: __import__(
+                    "harness.tuning.registry", fromlist=["x"]).schema(),
             }
-            fn = _json_routes.get(self.path)
+            # query-string routes (session-scoped)
+            _base = self.path.split("?", 1)[0]
+            if _base in ("/v1/kairos/outbox", "/v1/kairos/state"):
+                from urllib.parse import parse_qs, urlparse
+                from harness.kairos import scheduler as _ks
+                s = (parse_qs(urlparse(self.path).query).get("session") or ["default"])[0]
+                out = ({"messages": _ks.drain(s), "state": _ks.peek_state(s)}
+                       if _base == "/v1/kairos/outbox" else _ks.peek_state(s))
+                self.send_response(200); _cors(self)
+                self.send_header("Content-Type", "application/json"); self.end_headers()
+                self.wfile.write(json.dumps(out).encode())
+                return
+            fn = _json_routes.get(_base)
             if fn is not None:
                 self.send_response(200); _cors(self)
                 self.send_header("Content-Type", "application/json"); self.end_headers()

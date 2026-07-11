@@ -98,6 +98,9 @@ class SPDaemonClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.default_model = default_model
+        # KAIROS: the last turn's continuation impulse from the daemon's `kairos` SSE
+        # event ({"eot_margin", "n_gen", "eot_bias"}), or None when SP_KAIROS is off.
+        self.last_kairos: Optional[Dict[str, Any]] = None
         self._client = httpx.Client(timeout=timeout) if httpx else None
 
     # ---- core: streaming chat -------------------------------------------
@@ -163,6 +166,10 @@ class SPDaemonClient:
                     name, sse_event = sse_event, "message"   # the name applies to THIS data line
                     if name == "kairos":
                         resp.kairos = evt          # the continuation impulse for this turn
+                        # also stash it on the client: agent_chat_stream() yields raw text
+                        # deltas and never surfaces the InferenceResponse, so the gateway
+                        # needs somewhere to read the turn's impulse from after the fact.
+                        self.last_kairos = evt
                         if on_event:
                             on_event(StreamEvent("kairos", content=payload, chat_id=chat_id))
                         continue
