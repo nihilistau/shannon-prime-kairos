@@ -51,6 +51,9 @@ def build_env(c: dict) -> dict:
         "SP_PREFIX_SNAPSHOT": b(kv.get("prefix_snapshot", False)),  # P1c
         "SP_EOT_BIAS": str(dec["eot_bias"]),
         "SP_NO_REPEAT_NGRAM": str(dec["no_repeat_ngram"]),
+        # P5a: gateway serving regime. '0' = certified-float turns (explicit
+        # client byteexact still wins; daemon default stays exact for gates).
+        "SP_GATEWAY_BYTEEXACT": "0" if dec.get("byteexact") is False else "1",
         "CUBLAS_WORKSPACE_CONFIG": ":16:8",
         # memory / recall (L5 authority)
         "SP_AUTO_RECALL_DEFAULT": b(mem["auto_recall_default"]),

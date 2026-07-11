@@ -327,10 +327,20 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
     # auto_recall PASSTHROUGH (ADR-008 composition gate): default False (the agent uses tools,
     # not the daemon's recall), but a client may arm the daemon-side L5 path per request —
     # required to gate recall∘L5 composition through the gateway.
+    # P5a certified-float serving (2026-07-11): profile decode.byteexact=false
+    # maps to SP_GATEWAY_BYTEEXACT=0 — serving turns run the float path (cold
+    # 2.1k-token float prefill proved coherent; certification = g_float_parity).
+    # An EXPLICIT client byteexact always wins (auditable checkbox, gate probes),
+    # and the daemon's own default stays byteexact for anything not via here.
+    import os as _os0
+    _bx = body.get("byteexact")
+    if _bx is None and _os0.environ.get("SP_GATEWAY_BYTEEXACT") == "0":
+        _bx = False
     cfg = InferenceConfig(temperature=body.get("temperature", 0.6),
                           repetition_penalty=body.get("repetition_penalty", 1.3),
                           eot_bias=body.get("eot_bias", 4.0),
                           max_tokens=body.get("max_tokens", 192),
+                          byteexact=_bx,
                           auto_recall=bool(body.get("auto_recall", False)))
     typed = body.get("typed_events", True) is not False   # opt-out for pure-delta clients
 

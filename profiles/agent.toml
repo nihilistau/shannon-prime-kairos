@@ -70,6 +70,16 @@ authority = 'spine'
 mtp = false  # P5: verify machinery proven byte-exact, but prompt-lookup drafts are
              # 0.87x on real text (the 40.8 headline was a degenerate-prompt artifact);
              # needs a high-acceptance drafter before this flips.
+# P5a FLOAT SERVING: REFUTED at the DETAIL level (2026-07-11, battery v2).
+# Float prefill/decode stays COHERENT but corrupts ATTENDED DETAIL: the
+# float-prewarmed persona read back as "Shannon-15 ... RTX 3067" (is: Shannon-
+# Prime, RTX 2060) and a tool time copied as "2014-365". Gist survives (the
+# 2.1k summary probe passed); numerals in attended rows do NOT. The byte-exact
+# doctrine is vindicated in its subtlest form. The g_float_parity gate passed
+# 4/4 because simple facts answer from WEIGHTS — certification requires
+# attended-content probes (persona details + tool-number copying); documented
+# in the gate. Lever stays (explicit byteexact:false per request), default OFF.
+byteexact = true
 eot_bias = 4.0
 no_repeat_ngram = 3
 

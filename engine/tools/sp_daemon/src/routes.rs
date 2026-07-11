@@ -3970,13 +3970,23 @@ Tag of the answer (or [NULL]):");
         // durable facts still reach memory via the explicit store verb / remember() tool.
         let is_fenced = lc.starts_with("```") || lc.contains("```tool_output");
         let n_words = lc.split_whitespace().count();
+        // P1-seal admission UPPER cap (G-KAIROS-PERF battery, 2026-07-11): a
+        // 2,100-char pasted turn ground a synchronous 195 MiB capture_batched
+        // (minutes at 100% GPU) while the NEXT turn queued on the session — the
+        // battery's 69 s tool turn and 119 s cold turn were mostly this. A
+        // "memory" is a durable FACT, not a pasted document: cap admission at
+        // 120 words (curated episodes are ~10-30). Long content still reaches
+        // memory via the explicit store verb, which the operator invokes
+        // deliberately and can afford to wait for.
+        const ADMIT_MAX_WORDS: usize = 120;
         let admit = !forget_done
             && !is_forget_turn
             && !is_question
             && !is_fenced
             && n_words >= 4
+            && n_words <= ADMIT_MAX_WORDS
             && !lc.is_empty();
-        if !lc.is_empty() && (is_fenced || (n_words < 4 && !is_question)) {
+        if !lc.is_empty() && (is_fenced || ((n_words < 4 || n_words > ADMIT_MAX_WORDS) && !is_question)) {
             tracing::info!("B4-NIGHTSHIFT: skip (admission hygiene: fenced={is_fenced} words={n_words})");
         }
         if let Some(text) = raw_user.as_ref().map(|s| s.trim().to_string())
