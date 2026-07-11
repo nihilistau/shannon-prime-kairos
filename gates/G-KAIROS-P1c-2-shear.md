@@ -45,10 +45,11 @@ attention mask, and overwritten by the suffix prefill as it advances.
 
 ## Follow-ups banked
 
-- Probe B (first new-chat after A) full-prefilled instead of shearing (39 s) —
-  entry hit the `pos == committed.len()` guard mismatch after A's post-turn
-  machinery. Diagnose the pos/cl divergence; likely one more shear per session
-  boundary to be had.
+- ~~Probe B full-prefilled~~ CORRECTED after log forensics: B was a STRICT
+  EXTENSION (`reuse 1680 of 1680 (drop 0); prefill suffix 256`) — the gateway
+  composed it over the canonical daemon stream, so it never needed the shear;
+  its 39 s was recall machinery + queueing behind A. No bug. The three lanes
+  (extension / shear / full-prefill floor) each fired correctly in one battery.
 - Shear is in-VRAM only: a daemon restart still pays the one-time prewarm
   (~5 min byteexact grind — pre-existing). Disk persistence of the prefix
   would need the save/restore pair; only worth it if boot frequency demands.

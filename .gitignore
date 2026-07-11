@@ -3,6 +3,10 @@ __pycache__/
 *.pyc
 engine/tools/sp_daemon/target*/
 engine/tools/sp_swarm/target/
+# G-CLEAN-BUILD outputs + the lib junction (build-cuda-backend.bat recreates it)
+engine/build-cpu/
+engine/build-host-cuda-backend/
+engine/lib/
 # B4-NIGHTSHIFT live episodes: the kairos binary bakes engine_root at compile
 # time (routes.rs env!(CARGO_MANIFEST_DIR)/../..) — production data, never repo
 # content. Unify under var/ when P1b makes the episode dir config.
