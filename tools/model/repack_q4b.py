@@ -80,6 +80,9 @@ import time
 
 import numpy as np
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from xxh64 import xxh64  # noqa: E402  — validated: reproduces all 996 name_hash in the source
+
 SRC = r"D:\F\shannon-prime-repos\models\gemma4-12b-b1-reason.sp-model"
 DST = r"D:\F\shannon-prime-repos\models\gemma4-12b-q4b.sp-model"
 
@@ -181,25 +184,36 @@ def main() -> int:
         fo.write(b"\0" * pad)
         new_doff = fo.tell()
 
-        def emit(name, dt, ndim, dims, payload, esz, nel):
+        def emit(name, dt, ndim, dims, payload, esz, nel, src_raw=None):
+            """`src_raw` = the SOURCE's 256-byte entry. When a tensor is copied through
+            unchanged we reuse its entry verbatim and patch only the offset, which keeps
+            blake3 (@176) AND name_hash (@208) intact. Only genuinely NEW tensors (the Q4B
+            codes and their .bscale) get an entry built from scratch — and those get their
+            name_hash computed, because sp_model_find_tensor BINARY-SEARCHES on it."""
             cur = fo.tell()
             gap = (-(cur - new_doff)) % ALIGN
             if gap:
                 fo.write(b"\0" * gap)
             off = fo.tell() - new_doff
             fo.write(payload)
-            e = bytearray(256)
-            nb = name.encode()[:79]
-            e[0:len(nb)] = nb
-            struct.pack_into("<I", e, 80, dt)
-            struct.pack_into("<I", e, 84, ndim)
-            for i, d in enumerate(dims[:8]):
-                struct.pack_into("<Q", e, 88 + 8 * i, d)
-            struct.pack_into("<Q", e, 152, off)
+
+            e = bytearray(src_raw) if src_raw is not None else bytearray(256)
+            if src_raw is None:
+                nb = name.encode()[:79]
+                e[0:len(nb)] = nb
+                struct.pack_into("<I", e, 80, dt)
+                struct.pack_into("<I", e, 84, ndim)
+                for i, d in enumerate(dims[:8]):
+                    struct.pack_into("<Q", e, 88 + 8 * i, d)
+                struct.pack_into("<I", e, 168, esz)
+                struct.pack_into("<I", e, 172, nel)
+                # blake3 @176 stays zero — sp_model_load.c:90 only sweeps Spinor block
+                # geometry, so the per-tensor digest is not verified at load.
+                struct.pack_into("<Q", e, 208, xxh64(name.encode()))   # THE SEARCH KEY
+            struct.pack_into("<Q", e, 152, off)                        # always: new offset
             struct.pack_into("<Q", e, 160, len(payload))
-            struct.pack_into("<I", e, 168, esz)
-            struct.pack_into("<I", e, 172, nel)
-            out_ents.append({"raw": e, "name": name})
+            out_ents.append({"raw": e, "name": name,
+                             "hash": struct.unpack_from("<Q", e, 208)[0]})
 
         done = 0
         for e in ents:
@@ -226,7 +240,7 @@ def main() -> int:
             else:
                 fi.seek(doff + e["off"])
                 emit(e["name"], e["dt"], e["ndim"], e["dims"],
-                     fi.read(e["size"]), e["esz"], e["nel"])
+                     fi.read(e["size"]), e["esz"], e["nel"], src_raw=e["raw"])
 
         # header: copy the source's, fix the counts/offsets, RECOMPUTE THE CRC.
         # sp_model_load.c:143 checks crc32 over [0, 360) against the u32 at offset 360, and
@@ -250,6 +264,13 @@ def main() -> int:
         struct.pack_into("<I", h, 360, zlib.crc32(bytes(h[:360])) & 0xFFFFFFFF)
         fo.seek(0)
         fo.write(h)
+
+        # SORT THE TABLE BY name_hash ASCENDING. sp_model_find_tensor binary-searches it
+        # (sp_model_load.c:217: "table sorted by name_hash asc"). An unsorted table is not
+        # a slow table — it is a table where lookups silently fail, which is exactly how
+        # the first attempt died ("bad weight token_embd.weight" — the entry was perfect,
+        # the SEARCH could not reach it).
+        out_ents.sort(key=lambda x: x["hash"])
         for i, oe in enumerate(out_ents):
             fo.seek(HDR + 256 * i)
             fo.write(oe["raw"])
@@ -264,4 +285,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
