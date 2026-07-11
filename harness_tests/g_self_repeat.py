@@ -34,7 +34,7 @@ def chat(messages, max_tokens=120):
     body = json.dumps({"messages": messages, "max_tokens": max_tokens,
                        "temperature": 0.6, "tools": False}).encode()
     req = urllib.request.Request(GW, data=body, headers={"Content-Type": "application/json"})
-    j = json.loads(urllib.request.urlopen(req, timeout=300).read().decode())
+    j = json.loads(urllib.request.urlopen(req, timeout=900).read().decode())
     return j["choices"][0]["message"]["content"].strip()
 
 
@@ -94,3 +94,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
