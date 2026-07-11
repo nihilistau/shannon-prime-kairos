@@ -4148,6 +4148,14 @@ static int g4_kv_step(sp_g4_kv *s, int do_head);  /* A1: fwd for g4_kv_step_grap
  * Default-off (env unset) ⇒ g_hd_f==NULL ⇒ byte-identical. Uses the RESIDENT weights +
  * kernels the daemon serves with (no separate probe = no residency mismatch). */
 static FILE  *g_hd_f    = NULL;   /* dump file for the current prefill (NULL = off) */
+/* G-VERBATIM (2026-07-12): the tap closed at prefill end, so we had ONLY ever measured
+ * the prefill forward — which is provably CORRECT (its hiddens predict 4,4,7,1 with
+ * margins 3-8). Every token the user actually SEES comes out of the DECODE steps, which
+ * we had never observed. SP_HIDDEN_DUMP_DECODE=1 keeps the file open through decode and
+ * streams each step's post-out_norm hidden, so the host can compare "the token the model
+ * WANTED" (argmax of the honest head over this hidden) against "the token we PRINTED".
+ * Default-off => byte-identical to today. */
+static int    g_hd_stream = 0;    /* 1 = keep dumping through decode (per-step D2H+write) */
 static float *g_hd_dev  = NULL;   /* device ring: [g_hd_cap * E] post-out_norm hidden */
 static float *g_hd_host = NULL;   /* host staging for the single batched D2H */
 static int    g_hd_cap  = 0;      /* device buffer capacity in positions */
@@ -4310,7 +4318,9 @@ static int g4_kv_step_graph(sp_g4_kv *s) {
      * B1: byte-exact mode likewise routes the per-step bx attention (host ctx,
      * not graph-bakeable), so a session that armed graph then turned bx on this
      * request decodes per-step for the duration. */
-    if (s->inj_active || s->cap_active || s->feat_active || s->steer_active || s->bx_on) return g4_kv_step(s, /*do_head=*/1);
+    /* g_hd_f: the CUDA graph cannot carry the hidden-dump tap (it is host FILE I/O), so
+     * a forensics run must take the per-step path or it would silently dump nothing. */
+    if (s->inj_active || s->cap_active || s->feat_active || s->steer_active || s->bx_on || g_hd_f) return g4_kv_step(s, /*do_head=*/1);
 
     if (!s->graph_ready) {
         if (cudaStreamBeginCapture(st, cudaStreamCaptureModeThreadLocal) != cudaSuccess) {
@@ -4572,13 +4582,25 @@ static int g4_kv_step(sp_g4_kv *s, int do_head) {
     }
     /* KAI-5 hidden dump: post-output_norm hidden of THIS position (ALL positions, not just
      * the head). Read-only; only runs when gemma4_kv_prefill opened g_hd_f (SP_HIDDEN_DUMP). */
-    if (g_hd_f && g_hd_dev && g_hd_pos < g_hd_cap) {
+    if (g_hd_f && g_hd_dev) {
         k_rmsnorm<<<1, 256, 0, st>>>(s->dx, g_w.out_norm, E, eps, s->dnx);
-        /* ASYNC device->device into the ring (no per-position host sync) — the whole
-         * prefill's hidden is copied out in ONE D2H at prefill close (≈4× faster). */
-        cudaMemcpyAsync(g_hd_dev + (size_t)g_hd_pos * E, s->dnx, (size_t)E * sizeof(float),
-                        cudaMemcpyDeviceToDevice, st);
-        g_hd_pos++;
+        if (g_hd_stream) {
+            /* DECODE steps (G-VERBATIM): stream straight to the file — there is no
+             * batch to amortise here and correctness beats speed on a forensics tap. */
+            if (g_hd_host) {
+                cudaStreamSynchronize(st);
+                cudaMemcpy(g_hd_host, s->dnx, (size_t)E * sizeof(float), cudaMemcpyDeviceToHost);
+                fwrite(g_hd_host, sizeof(float), (size_t)E, g_hd_f);
+                fflush(g_hd_f);
+                g_hd_pos++;
+            }
+        } else if (g_hd_pos < g_hd_cap) {
+            /* ASYNC device->device into the ring (no per-position host sync) — the whole
+             * prefill's hidden is copied out in ONE D2H at prefill close (≈4× faster). */
+            cudaMemcpyAsync(g_hd_dev + (size_t)g_hd_pos * E, s->dnx, (size_t)E * sizeof(float),
+                            cudaMemcpyDeviceToDevice, st);
+            g_hd_pos++;
+        }
     }
     if (do_head) {
         k_rmsnorm<<<1, 256, 0, st>>>(s->dx, g_w.out_norm, E, eps, s->dnx);
@@ -5034,7 +5056,7 @@ extern "C" int gemma4_kv_prefill(sp_g4_kv *s, const int32_t *toks, int n) {
     { const char *hdp = getenv("SP_HIDDEN_DUMP");
       if (hdp && *hdp) {
         if (g_hd_f) fclose(g_hd_f);
-        g_hd_f = fopen(hdp, "wb"); g_hd_pos = 0;
+        g_hd_f = fopen(hdp, "wb"); g_hd_pos = 0; g_hd_stream = 0;   /* ring mode for the prefill */
         if (g_hd_f && !g_hd_dev) {                 /* alloc the device ring + host staging once */
             g_hd_cap = (int)s->Pmax;
             if (cudaMalloc(&g_hd_dev, (size_t)g_hd_cap * (size_t)s->E * sizeof(float)) != cudaSuccess) g_hd_dev = NULL;
@@ -5091,7 +5113,10 @@ extern "C" int gemma4_kv_prefill(sp_g4_kv *s, const int32_t *toks, int n) {
                 n, s->dpos_host, cudaGetErrorName(e));
         return fail_cuda(e, "g4_kv prefill sync");
     }
-    /* KAI-5: one batched D2H of the whole prefill's hidden, then close (prefill-only). */
+    /* KAI-5: one batched D2H of the whole prefill's hidden, then close (prefill-only).
+     * G-VERBATIM: when SP_HIDDEN_DUMP_DECODE=1 the file STAYS OPEN and g4_kv_step
+     * switches to per-step streaming, so the dump continues through the decode steps
+     * (the ones that produce every token the user sees). */
     if (g_hd_f) {
         cudaStreamSynchronize(st);
         if (g_hd_dev && g_hd_host && g_hd_pos > 0) {
@@ -5099,7 +5124,15 @@ extern "C" int gemma4_kv_prefill(sp_g4_kv *s, const int32_t *toks, int n) {
                        cudaMemcpyDeviceToHost);
             fwrite(g_hd_host, sizeof(float), (size_t)g_hd_pos * (size_t)s->E, g_hd_f);
         }
-        fflush(g_hd_f); fclose(g_hd_f); g_hd_f = NULL;
+        fflush(g_hd_f);
+        { const char *hdd = getenv("SP_HIDDEN_DUMP_DECODE");
+          if (hdd && *hdd && *hdd != '0') {
+              g_hd_stream = 1;                 /* keep the tap open through decode */
+              fprintf(stderr, "[g4-kv] hidden dump: %d prefill positions, streaming decode...\n",
+                      g_hd_pos);
+          } else {
+              fclose(g_hd_f); g_hd_f = NULL;
+          } }
     }
     return 0;
 }

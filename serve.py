@@ -35,14 +35,27 @@ def build_env(c: dict) -> dict:
     agent, dec, veto = c["agent"], c["decode"], c.get("veto", {})
     if mem.get("recall_authority") != "L5":
         raise SystemExit(f"profile invalid: recall_authority must be 'L5' (got {mem.get('recall_authority')!r})")
+    # G-VERBATIM lint (2026-07-12): no_repeat_ngram>=2 BANS re-emitting any N-token
+    # sequence already in context — which is exactly what quoting a number, a memory
+    # or a tool result requires. It cost us a multi-day hunt (the model was innocent:
+    # it wanted '7' at margin 9.0 and the sampler masked it). Never again silently.
+    if int(dec.get("no_repeat_ngram", 0)) >= 2 and os.environ.get("SP_ALLOW_NGRAM_BAN") != "1":
+        raise SystemExit(
+            f"profile invalid: no_repeat_ngram={dec['no_repeat_ngram']} breaks verbatim copy "
+            f"(G-VERBATIM). Set 0, or export SP_ALLOW_NGRAM_BAN=1 to override deliberately.")
 
     e = dict(os.environ)
     e["PATH"] = paths["llvm_bin"].replace("/", "\\") + os.pathsep + e.get("PATH", "")
     b = lambda v: "1" if v else "0"
     e.update({
         # Tier 0
-        "SP_DAEMON_BACKEND": "cuda",
-        "SP_DAEMON_KVDECODE": "1",
+        # G-VERBATIM (2026-07-12): the SERVING forward does NOT go through the L1
+        # ABI / math-core. kvdecode=1 routes the chat path straight into the CUDA
+        # gemma4_kv_* re-implementation. kvdecode=0 falls back to the L1 session
+        # (prefill_chunk/decode_step) = the math-core forward the gold gates test.
+        # That fallback is our IN-HOUSE REFERENCE for the copy bug.
+        "SP_DAEMON_BACKEND": c["paths"].get("backend", "cuda"),
+        "SP_DAEMON_KVDECODE": "1" if kv.get("kvdecode", True) else "0",
         # G-VERBATIM (2026-07-12): the KV cache was ALWAYS int8-quantized. Digit
         # tokens have near-identical embeddings, so int8 K/V collapses them and
         # the model cannot read a number back out of its own context ("4471" ->
@@ -101,6 +114,10 @@ def build_env(c: dict) -> dict:
     if dbg.get("hidden_dump"):
         os.makedirs(os.path.dirname(dbg["hidden_dump"].replace("/", "\\")), exist_ok=True)
         e["SP_HIDDEN_DUMP"] = dbg["hidden_dump"].replace("/", "\\")
+    # G-VERBATIM: keep the tap open through the DECODE steps (the ones that make
+    # every token the user sees). Without this we only ever measured prefill.
+    if dbg.get("hidden_dump_decode"):
+        e["SP_HIDDEN_DUMP_DECODE"] = "1"
     return e
 
 

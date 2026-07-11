@@ -1,182 +1,142 @@
 ---
 type: gate-receipt
-title: "G-VERBATIM — the model cannot copy REPEATED/CONFUSABLE tokens out of its own context. Digits die; distinct letters survive. Six suspects eliminated with evidence."
+title: "G-VERBATIM — SOLVED. The model was innocent. `no_repeat_ngram=3` banned the model from re-emitting any trigram it could see, and verbatim copying IS that."
 date: 2026-07-12
-status: RED — root cause narrowed to the attention read-out; ONE experiment left
+status: GREEN — 6/6. Root cause found, fixed, gated, and lint-guarded.
+supersedes: "the RED receipt of 2026-07-12 (six 'eliminations', one of which was false and cost the whole hunt)"
 ---
 
-# The symptom, precisely characterised
+# ROOT CAUSE
 
-temp 0 · tools off · recall off · ngram off · eot off · daemon-direct
+`profiles/agent.toml` → `[decode] no_repeat_ngram = 3` → `SP_NO_REPEAT_NGRAM=3`.
 
-| context | ask | model says | |
-|---|---|---|---|
-| "The code is 7." | repeat | **7** | ✓ |
-| "The code is 47." | repeat | **47** | ✓ |
-| "The code is 4471." | repeat | **4417** | ✗ transposed |
-| "The code is QXZP." | repeat | **QXZP** | ✓ **four DISTINCT letters — perfect** |
-| "The code is A7B2." | repeat | **A7B7** | ✗ copied an EARLIER token |
-| "The code is 4 4 7 1." | repeat | **4 1 7 4** | ✗ scrambled |
-| "four four seven one" | repeat | **four four seven four four four** | ✗ number-WORDS fail too |
-| "quartzblanket" | repeat | **quartzblanket** | ✓ |
-| "2+2" | compute | **4** | ✓ |
+**`no_repeat_ngram=N` forbids emitting any N-token sequence that already appears in
+the context. Quoting a number, a memory, a tool result or a persona fact IS emitting
+a sequence that already appears in the context.** The feature and the requirement are
+the same operation with opposite signs.
 
-**The failure is not about digits per se. It is about REPEATED or CONFUSABLE
-tokens.** Four distinct letters copy perfectly; any sequence with a repeat
-(4,4 / four,four) or near-neighbours collapses, and the model substitutes a
-token that appeared EARLIER in the sequence (A7B2 → A7B**7**). That is the
-signature of an attention read-out that cannot disambiguate two positions
-holding the same content — an induction/copy failure, not a precision failure.
+## The mechanism, caught in the act
 
-# What this breaks (everything above it)
+Prompt: `The code is 4471. Repeat it.` The model emits `4`, `4` — and now the trigram
+`4 → 4 → 7` **exists in the prompt**, so `'7'` is masked. The sampler takes the
+next-best token, which is the other digit in the code: `'1'`. On the following step
+`4 → 1 → 7` is a *novel* trigram, so `'7'` is allowed and gets emitted late.
 
-Tool numbers ("2014-365"), persona details ("RTX 210."), any stored memory with
-a code/date/number, HINDSIGHT's "numeric garbling" (blamed on 0.6/1.3 sampling
-and "fixed" with temp 0.15 — **it reproduces at temperature 0**, so that fix
-never worked).
+    truth   4 4 7 1
+    served  4 4 1 7      <- not a transposition. A BAN and a late re-entry.
 
-# ELIMINATED, each with evidence (do not re-litigate)
+Measured on the engine's OWN post-output_norm hidden states (`SP_HIDDEN_DUMP` +
+`SP_HIDDEN_DUMP_DECODE`, this session), honest f32 head, softcap 30:
 
-1. **Sampler** — no_repeat_ngram 3 vs 0: byte-identical output. temp 0.7 vs 0:
-   same class of failure. eot_bias 4/2/0: irrelevant.
-2. **Byte-exactness** — byteexact true vs false: byte-identical wrong strings.
-3. **Harness** — reproduced daemon-direct, no gateway, no tools, no recall.
-4. **The SFT adapter** — the BASE model fails identically.
-5. **Weight quantization** — the PURE-Q8 model (`st`, 329/329 tensors OK_Q8,
-   no 4-bit anywhere) fails identically ("21.7C/48%" → "22.1C/49%"). The mixed
-   b1 (Q8 + 96×Q4B) and the all-Q4 `qat` (total gibberish — a broken transcode,
-   already known) bracket it. Precision is NOT the discriminator.
-6. **Tokenizer** — every digit ID matches the HF `tokenizer.json` EXACTLY
-   (0=236771, 1=236770, ... 9=236819; gemma-4's digit IDs genuinely are
-   non-monotonic).
-7. **RoPE / partial rotary** — the model's `rope_freqs.weight[256]` is exactly
-   right (1.0 for pairs 0-63, 1e30 for 64-255 = `partial_rotary_factor 0.25` on
-   the 512-wide global head), and the kernel's `base^(-2i/head_dim)` matches HF's
-   `_compute_proportional_rope_parameters` **exactly** (HF also divides by
-   head_dim, not rotary_dim — verified in the installed transformers source).
-   Both `k_rope_freqs_at` (resident) and `k_rope_at` (SWA) use the ABSOLUTE
-   position.
-8. **`attention_k_eq_v`** — gemma-4 has NO `attn_v` tensor (V = the K
-   projection) on global layers. The engine implements this CORRECTLY in BOTH
-   forward paths: `dv = dk` is copied BEFORE the k-norm and RoPE, then given the
-   weightless V-norm — byte-for-byte HF's ordering.
+| decode step | model WANTS | margin | engine PRINTED | |
+|---|---|---|---|---|
+| 20 | `'4'` | 2.25 | `4` | ok |
+| 21 | `'4'` | 6.91 | `4` | ok |
+| 22 | **`'7'`** | **9.04** | **`1`** | **BANNED** |
+| 23 | `'7'` | 3.58 | `7` | (the late re-entry) |
 
-# WHAT REMAINS (the live suspects)
+**The model wanted `'7'` with a margin of 9.0.** It was never confused, never
+quantization-noisy, never coin-flipping. It was *overruled*.
 
-The bug is in the **attention read-out over the cached span**, most likely in:
-- `k_attn_decode_win` / `k_attn_decode` — the single-query GQA kernels, with
-  **group = 16** on global layers (16 query heads : 1 KV head, 512-wide) and the
-  SWA window. A grouping/stride error would blur positions holding equal content
-  while leaving distinct content separable — exactly the symptom.
-- the **softcap** (`final_logit_softcapping = 30`, `attn_logit_softcapping`)
-  and `scaling = 1.0` interaction.
-- AltUp / PLE residual mixing.
+# Why the symptom table looked like a model/kernel bug
 
-# THE DECISIVE EXPERIMENT (next session, do this first)
+The ban only bites on the **third token of a repeated run**. Everything shorter is
+untouched — which produced a symptom table that pointed convincingly at the forward:
 
-Run the SAME weights through HF transformers (installed, gemma4 supported) on
-the SAME prompt ("The code is 4471. Repeat it.") and compare:
-1. HF output vs ours (does HF copy 4471? — near-certainly yes),
-2. then bisect the forward: the engine already HAS the machinery
-   (`attn_only` bisect modes + `BX_REC` tensor dumps in cuda_forward.cu) to dump
-   q/k/v/attn per layer. Compare against HF's tensors at the same layer.
-The engine's own gold gates test the MATH CORE, not the gemma-4 forward against
-a reference — that gap is exactly where this bug has been living.
+| case | tokens | verdict |
+|---|---|---|
+| `"7"`, `"47"` | 1-2 | never completes a banned trigram → **always passed** |
+| `"quartzblanket"`, `"QXZP"` | few, distinct | → **always passed** |
+| `"4471"`, `"A7B2"`, `"2+2"`, `"four four seven one"` | 3+ | → **always failed** |
 
-# The gate
+"Distinct letters survive, digits die" is not a statement about embeddings. It is a
+statement about **token count**.
 
-`harness_tests/g_verbatim.py` — word control, arithmetic control, digit copy,
-digit echo, tool-shaped composite. Run it after ANY engine/model/profile change.
-**Until it is GREEN, no number the system reports about itself, its tools, or
-its memories can be trusted.**
+# MY FALSE ELIMINATION (the reason this took days)
 
-# HUNT LOG — 2026-07-12 (continued)
+The previous receipt's suspect #1 read:
 
-## New forensics tool: POST /v1/debug/kdiff  (shipped, CUDA-only)
+> *"Sampler — no_repeat_ngram 3 vs 0: byte-identical output."*
 
-Prefills raw tokens into the resident cache and returns, per position, the token
-id + the cosine of its GLOBAL-owner K row against every other position. Read-only.
-This is how you ask the engine "can attention even TELL these two tokens apart?"
+That test was wrong. The profile was edited but the daemon was **not restarted
+cleanly**, so both arms ran with `SP_NO_REPEAT_NGRAM=3`. Byte-identical output was
+the *tell* that neither arm had changed anything — and I recorded it as proof of
+innocence. Every subsequent "elimination" (ring off, persist off, heads off, Q8 vs
+Q4, byteexact on/off) was run **with the ban still on**, which is exactly why they
+all produced byte-identical wrong output. They were all measuring the same masked
+sampler.
 
-    curl -s localhost:3000/v1/debug/kdiff -d '{"text":"4 4 7 1"}'
+The operator named this hypothesis first and asked for it to be tested. It was
+dismissed on a broken A/B. **Check the daemon's own env banner, not the file you
+edited.**
 
-## Result: the keys DO carry position (RoPE reaches the cache)
+# What was ACTUALLY eliminated (still valid, re-verified)
 
-    pos 1  tok 236812 ('4')   cos vs pos 3 ('4') = 0.618
-    pos 2  tok 236743 (' ')   cos vs pos 4 (' ') = 0.740, vs pos 6 = 0.592
+- **The forward is correct.** Prefill hiddens predict `4,4,7,1` with margins 3-8.
+- **The tied int8 head is correct.** f32 head vs the served dp4a int8 head over the
+  same hiddens: **0/26 argmax flips**; logit noise 0.023 vs mean top-1 margin 3.16
+  (two orders of magnitude). The `norm 127` "lead" was an artifact of the parity
+  *script* omitting the `/127` that `k_embed_packed_one` applies.
+- **The latent seam is faithful.** `single_entry=true` (`gemma4_kv_inject_tokens`)
+  vs `false` (`kv::prefill`): identical output. The `routes.rs:1544` claim
+  "bit-identical to prefill by construction" is now **measured**, not asserted.
+- **The decode table is correct.** A static table cannot render `'7'` right in one
+  context and wrong in another.
+- **`TokenDecodeBuffer` cannot transpose** (extend → emit prefix → drain).
 
-Two IDENTICAL tokens at different positions are NOT identical in the stored keys.
-So RoPE is applied and reaches the KV cache. (Note the cosine floor is high BY
-DESIGN: partial_rotary_factor 0.25 leaves 384 of 512 global dims un-rotated, so
-identical tokens share 75% of their key vector. Fine positional discrimination
-lives in the SWA layers, which carry full RoPE.)
+# THE FIX
 
-## Also eliminated this round
+    profiles/agent.toml:  no_repeat_ngram = 0     # was 3
 
-- **Attention scaling** — HF self.scaling = 1.0; the engine folds ascale=1.0
-  (comment: "gemma4 scaling=1.0 (folded)"). Match. A too-flat softmax would have
-  produced exactly our symptom; it is not that.
+Anti-degeneration is `eot_bias` + the B4 admission cap, **not** an n-gram ban.
 
-## The HF reference is still THE decisive experiment — and it is BLOCKED ON DISK
+## Lint guard (serve.py) — so this cannot silently return
 
-	ransformers 5.5.4 is now importable (the install was broken by a
-huggingface_hub version mismatch — fixed). But:
-- the checkpoint is gemma4_unified, which 5.5.4 does not wrap. Its TEXT stack
-  (Gemma4ForCausalLM + Gemma4TextConfig) is exactly right, so
-  	ools/reference/make_text_ckpt.py re-shards model.language_model.* into a
-  loadable checkpoint (streams tensor-by-tensor; peak RAM ~3 GB).
-- **It needs ~23 GB free on a drive. D: has 22 GB.** Free space (or point OUT at
-  another drive) and run:
+`build_env()` now REFUSES to launch any profile with `no_repeat_ngram >= 2` unless
+`SP_ALLOW_NGRAM_BAN=1` is set deliberately:
 
-      python tools/reference/make_text_ckpt.py
-      <Python311>\python.exe tools/reference/hf_reference.py
+    profile invalid: no_repeat_ngram=3 breaks verbatim copy (G-VERBATIM).
 
-  Loading 12B bf16 needs offload (32 GB RAM / 12 GB VRAM) — slow, but this is a
-  CORRECTNESS reference, not a benchmark. If HF copies "4471" and the engine says
-  "4417", the engine's gemma-4 forward is wrong and the bisect starts (the engine
-  already carries ttn_only bisect modes + BX_REC tensor dumps for this).
+# RECEIPTS (2026-07-12, full production stack: persona + tools + recall + growth)
 
-## HUNT LOG 2 — the operator's line of attack (the custom machinery), 2026-07-12
+    G-VERBATIM: PASS (6/6)
+      [PASS] WORD copy: quartzblanket   :: 'The passphrase is quartzblanket.'
+      [PASS] arithmetic: 2+2=4          :: '2+2=4. Digits only.'
+      [PASS] DIGIT copy: 4471           :: '4471.'
+      [PASS] DIGIT copy: RTX 2060       :: 'RTX 2060.'
+      [PASS] DIGIT echo: 8302           :: '8302 is a number, so I will repeat it: 8302'
+      [PASS] TOOL-shaped copy           :: 'The temperature is 21.7C, the humidity is 48% ...'
 
-The operator's instinct: stop auditing stock model math, audit OUR custom stack —
-the SWA ring, persist-KV splicing, the inject/capture seams, the recall/spectest
-heads. Correct instinct. Tested, one variable at a time, all daemon-direct at temp 0:
+Daemon-direct A/B on a clean restart (`SP_NO_REPEAT_NGRAM=0` confirmed in the banner):
 
-| config | result |
-|---|---|
-| SWA ring OFF (ring_w=0, full cache, no journal) | **byte-identical failure** |
-| SWA ring 2048 + ALL heads/taps/growth/qkey/spectest OFF | **byte-identical failure** |
-| PERSIST-KV OFF (no LCP splicing; clean full prefill/turn) | **byte-identical failure** |
+    4471                 -> 4471                      (was 4417)
+    A7B2                 -> A7B2                      (was A7B7)
+    2+2                  -> 2+2=4                     (was 2+4=6)
+    four four seven one  -> Four four seven one       (was four four seven four four four)
+    21.7C / 48% / K9     -> all three, exact          (was 22.1C / 49% / ...)
 
-Three very different KV configurations, the SAME wrong bytes out. The custom KV
-machinery (ring, journal, persist splicing) and every head/tap are ELIMINATED —
-the forward is deterministically wrong on its own.
+# What this unblocks
 
-### The failure is at READ, not COPY
+Every number the system reports about itself, its tools, or its memories was
+untrustworthy while this was live. HINDSIGHT's "numeric garbling" — blamed on
+0.6/1.3 sampling and "fixed" with temp 0.15 — was **this**, which is why it
+reproduced at temperature 0 and why that fix never worked.
 
-Under the bare profile the model misreads a digit that is sitting in the PROMPT:
-    "What is 2+2?"  ->  "2+4=6."
-It is not merely failing to copy; it is not seeing the token correctly.
+# New forensics kept from the hunt
 
-### Embedding transcode: VERIFIED CORRECT (tools/reference/embd_parity.py)
+- `SP_HIDDEN_DUMP_DECODE=1` — keeps the KAI-5 hidden tap open through the **decode**
+  steps (it used to close at prefill end, so we had only ever measured a path that
+  makes none of the tokens the user sees). Default-off ⇒ byte-identical.
+- `tools/reference/head_precision.py` — replays the engine's own hiddens through an
+  honest f32 head and through a faithful int8-dp4a simulation; reports argmax flips,
+  top-1 margins and logit noise. This is what caught the model wanting `'7'` at 9.0
+  while the engine printed `'1'`.
+- `POST /v1/debug/kdiff` — per-position global-K cosine (RoPE reaches the cache).
 
-Dequantised sp-model rows vs the original bf16 weights, by cosine:
-    '0' 0.9984  '1' 0.9981  '4' 0.9981  '7' 0.9972  '9' 0.9982  ' ' 0.9986
-    id 100 0.9999   id 1000 1.0000   id 50000 0.9999   id 200000 1.0000
-No row mix-up, no int32 overflow on high ids (digits live at 236770-236832).
+# THE STANDING LESSON
 
-### BUT — a live lead from that same measurement
-
-The dequantised rows have **norm 127** where the true weights have **norm 1.0** —
-exactly int8_max. On the INPUT side this is harmless (RMSNorm cancels a global
-scale). On the TIED HEAD it may not be: logits = embd @ h, then
-inal_logit_softcapping = 30 applies 30*tanh(x/30). If the head's scale
-convention is off by ~127, the tanh SATURATES and the logit differences flatten —
-the model would pick near-arbitrarily among plausible tokens while keeping
-semantics. That is exactly the observed behaviour.
-
-**NEXT (cheap, decisive):** read gemv_w_packed + the OK_Q8 "O_K-lifted int8 +
-per-row Frobenius scale" convention in cuda_forward.cu and confirm whether the
-kernel divides by int8_max. Then dump the top-5 logits for the position where the
-model should emit '7' in "4471": if '7' and '8' (and friends) are within a hair of
-each other, the softcap is saturating and this is the bug.
+`gold 25/25` validates the **math core**. The served forward is the CUDA
+`gemma4_kv_*` path, which the gold gates do not touch — and the *sampler* sits above
+both. A gate suite that is green while the product is broken is measuring the wrong
+layer. **G-VERBATIM is now the gate that stands between the model and the user, and
+it runs after ANY engine / model / profile / sampler change.**

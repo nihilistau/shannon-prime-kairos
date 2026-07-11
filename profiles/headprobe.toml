@@ -39,13 +39,13 @@ prefix_snapshot = false
 
 [memory]
 recall_authority = 'L5'  # exactly one; serve.py refuses profiles that arm two
-auto_recall_default = true
+auto_recall_default = false
 l5_tau = 0.30
 attr_gate = true
 attr_tau = 0.5
 qonly = true
 delivery = 'plain'       # Hodor binding: never systemecho globally
-growth = true            # SP_B4_NIGHTSHIFT
+growth = false            # SP_B4_NIGHTSHIFT
 persist_growth = true    # SP_NIGHTSHIFT_PERSIST
 store_verb = true        # SP_MEM_STORE
 classify = true          # SP_MEM_CLASSIFY
@@ -59,12 +59,12 @@ qkey_mint = true         # question-space ep.l5 keys
 # load-on-demand index tier instead (all_tools); one stable system prompt per session.
 spine_toolset = false
 spine_recall = true
-personality = true
-mcp_tools = true
+personality = false
+mcp_tools = false
 # Hydrate the ~1.5k-token persona+tools preamble into the persist cache at BOOT (background)
 # so the user's FIRST message reuses it (LCP) instead of paying the one-time ~100s cold
 # prefill live. The cost moves to startup; every turn after is a strict extension.
-prewarm = true
+prewarm = false
 # 'spine' = the harness owns recall on gateway turns (fast: strict-extension prompt
 # composes with persist-KV). Daemon L5 delivery clears the committed cache on every
 # recalled turn -> minutes-long interrogative turns through the gateway. Direct
@@ -86,14 +86,12 @@ mtp = false  # P5: verify machinery proven byte-exact, but prompt-lookup drafts 
 # in the gate. Lever stays (explicit byteexact:false per request), default OFF.
 byteexact = true
 eot_bias = 4.0
-# G-VERBATIM (2026-07-12) — ROOT CAUSE OF THE DIGIT/COPY BUG. MUST STAY 0.
-# no_repeat_ngram=N bans any N-token sequence ALREADY IN CONTEXT. Verbatim copying
-# IS that: to echo "4471" the model must re-emit the trigram 4->4->7 it can see in
-# the prompt. The ban fired, the (certain, margin 9.0) correct token '7' was masked,
-# and the sampler took the next-best digit -> "4417". Same mechanism garbled every
-# tool number, memory fact and persona detail in the system.
-# Anti-degeneration is eot_bias + the admission cap, NOT this. Gate: harness_tests/g_verbatim.py
-no_repeat_ngram = 0
+no_repeat_ngram = 3
 
 [veto]
-spectest = true
+spectest = false
+
+[debug]
+hidden_dump = "D:/F/shannon-prime-repos/shannon-prime-kairos/var/hidden/head.bin"
+
+hidden_dump_decode = true

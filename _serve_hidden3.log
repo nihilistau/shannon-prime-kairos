@@ -1,0 +1,44 @@
+[kairos serve] profile=agent
+-- effective config --
+  CUBLAS_WORKSPACE_CONFIG=:16:8
+  SP_AUTO_RECALL_DEFAULT=1
+  SP_B4_NIGHTSHIFT=1
+  SP_CUDA_DECODE_INT8=1
+  SP_DAEMON_BACKEND=cuda
+  SP_DAEMON_KVDECODE=1
+  SP_DAEMON_KVDECODE_PMAX=12096
+  SP_DAEMON_KVDECODE_RING_W=2048
+  SP_DAEMON_LOG=D:\F\shannon-prime-repos\shannon-prime-kairos\var\daemon.log
+  SP_DAEMON_URL=http://127.0.0.1:3000
+  SP_EOT_BIAS=4.0
+  SP_GATEWAY_AUTHORITY=spine
+  SP_GATEWAY_PREWARM=1
+  SP_HIDDEN_TAP=1
+  SP_MCP_CONFIG=D:\F\shannon-prime-repos\shannon-prime-kairos\mcp_servers.json
+  SP_MCP_TOOLS=1
+  SP_MEM_CLASSIFY=1
+  SP_MEM_POLICY=1
+  SP_MEM_STORE=1
+  SP_NIGHTSHIFT_PERSIST=1
+  SP_NO_REPEAT_NGRAM=3
+  SP_PERSIST_B4=1
+  SP_PERSIST_KV=1
+  SP_PERSONALITY=1
+  SP_PERSONA_FILE=D:\F\shannon-prime-repos\shannon-prime-kairos\persona.md
+  SP_QKEY_MINT=1
+  SP_RECALL_ATTR_GATE=1
+  SP_RECALL_ATTR_TAU=0.5
+  SP_RECALL_L5=1
+  SP_RECALL_L5_PROMPT=plain
+  SP_RECALL_L5_TAU=0.3
+  SP_RECALL_QONLY=1
+  SP_RECALL_REGISTRY=D:\F\shannon-prime-repos\shannon-prime-system-engine\_memory_live\registry.jsonl
+  SP_SPECTEST=1
+  SP_SPECTEST_HEAD=D:\F\shannon-prime-repos\shannon-prime-system-engine\_faithful_corpus\f3\spectest_head_f1.bin
+  SP_SPINE_RECALL=1
+  SP_SPINE_TOOLSET=0
+stack stopped
+[kairos serve] daemon up on :3000
+[kairos serve] gateway up on :8800 (prewarm runs in background)
+[kairos serve] console:  http://127.0.0.1:3000/
+[kairos serve] operator: http://127.0.0.1:3000/operator.html

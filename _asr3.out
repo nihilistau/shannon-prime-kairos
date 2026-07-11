@@ -1,0 +1,7 @@
+frames: 65
+A no-frame-mention, plain:
+  -> 'The fox jumps over the lazy dog.'
+B boa token before audio (<|audio>):
+  -> '<|audio|0>'
+C boa+placeholders+eoa literal in text:
+  -> 'The lazy dog is sleeping on the couch\nThe cat is chasing the mouse\nThe mouse is hiding behind the sofa\nThe sofa is in the living room\nThe living room is on the second floor\nThe sec'

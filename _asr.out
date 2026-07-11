@@ -1,0 +1,4 @@
+CLEAN TTS frames: 65
+  transcribe -> ''
+MIC frames: 29
+  transcribe -> "I'm a language model developed by OpenAI."
