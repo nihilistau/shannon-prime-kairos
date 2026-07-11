@@ -324,6 +324,15 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
     from harness.inference import InferenceConfig
     import queue as _queue
     import threading as _threading
+    # WARM GATE: never race the load-time prefill on the one resident session
+    # (that race cost the operator ~5 min/turn and corrupted persist bookkeeping).
+    if not _WARM.is_set():
+        _t_wait = time.time()
+        while not _WARM.wait(4.0):
+            yield ("data: " + json.dumps({"hb": int(time.time()), "warming": True}) + "\n\n").encode()
+            if time.time() - _t_wait > 900:
+                break
+        logger.info("[gateway] warm gate released after %.0fs", time.time() - _t_wait)
     # auto_recall PASSTHROUGH (ADR-008 composition gate): default False (the agent uses tools,
     # not the daemon's recall), but a client may arm the daemon-side L5 path per request —
     # required to gate recall∘L5 composition through the gateway.
@@ -525,11 +534,37 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
     yield b"data: [DONE]\n\n"
 
 
+# ── WARM GATE (operator, 2026-07-11 midnight) ────────────────────────────────
+# The prewarm used to run on a BACKGROUND thread while the gateway already
+# served traffic: the operator's first message RACED it on the one resident
+# session, the persist guard missed (pos != committed), and BOTH paid a full
+# ~5-minute cold prefill. "Why is prefill run on the first message and not on
+# load?" — exactly. It is a LOAD-time step now:
+#   * chat requests WAIT on this event (heartbeats keep the UI alive), so a
+#     user turn can never race or interleave with the prefill;
+#   * /health reports {"warm": bool} so serve.py can hold "ready" until hot.
+import threading as _thr  # module-level (the chat handler imports its own alias locally)
+_WARM = _thr.Event()
+
+
+def warm_state() -> dict:
+    return {"warm": _WARM.is_set()}
+
+
+def _await_warm(timeout: float = 900.0) -> bool:
+    """Block until the preamble is hot. Chat turns call this BEFORE touching the
+    daemon; the alternative (racing the prewarm) costs minutes and corrupts the
+    persist bookkeeping."""
+    if _WARM.is_set():
+        return True
+    logger.info("[gateway] turn is WAITING for the load-time prefill (no racing the cache)")
+    return _WARM.wait(timeout)
+
+
 def _prewarm() -> None:
-    """Pre-warm the static persona+tools prefix into the daemon's persist cache, in the BACKGROUND,
-    so the FIRST real user turn reuses it (persist longest-common-prefix) instead of paying the
-    ~2-3 min O(n) prefill live. A short max_tokens=1 warm-up leaves a tiny tail the LCP rewind drops.
-    Waits for the daemon, fires once, non-fatal on any error."""
+    """Pre-warm the static persona+tools prefix into the daemon's persist cache so the
+    FIRST real user turn reuses it (persist longest-common-prefix) instead of paying the
+    O(n) cold prefill live. Runs on a thread but GATES all chat traffic via _WARM."""
     import threading
     import time
 
@@ -548,15 +583,21 @@ def _prewarm() -> None:
                                                   system_prefix=load_agent_system())
             msgs = [{"role": "system", "content": system_content},
                     {"role": "user", "content": "hi"}]
+            # The preamble KV is the thing whose DETAIL matters (persona, hardware,
+            # tool names). It is ALWAYS prefilled byte-exact, whatever the serving
+            # regime — float-prefilling it is what produced "Shannon-15 / RTX 3067".
             cfg = InferenceConfig(temperature=0.6, repetition_penalty=1.3, eot_bias=4.0,
-                                  max_tokens=1, auto_recall=False)
+                                  max_tokens=1, auto_recall=False, byteexact=True)
             t0 = time.time()
-            logger.info("[gateway] pre-warming persona+tools prefix (one-time O(n) prefill, ~2-3 min)...")
+            logger.info("[gateway] LOAD-TIME prefill of the persona+tools prefix "
+                        "(chat traffic is gated until this completes)...")
             client.chat(messages=msgs, config=cfg)
-            logger.info("[gateway] pre-warm complete in %.0fs; prefix is hot, first user turn is fast.",
+            logger.info("[gateway] prefill complete in %.0fs; prefix is HOT — turns are fast now.",
                         time.time() - t0)
         except Exception as exc:
-            logger.warning("[gateway] pre-warm failed (non-fatal; first turn will just be slow): %s", exc)
+            logger.warning("[gateway] pre-warm failed (non-fatal; first turn pays the prefill): %s", exc)
+        finally:
+            _WARM.set()   # ALWAYS release the gate: a failed prewarm must not wedge the gateway
 
     threading.Thread(target=_go, daemon=True).start()
 
@@ -635,7 +676,8 @@ def _run_stdlib(host: str, port: int) -> None:
 
         def do_GET(self):  # noqa: N802
             _json_routes = {
-                "/health": lambda: {"ok": True, "agent": True, "daemon": get_client().health()},
+                "/health": lambda: {"ok": True, "agent": True, "warm": _WARM.is_set(),
+                                    "daemon": get_client().health()},
                 "/v1/voice/status": _voice_status,   # ADR-KAI4: ear device/artifacts state
                 "/v1/voice/corpus": _voice_corpus,   # ADR-KAI4 P1.6: sentences to read for training
                 "/v1/voice/record/status": _voice_record_status,

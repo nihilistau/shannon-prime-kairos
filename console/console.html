@@ -425,7 +425,10 @@
       if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(chatChip, anchor.nextSibling);
       else document.body.appendChild(chatChip);
     }
-    if (CHAT_FALLBACK) {
+    if (WARMING) {
+      chatChip.textContent = '◐ warming — prefilling the persona prefix (one-time)';
+      chatChip.style.color = 'var(--gold)'; chatChip.style.borderColor = 'var(--gold)';
+    } else if (CHAT_FALLBACK) {
       chatChip.textContent = '⚠ recall offline — kernel-only (gateway down)';
       chatChip.style.color = 'var(--warn)'; chatChip.style.borderColor = 'var(--warn)';
     } else {
@@ -433,12 +436,17 @@
       chatChip.style.color = 'var(--ok)'; chatChip.style.borderColor = 'var(--rule)';
     }
   }
+  let WARMING = false;
   async function probeGateway() {
     try {
       const r = await fetch(`${GATEWAY}/health`, { signal: AbortSignal.timeout(2500) });
-      if (r.ok) { CHAT_BASE = GATEWAY; CHAT_FALLBACK = false; setChatChip(); return; }
+      if (r.ok) {
+        const h = await r.json().catch(() => ({}));
+        WARMING = h.warm === false;      // load-time prefill still running
+        CHAT_BASE = GATEWAY; CHAT_FALLBACK = false; setChatChip(); return;
+      }
     } catch (_) {}
-    CHAT_BASE = DAEMON; CHAT_FALLBACK = true; setChatChip();
+    CHAT_BASE = DAEMON; CHAT_FALLBACK = true; WARMING = false; setChatChip();
   }
   probeGateway(); setInterval(probeGateway, 15000);
 

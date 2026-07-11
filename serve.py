@@ -179,8 +179,28 @@ def main() -> int:
     if not wait_http(f"http://127.0.0.1:{c['serve']['gateway_port']}/health", 45):
         print("!! gateway did not come up — see var/gateway.log")
         return 1
-    print(f"[kairos serve] gateway up on :{c['serve']['gateway_port']} (prewarm runs in background)")
-    print(f"[kairos serve] console:  http://127.0.0.1:{c['serve']['port']}/")
+    print(f"[kairos serve] gateway up on :{c['serve']['gateway_port']}")
+    # ── LOAD-TIME PREFILL (operator, 2026-07-11): do NOT report ready while the
+    # preamble is still prefilling. The old behavior (background prewarm + open
+    # gateway) let the first user turn race the prefill on the one resident
+    # session -> persist guard miss -> BOTH paid ~5 minutes. Wait for it here;
+    # the gateway also gates chat traffic on the same event.
+    if c["agent"].get("prewarm", False):
+        print("[kairos serve] prefilling the persona+tools prefix (load-time; ~2-5 min cold)...", flush=True)
+        t0 = time.time()
+        hot = False
+        for _ in range(900):
+            try:
+                h = json.loads(urllib.request.urlopen(
+                    f"http://127.0.0.1:{c['serve']['gateway_port']}/health", timeout=3).read())
+                if h.get("warm"):
+                    hot = True
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+        print(f"[kairos serve] {'prefix HOT in %.0fs — first turn is fast' % (time.time() - t0) if hot else 'prewarm did not confirm; first turn may be slow'}")
+    print(f"[kairos serve] READY. console:  http://127.0.0.1:{c['serve']['port']}/")
     print(f"[kairos serve] operator: http://127.0.0.1:{c['serve']['port']}/operator.html")
     return 0
 

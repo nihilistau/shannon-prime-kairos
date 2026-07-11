@@ -1548,10 +1548,15 @@ fn run_kvdecode_chat(
     // minted via the seam) and then decode_step(last) re-runs that position to fetch
     // logits; bit-identical either way since the cache state at position p depends
     // only on tokens[0..=p].
+    // TURN PHASE TIMING (operator, 2026-07-12): a 3-token answer took 52 s and no
+    // log said where it went. Name every phase: prefill / decode / spectest / capture.
+    let t_turn = std::time::Instant::now();
+    let mut t_prefill_ms = 0u128;
     let (head, last) = tokens.split_at(tokens.len() - 1);
     // PERSIST-KV: skip the head positions already committed in the reused cache (prefill_from==0
     // on the normal path => the whole head, byte-identical null floor).
     let head = &head[prefill_from.min(head.len())..];
+    let t_pf = std::time::Instant::now();
     if !head.is_empty() {
         // #41 BATCH PREFILL (CONTRACT-BATCH-PREFILL, SP_KV_PREFILL_BATCH=1, default-off):
         // on a COLD turn (prefill_from==0 = no persist prefix reused) with a large head,
@@ -1582,6 +1587,11 @@ fn run_kvdecode_chat(
                 return;
             }
         }
+    }
+    t_prefill_ms = t_pf.elapsed().as_millis();
+    if !head.is_empty() {
+        tracing::info!("TURN-PHASE: prefill {} tok in {} ms ({:.0} ms/tok)",
+                       head.len(), t_prefill_ms, t_prefill_ms as f64 / head.len() as f64);
     }
     // G-INT-2-FIX (text-in-context recall): the synthesis tail token. Defaults to
     // last[0] (the original prompt's last token). When the B3-JUDGE PICKs a memory
@@ -4370,6 +4380,19 @@ Tag of the answer (or [NULL]):");
     // committed state is simply left stale and the next turn's strict-prefix+position guard rejects
     // it -> full reset+prefill (the byte-identical null floor). Cleared if anything went wrong is
     // unnecessary: the guard already fails closed.
+    // TURN-PHASE summary: prefill vs decode vs everything-else (capture, spectest,
+    // qkey mint...). This is the line that would have told the operator, hours ago,
+    // that a 3-token answer spends its 52 s outside decode.
+    {
+        let n_out = committed_gen.len().max(1);
+        let dec_ms = decode_t0.elapsed().as_millis();
+        let total_ms = t_turn.elapsed().as_millis();
+        tracing::info!(
+            "TURN-PHASE: total {} ms = prefill {} ms + decode {} ms ({} tok, {:.1} tok/s) + other {} ms (byteexact={})",
+            total_ms, t_prefill_ms, dec_ms, n_out,
+            (n_out as f64) / (dec_ms.max(1) as f64 / 1000.0),
+            total_ms.saturating_sub(t_prefill_ms).saturating_sub(dec_ms), byteexact);
+    }
     if persist_kv {
         let mut c = KV_COMMITTED.lock().unwrap();
         c.clear();
