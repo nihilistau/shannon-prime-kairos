@@ -129,6 +129,7 @@ extern int   gemma4_kv_prefill_batched(sp_g4_kv *s, const int32_t *toks, int n);
 extern int   gemma4_kv_rewind(sp_g4_kv *s, int delta);
 extern int   gemma4_kv_reset(sp_g4_kv *s);
 extern int   gemma4_kv_reset_cold(sp_g4_kv *s);
+extern int   gemma4_kv_shear(sp_g4_kv *s, int P);   /* KAIROS P1c-2 prefix shear */
 extern int   gemma4_kv_pos(const sp_g4_kv *s);
 extern void  gemma4_kv_close(sp_g4_kv *s);
 /* WIRE-CUDA-DECODE-GEMMA4 §3.1.A — additive logits-returning step (now defined
@@ -286,6 +287,16 @@ int sp_daemon_cuda_kvdecode_reset_cold(void *handle) {
     sp_g4_kv *s = (sp_g4_kv *)handle;
     if (!s) { sp_set_error("cuda kvdecode reset_cold: NULL handle"); return -1; }
     return gemma4_kv_reset_cold(s);
+}
+
+/* KAIROS P1c-2 prefix shear: O(1) position restore to P when the SWA ring has
+ * never wrapped this residency (slots [0..P) still positional — see the verb's
+ * contract in cuda_forward.cu). 0 ok; -1 = wrapped/bad-args (caller falls back
+ * to the full re-prefill floor). */
+int sp_daemon_cuda_kvdecode_shear(void *handle, int P) {
+    sp_g4_kv *s = (sp_g4_kv *)handle;
+    if (!s) { sp_set_error("cuda kvdecode shear: NULL handle"); return -1; }
+    return gemma4_kv_shear(s, P);
 }
 
 /* position(handle): current dpos, -1 on NULL. */

@@ -26,12 +26,11 @@ persist = true
 persist_b4 = true        # HINDSIGHT: cache alive under B4 growth (minutes -> seconds)
 ring_w = 2048
 pmax = 12096
-# P1c-1 REFUTED for the capture_batched composition (2026-07-11): capturing the
-# 1652-token preamble ground 10+ min at 100% GPU (540 MiB store; the episode
-# capture path is built for ~30-token episodes, 50x OOD). Lever stays default-off
-# with receipt gates/G-KAIROS-P1c-1; the real fix is the device-side snapshot
-# verb (copy resident KV rows out/in — no re-forward, no disk) = P1c-2.
-prefix_snapshot = false
+# P1c-2 (2026-07-11): gemma4_kv_shear — new chats over the shared preamble
+# restore by an O(1) position shear (ring-unwrapped invariant; byte-exact by
+# construction). The capture_batched composition was refuted first (receipt
+# gates/G-KAIROS-P1c-1: 10+min @100% GPU, 540 MiB); the shear replaced it.
+prefix_snapshot = true
 
 [memory]
 recall_authority = 'L5'  # exactly one; serve.py refuses profiles that arm two

@@ -1246,68 +1246,31 @@ fn capture_live_episode(app: &Arc<AppState>, text: &str) -> bool {
 // (SP_PREFIX_SNAPSHOT=1 arms it) until its gate seals.
 // Slot policy: ONE snapshot (the daily-driver preamble), recreated when the
 // observed shared prefix stops matching. Dir: <registry-parent>/prefix_snap.
+// P1c-2 (2026-07-11): the capture_batched composition was REFUTED at preamble
+// scale (10+ min @100% GPU, 540 MiB store — receipt gates/G-KAIROS-P1c-1.md).
+// Replaced by the gemma4_kv_shear verb: when the SWA ring has never wrapped
+// this residency, slots [0..lcp) still hold the preamble rows prefill minted —
+// restore is an O(1) position shear, byte-exact by construction, no copies.
 const PREFIX_SNAP_MIN: usize = 256;
-static PREFIX_SNAP: std::sync::Mutex<Option<(Vec<i32>, String)>> = std::sync::Mutex::new(None);
 
 #[cfg(feature = "wire_cuda_backend")]
 fn prefix_snapshot_restore(
-    app: &Arc<AppState>,
+    _app: &Arc<AppState>,
     handle: *mut std::ffi::c_void,
     tokens: &[i32],
     lcp: usize,
 ) -> usize {
     use sp_daemon::cuda_kvdecode_dispatch as kv;
-    let mut snap = PREFIX_SNAP.lock().unwrap();
-    let stale = match snap.as_ref() {
-        Some((st, _)) => st.len() > lcp || tokens[..st.len()] != st[..],
-        None => true,
-    };
-    if stale {
-        let base = match std::env::var("SP_RECALL_REGISTRY").ok()
-            .and_then(|r| std::path::Path::new(&r).parent().map(|p| p.to_path_buf())) {
-            Some(p) => p.join("prefix_snap"),
-            None => {
-                tracing::info!("PREFIX-SNAPSHOT: SP_RECALL_REGISTRY unset — nowhere to place the snapshot dir");
-                return 0;
-            }
-        };
-        let qm = {
-            let mut sguard = app.session.as_ref().expect("L1 session unavailable (qwen36 lane)").lock().unwrap();
-            let sraw = sguard.raw_ptr() as *mut sp_daemon::ffi_l1::sp_session;
-            (unsafe { sp_daemon::ffi_l1::sp_session_qwen3_model(sraw) }) as *const std::ffi::c_void
-        };
-        if qm.is_null() { return 0; }
-        let uniq = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis()).unwrap_or(0);
-        let dir = base.join(format!("snap_m{uniq}"));
-        let dir_str = dir.to_string_lossy().to_string();
-        if std::fs::create_dir_all(&dir).is_err() { return 0; }
-        let t0 = std::time::Instant::now();
-        if let Err(e) = unsafe { kv::capture_batched(qm, &tokens[..lcp], &dir_str) } {
-            tracing::warn!("PREFIX-SNAPSHOT: capture_batched({lcp} toks) failed: {e} — full prefill");
-            return 0;
-        }
-        let _ = std::fs::write(dir.join("snap.tok"),
-            tokens[..lcp].iter().map(|t| t.to_string()).collect::<Vec<_>>().join("\n"));
-        tracing::info!("PREFIX-SNAPSHOT: captured {} tokens in {:?} -> {}", lcp, t0.elapsed(), dir_str);
-        *snap = Some((tokens[..lcp].to_vec(), dir_str));
-    }
-    let (st_len, sd) = match snap.as_ref() { Some((t, d)) => (t.len(), d.clone()), None => return 0 };
-    if let Err(e) = unsafe { kv::reset_cold(handle) } {
-        tracing::warn!("PREFIX-SNAPSHOT: reset_cold failed: {e} — full prefill");
-        return 0;
-    }
     let t0 = std::time::Instant::now();
-    match unsafe { kv::replay(handle, &sd, st_len as i32, false) } {
+    match unsafe { kv::shear(handle, lcp as i32) } {
         Ok(()) => {
             tracing::info!(
-                "PREFIX-SNAPSHOT: restored {} tokens in {:?}; prefill suffix {} (full would be {})",
-                st_len, t0.elapsed(), tokens.len() - st_len, tokens.len());
-            st_len
+                "PREFIX-SHEAR: restored the {}-token shared prefix in {:?} (O(1)); prefill suffix {} (full would be {})",
+                lcp, t0.elapsed(), tokens.len() - lcp, tokens.len());
+            lcp
         }
         Err(e) => {
-            tracing::warn!("PREFIX-SNAPSHOT: replay failed: {e} — cold full prefill");
-            let _ = unsafe { kv::reset_cold(handle) };
+            tracing::info!("PREFIX-SHEAR declined ({e}) — full-prefill null floor");
             0
         }
     }

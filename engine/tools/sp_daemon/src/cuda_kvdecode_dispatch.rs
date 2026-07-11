@@ -107,6 +107,11 @@ unsafe extern "C" {
     /// residue can be attended after a B3-JUDGE nested pass). 0 on success.
     fn sp_daemon_cuda_kvdecode_reset_cold(handle: *mut c_void) -> c_int;
 
+    /// KAIROS P1c-2 prefix shear — `gemma4_kv_shear(s, P)`: O(1) position
+    /// restore to P when the SWA ring has never wrapped this residency.
+    /// 0 ok; nonzero = wrapped/bad args (caller falls back to full prefill).
+    fn sp_daemon_cuda_kvdecode_shear(handle: *mut c_void, p: c_int) -> c_int;
+
     /// `gemma4_kv_pos(s)`. Current dpos, or -1 on NULL.
     fn sp_daemon_cuda_kvdecode_position(handle: *const c_void) -> c_int;
 
@@ -366,6 +371,25 @@ pub unsafe fn reset_cold(handle: *mut c_void) -> Result<(), String> {
     }
     // SAFETY: handle live per caller.
     let rc = unsafe { sp_daemon_cuda_kvdecode_reset_cold(handle) };
+    if rc == 0 { Ok(()) } else { Err(last_error()) }
+}
+
+/// KAIROS P1c-2 — PREFIX SHEAR: O(1) restore of the committed shared prefix.
+/// When the SWA ring has never wrapped this residency (dpos <= ring_W), slots
+/// [0..P) still hold positions [0..P) untouched, so a NEW chat over the same
+/// constant preamble shears dpos back to P instead of the full cold re-prefill.
+/// Byte-exact by construction — the rows ARE the rows prefill minted. Errors
+/// when the ring has wrapped; the caller falls back to the full-prefill floor.
+/// The caller MUST hold the cache Mutex.
+///
+/// # Safety
+/// `handle` must be a live `sp_g4_kv*` from [`open`].
+pub unsafe fn shear(handle: *mut c_void, p: i32) -> Result<(), String> {
+    if handle.is_null() || p < 0 {
+        return Err("kvdecode shear: NULL handle or negative P".to_string());
+    }
+    // SAFETY: handle live per caller.
+    let rc = unsafe { sp_daemon_cuda_kvdecode_shear(handle, p) };
     if rc == 0 { Ok(()) } else { Err(last_error()) }
 }
 
