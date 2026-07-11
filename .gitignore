@@ -1,6 +1,8 @@
 var/
 __pycache__/
 *.pyc
+engine/tools/sp_daemon/target*/
+engine/tools/sp_swarm/target/
 var/voice/wav/
 var/voice/*.npz
 var/voice/*.log

@@ -2,8 +2,10 @@
 # serve.py maps this to the engine/gateway env and ECHOES the effective config.
 
 [paths]
-# Engine stays in staging until kairos P1 migrates the kernel tree.
-engine_exe = 'D:/F/shannon-prime-repos/shannon-prime-system-engine/tools/sp_daemon/target-wirecuda/release/sp-daemon.exe'
+# P1a (2026-07-11): kernel tree migrated; daily driver = the KAIROS build.
+# Rollback = point this back at the staging exe:
+#   shannon-prime-system-engine/tools/sp_daemon/target-wirecuda/release/sp-daemon.exe
+engine_exe = 'D:/F/shannon-prime-repos/shannon-prime-kairos/engine/tools/sp_daemon/target-wirecuda/release/sp-daemon.exe'
 model      = 'D:/F/shannon-prime-repos/models/gemma4-12b-b1-reason.sp-model'
 tokenizer  = 'D:/F/shannon-prime-repos/models/gemma4-12b-b1.sp-tokenizer'
 # Production memory: the LIVE registry (engine _memory_live) until P1 moves it

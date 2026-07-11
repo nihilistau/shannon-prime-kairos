@@ -30,7 +30,7 @@ PHASES = [
      "landed_re": r"PROJECT HINDSIGHT genesis", "progress_re": None},
     {"id": "P1", "name": "The kernel", "gate": "G-KAIROS-P1 + G-KAIROS-PERF",
      "what": "sp_daemon → engine/ (legacy_policy flag), math-core submodule, prefix snapshot, batch→persist handoff",
-     "landed_re": r"G-KAIROS-P1", "progress_re": r"prefix[- ]snapshot|legacy_policy|engine/ (copy|migrat)"},
+     "landed_re": r"G-KAIROS-P1(?!\w)", "progress_re": r"prefix[- ]snapshot|legacy_policy|engine/ (copy|migrat)"},
     {"id": "P2", "name": "The harness", "gate": "2026-07-10 audit suite (10 gates)",
      "what": "harness → harness/, policy moves kernel → harness executors",
      "landed_re": r"HINDSIGHT P2", "progress_re": None},
