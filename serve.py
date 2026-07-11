@@ -87,6 +87,11 @@ def build_env(c: dict) -> dict:
         "SP_DAEMON_LOG": os.path.join(VAR, "daemon.log"),
         "PYTHONPATH": ROOT,
     })
+    # [debug] knobs (P5): optional taps, unset unless the profile arms them.
+    dbg = c.get("debug", {})
+    if dbg.get("hidden_dump"):
+        os.makedirs(os.path.dirname(dbg["hidden_dump"].replace("/", "\\")), exist_ok=True)
+        e["SP_HIDDEN_DUMP"] = dbg["hidden_dump"].replace("/", "\\")
     return e
 
 

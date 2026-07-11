@@ -1,0 +1,60 @@
+# P5 DRAFTER data-generation profile — the agent profile with the hidden-dump
+# tap armed and the memory/agency machinery quieted (datagen must not pollute
+# the production registry: the Hodor lesson, enforced at the profile level).
+# Serve: python serve.py drafter-datagen   Then: python tools/drafter/datagen.py
+
+[paths]
+engine_exe = 'D:/F/shannon-prime-repos/shannon-prime-kairos/engine/tools/sp_daemon/target-wirecuda/release/sp-daemon.exe'
+model      = 'D:/F/shannon-prime-repos/models/gemma4-12b-b1-reason.sp-model'
+tokenizer  = 'D:/F/shannon-prime-repos/models/gemma4-12b-b1.sp-tokenizer'
+# ISOLATED registry: datagen chunks are gate/corpus traffic, never production memory.
+registry   = 'D:/F/shannon-prime-repos/shannon-prime-kairos/var/drafter/registry.jsonl'
+spectest_head = 'D:/F/shannon-prime-repos/shannon-prime-system-engine/_faithful_corpus/f3/spectest_head_f1.bin'
+llvm_bin   = 'C:/Program Files/LLVM/bin'
+
+[serve]
+port = 3000
+gateway_port = 8800
+
+[kv]
+persist = false          # every chunk is independent; no reuse wanted
+persist_b4 = false
+ring_w = 2048
+pmax = 12096
+prefix_snapshot = false
+
+[memory]
+recall_authority = 'L5'
+auto_recall_default = false
+l5_tau = 0.30
+attr_gate = false
+attr_tau = 0.5
+qonly = true
+delivery = 'plain'
+growth = false           # NO nightshift capture of corpus chunks
+persist_growth = false
+store_verb = false
+classify = false
+policy = false
+qkey_mint = false
+
+[agent]
+spine_toolset = false
+spine_recall = false
+personality = false
+mcp_tools = false
+prewarm = false          # datagen POSTs daemon-direct; no preamble needed
+authority = 'spine'
+
+[decode]
+mtp = false
+eot_bias = 4.0
+no_repeat_ngram = 3
+
+[veto]
+spectest = false
+
+[debug]
+# The KAI-5 hidden tap: every prefilled position's post-output_norm hidden
+# (E=3840 f32) appends to this file. datagen.py truncates it per chunk.
+hidden_dump = 'D:/F/shannon-prime-repos/shannon-prime-kairos/var/drafter/_hd_dump.bin'
