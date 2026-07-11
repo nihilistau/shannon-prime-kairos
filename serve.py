@@ -78,6 +78,9 @@ def build_env(c: dict) -> dict:
         "SP_GATEWAY_PREWARM": b(agent.get("prewarm", False)),
         "SP_PERSONALITY": b(agent["personality"]),
         "SP_MCP_TOOLS": b(agent["mcp_tools"]),
+        # P1a: the kairos exe has no frontend_mockups beside it; the daemon
+        # serves THE kairos console (its charter home) via the env override.
+        "SP_CONSOLE_DIR": os.path.join(ROOT, "console"),
         "SP_PERSONA_FILE": os.path.join(ROOT, "persona.md"),
         "SP_MCP_CONFIG": os.path.join(ROOT, "mcp_servers.json"),
         "SP_DAEMON_LOG": os.path.join(VAR, "daemon.log"),
