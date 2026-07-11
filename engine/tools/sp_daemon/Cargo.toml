@@ -186,8 +186,15 @@ cc = "1"
 # standard-FP profile: `cargo build --no-default-features --features wire_cuda_backend`
 # (DESIGN-NO-EXACT-PROFILE §4b — host-side footprint + cl.exe-clean CPU build). The CUDA byte-exact
 # kernels are NOT gated here (no __int128, zero runtime cost when d_bx_flag=0).
-default = ["exact"]
+# `legacy_policy` (DEFAULT-ON, HINDSIGHT P1b): the routes.rs research/dead policy
+# lanes (SP_SPINE in-kernel recall, B3 judge/disposer/W_c/qdump/jaccard, INT2,
+# FM steering, F3 capture, COCONUT, telepathy-chat). ON = byte-identical
+# today-behavior. OFF = those lanes fold to compile-time-false (kernel verbs +
+# the PROVEN one-config stack: L5+attr-gate recall, B4 nightshift, spectest veto).
+# The lanes stay in staging as research; receipts in MIGRATION-MAP.md.
+default = ["exact", "legacy_policy"]
 exact = []
+legacy_policy = []
 wire_hex_backend = []
 wire_cpu_backend = []
 wire_cuda_backend = []

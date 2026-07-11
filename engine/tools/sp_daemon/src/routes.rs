@@ -1284,7 +1284,11 @@ fn run_kvdecode_chat(
     // ── SPINE pre-cache route seam (SP_SPINE=1): telepathy expressed as
     //    LatentDecision::Route, routed + executed through spine.rs. Default (spine
     //    off) keeps the proven inline branch below, byte-for-byte. ──
-    if std::env::var("SP_SPINE").as_deref() == Ok("1")
+    // P1b legacy_policy: SP_SPINE in-kernel recall = DEAD in production
+    // (persona leak, OKFS 1264a862); telepathy = RESEARCH. Both fold to
+    // compile-time-false without the legacy_policy feature.
+    if cfg!(feature = "legacy_policy")
+        && std::env::var("SP_SPINE").as_deref() == Ok("1")
         && std::env::var("SP_TELEPATHY_CHAT").as_deref() == Ok("1") {
         if let Some(user) = raw_user.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
             let decision = crate::spine::route_decision(&user);
@@ -1300,7 +1304,8 @@ fn run_kvdecode_chat(
                 return;
             }
         }
-    } else if std::env::var("SP_TELEPATHY_CHAT").as_deref() == Ok("1") {
+    } else if cfg!(feature = "legacy_policy")
+        && std::env::var("SP_TELEPATHY_CHAT").as_deref() == Ok("1") {
         if let Some(user) = raw_user.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
             if let crate::telepathy::RouteDecision::Telepathy(bid) = crate::telepathy::decide_route(&[0.0f32]) {
                 let marker = std::env::var("SP_TELEPATHY_MARKER").as_deref() != Ok("0");
@@ -1684,7 +1689,10 @@ fn run_kvdecode_chat(
     // attribute-gate zero-inference decline, QONLY-aware) in ~30 lines that used to be
     // a ~1500-line env-branch ladder. Default-off (SP_SPINE unset) ⇒ the inline
     // `else if` below runs byte-for-byte unchanged (the null floor).
-    let spine_active = std::env::var("SP_SPINE").as_deref() == Ok("1");
+    // P1b legacy_policy: SP_SPINE in-kernel recall = DEAD (persona leak on
+    // foreign Qs, OKFS 1264a862). The proven inline L5 lane below is untouched.
+    let spine_active = cfg!(feature = "legacy_policy")
+        && std::env::var("SP_SPINE").as_deref() == Ok("1");
     if spine_active && auto_recall && replay_dir.is_none() && !forget_done
         && app.recall_registry.is_some()
         && std::env::var("SP_RECALL_L5").as_deref() == Ok("1")
@@ -1700,6 +1708,7 @@ fn run_kvdecode_chat(
         // Any graduated latent head joins the fold: load the W_c recall head if deployed
         // (SP_B3_WC), and build_pipeline runs it FIRST (a fired head short-circuits cosine).
         let wc = std::env::var("SP_B3_WC").ok().filter(|s| !s.is_empty())
+            .filter(|_| cfg!(feature = "legacy_policy"))  // W_c head = RESEARCH
             .and_then(|p| recall::load_wc(&p));
         let ns_snapshot: Vec<recall::Episode> =
             app.nightshift.read().unwrap().iter().cloned().collect();
@@ -1760,11 +1769,13 @@ fn run_kvdecode_chat(
                 // BOTH the forward and the scan loop; `best` stays None (the 2514 fire-arm
                 // handles None cleanly) and the L5 stage (its OWN read_global_q at ~1524) is
                 // untouched. This is byte-identical whenever any consumer IS set (scan runs).
-                let qk_scan_needed = tau_qk.is_finite()
+                // P1b legacy_policy: every consumer of the q·K scan (C2-sig dead
+                // at TAU=+inf; QDUMP/INT2/W_c/judge = RESEARCH) is a legacy lane.
+                let qk_scan_needed = cfg!(feature = "legacy_policy") && (tau_qk.is_finite()
                     || std::env::var("SP_B3_QDUMP").is_ok()
                     || std::env::var("SP_INT2").ok().as_deref() == Some("1")
                     || std::env::var("SP_B3_WC").ok().filter(|s| !s.is_empty()).is_some()
-                    || std::env::var("SP_B3_JUDGE").ok().filter(|s| !s.is_empty()).is_some();
+                    || std::env::var("SP_B3_JUDGE").ok().filter(|s| !s.is_empty()).is_some());
                 let read_q_res = if qk_scan_needed {
                     unsafe { kv::read_global_q(handle, last[0], &mut qbuf) }
                 } else {
@@ -1776,7 +1787,8 @@ fn run_kvdecode_chat(
                         // global-Q (the exact vector qk_relevance scores) so the offline
                         // contrastive trainer mines (Q, episode-K) pairs from the substrate.
                         // Additive; unset ⇒ no-op (null floor preserved). File q_<chat_id>.bin.
-                        if let Ok(dir) = std::env::var("SP_B3_QDUMP") {
+                        if let Some(dir) = std::env::var("SP_B3_QDUMP").ok()
+                            .filter(|_| cfg!(feature = "legacy_policy")) {  // P1b: B3-v3 dataset rail = RESEARCH
                             let qd = recall::G_NH * recall::HD;
                             let mut buf = Vec::with_capacity(8 + qbuf.len() * 4);
                             buf.extend_from_slice(&(n_global as u32).to_le_bytes());
@@ -1812,7 +1824,8 @@ fn run_kvdecode_chat(
                         // This branch is READ-ONLY on the cache (read_global_k is non-mutating) and does
                         // NOT inject / replay / decide NULL — it is the Stage-1 cull plumbing only. Default-off
                         // (env unset) = byte-identical null floor; leaves SP_B3_WC behavior intact when unset.
-                        if std::env::var("SP_INT2").ok().as_deref() == Some("1") {
+                        if cfg!(feature = "legacy_policy")  // P1b: INT2 head = RESEARCH (carried unarmed)
+                            && std::env::var("SP_INT2").ok().as_deref() == Some("1") {
                             let w_horizon: usize = std::env::var("SP_INT2_W").ok()
                                 .and_then(|s| s.parse().ok()).unwrap_or(20);   // KAIROS most-recent-W stub
                             let k_keep: usize = std::env::var("SP_INT2_K").ok()
@@ -2006,7 +2019,7 @@ fn run_kvdecode_chat(
                         // append the s0 NULL slot, argmax over [episodes, NULL]. Episode wins => replay it
                         // (M_target/SP_REPLAY_MTARGET=42 clamps injection mass); NULL wins => clean prompt.
                         // Default-off (env unset) = null floor; run WITHOUT SP_B3_DISPOSER/SP_B3_TAU_QK.
-                        if let Some(wcp) = (if int2_decided { None } else { std::env::var("SP_B3_WC").ok().filter(|s| !s.is_empty()) }) {
+                        if let Some(wcp) = (if int2_decided || !cfg!(feature = "legacy_policy") { None } else { std::env::var("SP_B3_WC").ok().filter(|s| !s.is_empty()) }) {  // P1b: W_c = superseded
                             match recall::load_wc(&wcp) {
                                 Some(head) => {
                                     // B4 NIGHTSHIFT: score the static curated registry AND a snapshot of
@@ -2093,7 +2106,8 @@ fn run_kvdecode_chat(
                         // (recall::token_overlap, the production Jaccard verifier); on a confident overlap,
                         // deliver the episode TEXT in-context (the F1=100% path), NOT pure-KV replay.
                         // Default-off (SP_RECALL_JACCARD unset) = null floor; runs only if no prior stage decided.
-                        if !int2_decided && recalled.is_none()
+                        if cfg!(feature = "legacy_policy")  // P1b: F2b jaccard stage = RESEARCH
+                            && !int2_decided && recalled.is_none()
                             && std::env::var("SP_RECALL_JACCARD").as_deref() == Ok("1")
                         {
                             if let Some(ruser) = raw_user.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
@@ -2556,7 +2570,8 @@ fn run_kvdecode_chat(
                         // EXACT corpus that gave W_c ~50%); harness tools/xbar_lsh/judge_recall_test.py.
                         // Default-off (SP_B3_JUDGE unset) ⇒ this whole block is skipped ⇒
                         // byte-identical null floor. Runs only when no prior stage decided.
-                        if !int2_decided && recalled.is_none()
+                        if cfg!(feature = "legacy_policy")  // P1b: judge cascade = refuted (OKFS cbea4d38)
+                            && !int2_decided && recalled.is_none()
                             && std::env::var("SP_B3_JUDGE").ok().filter(|s| !s.is_empty()).is_some()
                         {
                             // KAIROS-bounded working set: at most SP_B3_JUDGE_K (default 20) episodes.
@@ -3060,7 +3075,8 @@ Tag of the answer (or [NULL]):");
                         // The M_target=42 budget is the safety floor: a wrong FIRE stumbles
                         // (sub-dominant), it does not hijack. Default-off ⇒ falls through to the
                         // existing q·K fire (null floor).
-                        let disp_mode = if int2_decided { 0 } else { std::env::var("SP_B3_DISPOSER").ok()
+                        // P1b: disposer/knockout lanes = RESEARCH (two-stage/margin-NULL refuted)
+                        let disp_mode = if int2_decided || !cfg!(feature = "legacy_policy") { 0 } else { std::env::var("SP_B3_DISPOSER").ok()
                             .and_then(|s| s.trim().parse::<i32>().ok()).unwrap_or(0) };
                         if disp_mode == 2 {
                             // B3-v10 ABLATION GATE (the Thermodynamic Knockout). Per candidate: inject E,
@@ -3330,7 +3346,8 @@ Tag of the answer (or [NULL]):");
     // turns); explicitly DISARMS on non-recall turns so a prior arm never leaks
     // across turns on the resident session. Env unset ⇒ the verb is never called
     // ⇒ byte-identical null floor (session calloc's steer_active=0).
-    if let (Ok(vf), Some(al)) = (std::env::var("SP_STEER_VEC"),
+    // P1b: FM steering = RESEARCH (migration-map C2/W_c/steering row)
+    if let (Some(vf), Some(al)) = (std::env::var("SP_STEER_VEC").ok().filter(|_| cfg!(feature = "legacy_policy")),
             std::env::var("SP_STEER_ALPHA").ok().and_then(|s| s.trim().parse::<f32>().ok())) {
         static STEER_VEC: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
         let v = STEER_VEC.get_or_init(|| match std::fs::read(&vf) {
@@ -3359,7 +3376,8 @@ Tag of the answer (or [NULL]):");
     // turn end (after the decode loop). Offline-batch rail ONLY: capture_feat commits
     // like any decode (routes.rs:787 note is about PRE-cache routing, not this site).
     const F3_E: usize = 3840; // gemma4-12B hidden (UNIFICATION substrate map)
-    let f3_dir = std::env::var("SP_F3_CAPTURE").ok().filter(|s| !s.is_empty());
+    let f3_dir = std::env::var("SP_F3_CAPTURE").ok().filter(|s| !s.is_empty())
+        .filter(|_| cfg!(feature = "legacy_policy"));  // P1b: F3 capture rail = RESEARCH
     let mut f3_prompt: Vec<f32> = Vec::new();
     let mut f3_first: Vec<f32> = Vec::new();
     if f3_dir.is_some() {
@@ -3373,8 +3391,10 @@ Tag of the answer (or [NULL]):");
     // => nothing armed => byte-identical null floor. Reuse the SAME one-shot post-final
     // -norm tap F3 uses so the syn_last decode_step below writes the LAST-PROMPT hidden
     // (the Coconut seed) at zero extra forward cost. F3 keeps precedence (single tap slot).
-    let coconut_n: usize = std::env::var("SP_COCONUT").ok()
-        .and_then(|s| s.trim().parse::<usize>().ok()).unwrap_or(0);
+    let coconut_n: usize = if cfg!(feature = "legacy_policy") {  // P1b: COCONUT = RESEARCH
+        std::env::var("SP_COCONUT").ok()
+            .and_then(|s| s.trim().parse::<usize>().ok()).unwrap_or(0)
+    } else { 0 };
     let mut coconut_seed: Vec<f32> = Vec::new();
     if coconut_n > 0 && f3_prompt.is_empty() {
         coconut_seed = vec![0f32; F3_E];
