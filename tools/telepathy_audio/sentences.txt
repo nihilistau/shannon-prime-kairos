@@ -1,40 +1,200 @@
-The quick brown fox jumps over the lazy dog.
-Hello, how are you doing today?
-I really enjoy listening to music in the evening.
-The weather is warm and sunny this afternoon.
-Can you please pass me the salt and pepper?
-She sells seashells by the seashore every summer.
-Learning a new language takes time and patience.
-The train arrives at the station at nine o'clock.
-My favorite color is a deep shade of blue.
-We should meet for coffee sometime next week.
-The children played happily in the green park.
-He carefully painted the fence a bright white.
-Reading books opens the door to new worlds.
-The chef prepared a delicious meal for everyone.
-Thank you so much for helping me move today.
-The stars were shining brightly in the night sky.
-I need to buy some groceries after work tonight.
-Our team worked hard to finish the project early.
-The old clock on the wall stopped ticking.
-A gentle breeze drifted through the open window.
-Please remember to lock the door when you leave.
-The garden was full of beautiful blooming flowers.
-He plays the guitar with remarkable skill and passion.
-They traveled across the country by car last year.
-The soup needs a little more salt to taste right.
-Every morning she goes for a run around the lake.
-The movie we watched last night was truly inspiring.
-I forgot my umbrella and got caught in the rain.
-The bakery smells wonderful early in the morning.
-We planted tomatoes and peppers in the backyard.
-The lecture covered the history of ancient Rome.
-His dog loves to chase the ball in the yard.
-The bridge spans a wide and peaceful river.
-She wrote a long letter to her grandmother.
-The engineers tested the new design for hours.
-A warm cup of tea is perfect on a cold day.
-The museum has an amazing collection of paintings.
-They laughed together at the funny old story.
-The mountain trail was steep but very rewarding.
-I hope you have a wonderful and restful weekend.
+A small child carried a field of flowers before the rain started.
+A small child cleaned a field of flowers without saying a word.
+A small child cleaned the open window under the bright sun.
+A small child delivered the tall building as the sun went down.
+A small child discovered a bowl of soup early in the morning.
+A small child discovered the quiet library while humming a tune.
+A small child looked at a golden retriever during the summer holiday.
+A small child photographed the open window while humming a tune.
+A small child walked to the morning newspaper without saying a word.
+A small child watered the garden under the bright sun.
+His neighbor celebrated the narrow street just before dinner time.
+His neighbor cleaned a fresh loaf of bread with a gentle smile.
+His neighbor painted the garden while humming a tune.
+His neighbor pointed to a fresh loaf of bread after a long day.
+His neighbor pointed to a stack of books on a cold winter night.
+His neighbor ran toward a bright lantern before the rain started.
+His neighbor ran toward a fresh loaf of bread while humming a tune.
+His neighbor ran toward the tall building before the rain started.
+His neighbor talked about the quiet library on the way back home.
+My brother celebrated the narrow street while humming a tune.
+My brother cleaned the garden before the rain started.
+My brother discovered the busy market on a cold winter night.
+My brother photographed the quiet library during the summer holiday.
+My brother pointed to a stack of books in the middle of the town.
+My brother pointed to the narrow street in the middle of the town.
+My brother smiled at the garden after a long day.
+My brother talked about a pair of shoes after a long day.
+My brother watered a pair of shoes near the old bridge.
+Our teacher delivered a warm blanket as the sun went down.
+Our teacher delivered the busy market as the sun went down.
+Our teacher looked at the busy market with great care and patience.
+Our teacher measured a bowl of soup during the summer holiday.
+Our teacher opened the wooden table before the rain started.
+Our teacher painted the quiet library near the old bridge.
+Our teacher repaired a pair of shoes before the rain started.
+Our teacher repaired the narrow street on the way back home.
+Our teacher repaired the quiet library near the old bridge.
+Our teacher talked about a bright lantern without saying a word.
+Our teacher watered a fresh loaf of bread with great care and patience.
+The brave pilot carried a red bicycle after a long day.
+The brave pilot celebrated the busy market with a gentle smile.
+The brave pilot described a pair of shoes in the middle of the town.
+The brave pilot described a warm blanket with great care and patience.
+The brave pilot discovered the narrow street just before dinner time.
+The brave pilot measured the morning newspaper on the way back home.
+The brave pilot opened the wooden table with great care and patience.
+The brave pilot photographed a cup of coffee with great care and patience.
+The brave pilot photographed a fresh loaf of bread in the middle of the town.
+The brave pilot remembered the open window while humming a tune.
+The brave pilot repaired the busy market without saying a word.
+The brave pilot smiled at a bowl of soup near the old bridge.
+The brave pilot talked about a field of flowers before the rain started.
+The brave pilot talked about a warm blanket in the middle of the town.
+The brave pilot watered the quiet library near the old bridge.
+The busy chef carried a bowl of soup under the bright sun.
+The busy chef looked at a bright lantern before the rain started.
+The busy chef looked at a warm blanket on a cold winter night.
+The busy chef opened the mountain trail on a cold winter night.
+The busy chef repaired a bright lantern early in the morning.
+The busy chef walked to the open window just before dinner time.
+The busy chef watered the busy market on a cold winter night.
+The cat delivered a fresh loaf of bread while humming a tune.
+The cat described a red bicycle early in the morning.
+The cat discovered the small boat after a long day.
+The cat looked at the wooden table during the summer holiday.
+The cat measured a pair of shoes with a gentle smile.
+The cat organized a fresh loaf of bread after a long day.
+The cat photographed the open window near the old bridge.
+The cat ran toward the busy market with great care and patience.
+The cat smiled at a bright lantern without saying a word.
+The cat smiled at a stack of books on a cold winter night.
+The cat smiled at the morning newspaper in the middle of the town.
+The cat talked about the narrow street as the sun went down.
+The cat talked about the quiet library on the way back home.
+The cat walked to the quiet library while humming a tune.
+The cat watered a bright lantern as the sun went down.
+The clever engineer cleaned a pair of shoes before the rain started.
+The clever engineer delivered a red bicycle during the summer holiday.
+The clever engineer delivered the garden just before dinner time.
+The clever engineer opened a cup of coffee after a long day.
+The clever engineer ran toward a pair of shoes with a gentle smile.
+The clever engineer ran toward a stack of books during the summer holiday.
+The clever engineer smiled at a bowl of soup on the way back home.
+The clever engineer watered the garden near the old bridge.
+The curious student celebrated the morning newspaper under the bright sun.
+The curious student discovered the tall building with great care and patience.
+The curious student organized a red bicycle in the middle of the town.
+The curious student painted a field of flowers in the middle of the town.
+The curious student pointed to a bowl of soup after a long day.
+The curious student ran toward the small boat on the way back home.
+The curious student smiled at a bowl of soup on the way back home.
+The curious student talked about a warm blanket in the middle of the town.
+The curious student talked about the small boat near the old bridge.
+The curious student walked to the mountain trail on a cold winter night.
+The curious student watered the morning newspaper on the way back home.
+The gentle giant celebrated a warm blanket on a cold winter night.
+The gentle giant cleaned a red bicycle with a gentle smile.
+The gentle giant cleaned the garden without saying a word.
+The gentle giant delivered the small boat on a cold winter night.
+The gentle giant described the busy market during the summer holiday.
+The gentle giant discovered the tall building before the rain started.
+The gentle giant looked at the narrow street just before dinner time.
+The gentle giant measured a fresh loaf of bread with great care and patience.
+The gentle giant organized the open window after a long day.
+The gentle giant remembered the tall building without saying a word.
+The gentle giant repaired a red bicycle during the summer holiday.
+The happy farmer carried a field of flowers in the middle of the town.
+The happy farmer cleaned the small boat after a long day.
+The happy farmer discovered a stack of books with a gentle smile.
+The happy farmer discovered a warm blanket on the way back home.
+The happy farmer looked at a fresh loaf of bread early in the morning.
+The happy farmer opened the garden while humming a tune.
+The happy farmer photographed the tall building without saying a word.
+The happy farmer smiled at the quiet library under the bright sun.
+The happy farmer talked about a field of flowers in the middle of the town.
+The happy farmer watered the small boat with great care and patience.
+The kind nurse carried a cup of coffee without saying a word.
+The kind nurse carried a fresh loaf of bread under the bright sun.
+The kind nurse celebrated a fresh loaf of bread with great care and patience.
+The kind nurse delivered a bright lantern after a long day.
+The kind nurse looked at a bowl of soup during the summer holiday.
+The kind nurse looked at the open window without saying a word.
+The kind nurse measured a fresh loaf of bread just before dinner time.
+The kind nurse painted the tall building as the sun went down.
+The kind nurse remembered the busy market just before dinner time.
+The kind nurse smiled at a fresh loaf of bread near the old bridge.
+The kind nurse smiled at a stack of books under the bright sun.
+The kind nurse talked about a field of flowers early in the morning.
+The kind nurse watered the tall building on the way back home.
+The local baker delivered the wooden table early in the morning.
+The local baker looked at a fresh loaf of bread with a gentle smile.
+The local baker measured the mountain trail during the summer holiday.
+The local baker photographed a warm blanket in the middle of the town.
+The local baker ran toward a cup of coffee as the sun went down.
+The local baker repaired the mountain trail while humming a tune.
+The local baker repaired the quiet library as the sun went down.
+The local baker smiled at a golden retriever near the old bridge.
+The local baker smiled at the busy market on a cold winter night.
+The local baker walked to the busy market before the rain started.
+The new manager discovered the quiet library on a cold winter night.
+The new manager looked at the morning newspaper as the sun went down.
+The new manager organized the narrow street under the bright sun.
+The new manager pointed to the quiet library before the rain started.
+The new manager ran toward a fresh loaf of bread during the summer holiday.
+The new manager remembered the busy market while humming a tune.
+The new manager smiled at the garden while humming a tune.
+The new manager talked about a cup of coffee in the middle of the town.
+The new manager watered a cup of coffee before the rain started.
+The new manager watered a golden retriever with great care and patience.
+The old man carried the open window without saying a word.
+The old man cleaned the busy market during the summer holiday.
+The old man delivered a stack of books early in the morning.
+The old man delivered the morning newspaper just before dinner time.
+The old man described a field of flowers with great care and patience.
+The old man described a fresh loaf of bread with great care and patience.
+The old man described the busy market under the bright sun.
+The old man described the garden during the summer holiday.
+The old man described the tall building as the sun went down.
+The old man looked at a golden retriever during the summer holiday.
+The old man measured a pair of shoes after a long day.
+The old man painted a stack of books after a long day.
+The old man pointed to a bright lantern without saying a word.
+The old man ran toward the busy market near the old bridge.
+The old man smiled at the busy market before the rain started.
+The old man smiled at the small boat as the sun went down.
+The old man watered the mountain trail as the sun went down.
+The quiet writer described a red bicycle before the rain started.
+The quiet writer opened the small boat with a gentle smile.
+The quiet writer repaired the tall building with a gentle smile.
+The quiet writer smiled at a red bicycle in the middle of the town.
+The tall doctor carried the tall building as the sun went down.
+The tall doctor discovered the narrow street while humming a tune.
+The tall doctor painted the busy market just before dinner time.
+The tall doctor painted the open window while humming a tune.
+The tall doctor remembered a warm blanket in the middle of the town.
+The tall doctor remembered the open window on a cold winter night.
+The tall doctor smiled at the small boat under the bright sun.
+The tall doctor talked about a bowl of soup without saying a word.
+The tall doctor walked to a golden retriever before the rain started.
+The tall doctor walked to the quiet library with a gentle smile.
+The tall doctor watered the wooden table near the old bridge.
+The tired driver cleaned a warm blanket in the middle of the town.
+The tired driver described a golden retriever as the sun went down.
+The tired driver discovered a cup of coffee as the sun went down.
+The tired driver measured a bowl of soup before the rain started.
+The tired driver painted a red bicycle in the middle of the town.
+The tired driver photographed the wooden table before the rain started.
+The tired driver smiled at the small boat during the summer holiday.
+The tired driver walked to the mountain trail just before dinner time.
+The tired driver watered a golden retriever as the sun went down.
+The wise judge celebrated the garden while humming a tune.
+The wise judge opened a field of flowers after a long day.
+The wise judge photographed a cup of coffee without saying a word.
+The wise judge smiled at a red bicycle on the way back home.
+The young woman described a cup of coffee just before dinner time.
+The young woman described the open window early in the morning.
+The young woman discovered the wooden table in the middle of the town.
+The young woman measured the garden with a gentle smile.
+The young woman opened a fresh loaf of bread on a cold winter night.
+The young woman repaired the mountain trail after a long day.

@@ -25,8 +25,8 @@ def load_wav(p):
 
 def get_hidden(text):
     """POST the text (prefill dumps hidden), then read _hd_dump.bin -> [n, E]."""
-    if os.path.exists(DUMP):
-        os.remove(DUMP)
+    # The daemon opens the dump with "wb" (truncate) at each prefill, so no need to
+    # delete it here (and on Windows we can't — the daemon holds the handle).
     body = json.dumps({"messages": [{"role": "user", "content": text}], "max_tokens": 1}).encode()
     req = urllib.request.Request(DAEMON, data=body, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=60) as r:
