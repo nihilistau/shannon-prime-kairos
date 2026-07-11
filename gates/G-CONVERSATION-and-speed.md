@@ -71,3 +71,30 @@ Swept 4.0 / 2.0 / 0.0 on long-form: eot=4 produced a clean 939-char paragraph;
 the "failures" were the checker bug above. Banked instead: at eot=4 one run hit
 "(tool loop exhausted)" — the tool system prompt pushes the model to call tools
 on a creative-writing prompt. Harness-layer; tracked.
+
+# ADDENDUM (03:45) — two more findings, neither shipped as a change
+
+**The RTX 210. canary is CONFOUNDED, not corruption.** Through the gateway the
+model answered the GPU question by calling DISK/GREP TOOLS (visible in the
+probe: "1TB total disk space... 23.9GB free") instead of quoting its persona.
+The tool-heavy system prompt makes it tool-happy on questions it should answer
+from the preamble; one run ended "(tool loop exhausted)". So the canary was
+measuring tool-happiness, not attended-detail damage. The no_repeat_ngram=3
+hypothesis (that the sampler forbids quoting "RTX 2060" verbatim from context
+because it repeats a 3-gram) is PLAUSIBLE and UNTESTED — it also predicts the
+"2014-365" tool-time garbling. Test it with tools OFF before believing it.
+
+**Daemon-direct without uto_recall:false is a trap.** A plain daemon-direct
+probe asking about the GPU came back with "From the record: The user said: I had
+a girlfriend in year 8..." — the kernel's L5 recall picked an unrelated personal
+memory and the SPECTEST veto then REPLACED the answer with it. The console always
+sends auto_recall:false on the fallback path, so production is not affected —
+but this is precisely the "one recall authority" doctrine earning its keep, and
+any new client that forgets the flag inherits the bug.
+
+**Still open, honestly:**
+- New chat = ~90 s (a fresh session's prompt diverges from the committed cache
+  past REWIND_BOUND ⇒ full prefill at 57 ms/tok). This is what the shear was
+  for. It needs a correct implementation gated by G-CONVERSATION.
+- Decode 12-13 tok/s byte-exact is the speed ceiling. Drafter (19.8% accept ⇒
+  ~1.2x) and the float question (~2x, reopened) are the two levers.
