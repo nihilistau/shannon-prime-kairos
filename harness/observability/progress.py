@@ -50,12 +50,43 @@ PHASES = [
 
 # ── G-KAIROS-PERF bar (HINDSIGHT §4) — targets vs last measured ─────────────
 PERF = [
-    {"metric": "warm tool turn e2e", "target": "≤ 15 s", "measured": "6.7–9.2 s ext (2026-07-10)", "ok": True},
-    {"metric": "chat turn to first token", "target": "≤ 5 s", "measured": "persist ext 6.7–9.2 s", "ok": False},
-    {"metric": "cold new-chat", "target": "≤ 20 s", "measured": "~30 ms/tok prefill (snapshot pending, P1)", "ok": False},
-    {"metric": "decode tok/s", "target": "≥ 40 (P5, needs drafter)", "measured": "24.4 null floor; llama.cpp ~53", "ok": False},
-    {"metric": "recall turn", "target": "—", "measured": "13.8 s (2026-07-10)", "ok": True},
+    {"metric": "conversation turn (warm)", "target": "≤ 20 s", "measured": "4.6–17.3 s (G-CONVERSATION, 2026-07-12)", "ok": True},
+    {"metric": "short answer turn", "target": "≤ 10 s", "measured": "3–7 s", "ok": True},
+    {"metric": "recall turn", "target": "≤ 20 s", "measured": "6–17 s ('Knack.')", "ok": True},
+    {"metric": "NEW chat (fresh session)", "target": "≤ 20 s", "measured": "~90 s — full prefill (needs safe prefix reuse)", "ok": False},
+    {"metric": "boot / load prefill", "target": "one-time", "measured": "~90–420 s at load; traffic gated until HOT", "ok": True},
+    {"metric": "decode tok/s", "target": "≥ 40 (drafter + float)", "measured": "12–13 byte-exact (graph path declined)", "ok": False},
+    {"metric": "VERBATIM digits", "target": "must copy", "measured": "BROKEN: 4471 → 4481 (G-VERBATIM)", "ok": False},
 ]
+
+# ── THE GATE SUITE (the dashboard's most important panel: what is PROVEN) ─────
+# Every gate that guards a behavior the operator can feel. run: python <file>
+GATES = [
+    ("G-CONVERSATION", "harness_tests/g_conversation_e2e.py",
+     "10 turns, one session, past ring_W: completeness, no degeneration, recall, latency"),
+    ("G-VERBATIM", "harness_tests/g_verbatim.py",
+     "can the model copy digits/words out of its own context? (numbers currently FAIL)"),
+    ("G-MEMPOLICY-V3", "harness_tests/g_mempolicy_v3_offline.py",
+     "per-entry policy: secret decline (zero-inference), counterfact framing, null floor"),
+    ("G-PK2-SPINE", "harness_tests/g_pk2_spine_offline.py", "decide→execute→verify receipts"),
+    ("G-PK2-SPINE-2", "harness_tests/g_pk2_spine2_offline.py", "gateway pre-turn composition"),
+    ("G-PK2-TOOLROBUST", "harness_tests/g_pk2_toolrobust_offline.py", "tool parse + verify gate"),
+    ("G-MCP-SERVER", "harness_tests/h_mcp_server.py", "MCP bridge + tool wiring"),
+    ("G-PERSONALITY", "harness_tests/h_personality_persona.py", "persona state parse/inject/persist"),
+    ("G-FLOAT-PARITY", "harness_tests/g_float_parity.py",
+     "float vs exact serving (REOPENED: the old refutation was under-evidenced)"),
+]
+
+
+def _gate_suite() -> List[Dict[str, Any]]:
+    """Gate name, file, what it guards, and whether the file exists (a gate that
+    does not exist cannot be GREEN — the dashboard says so out loud)."""
+    out = []
+    for name, path, guards in GATES:
+        out.append({"name": name, "path": path, "guards": guards,
+                    "present": os.path.isfile(os.path.join(ROOT, path))})
+    return out
+
 
 _CACHE: Dict[str, Any] = {"ts": 0.0, "doc": None}
 _TTL = 8.0  # seconds; the dashboard polls every ~10s
@@ -187,6 +218,7 @@ def progress_json() -> Dict[str, Any]:
         "commits": commits[:40],
         "lanes": [{"lane": k, **v} for k, v in lanes.items()],
         "gate_receipts": _gate_receipts(),
+        "gate_suite": _gate_suite(),
         "perf": PERF,
     }
     _CACHE.update(ts=now, doc=doc)

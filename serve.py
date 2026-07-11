@@ -43,7 +43,13 @@ def build_env(c: dict) -> dict:
         # Tier 0
         "SP_DAEMON_BACKEND": "cuda",
         "SP_DAEMON_KVDECODE": "1",
-        "SP_CUDA_DECODE_INT8": "1",
+        # G-VERBATIM (2026-07-12): the KV cache was ALWAYS int8-quantized. Digit
+        # tokens have near-identical embeddings, so int8 K/V collapses them and
+        # the model cannot read a number back out of its own context ("4471" ->
+        # "4417"/"4481", "RTX 2060" -> "RTX 3061", tool time -> "2014-365"),
+        # while distinctive words (quartzblanket, Knack) survive. Profile-driven
+        # now; the gate is harness_tests/g_verbatim.py.
+        "SP_CUDA_DECODE_INT8": "1" if kv.get("int8", True) else "0",
         "SP_DAEMON_KVDECODE_RING_W": str(kv["ring_w"]),
         "SP_DAEMON_KVDECODE_PMAX": str(kv["pmax"]),
         "SP_PERSIST_KV": b(kv["persist"]),

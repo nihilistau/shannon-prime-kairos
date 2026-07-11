@@ -121,6 +121,11 @@
       <table id="perfTable"><thead><tr><th>metric</th><th>target</th><th>measured</th><th></th></tr></thead><tbody></tbody></table>
     </section>
 
+    <section class="full">
+      <h2>Gate suite <span class="note">what is actually PROVEN — run any of these before trusting a change</span></h2>
+      <table id="gateTable"><thead><tr><th></th><th>gate</th><th>guards</th><th>run</th></tr></thead><tbody></tbody></table>
+    </section>
+
     <section>
       <h2>Gate receipts <span class="note">gates/</span></h2>
       <div id="receipts" class="dim"></div>
@@ -219,6 +224,13 @@ async function pollProgress() {
       `${d.repo.branch} @ ${d.repo.head} · ${d.repo.commit_count} commits${d.repo.dirty ? ' · dirty' : ''} · scanned ${d.generated}`;
     renderPhases(d.phases);
     renderPerf(d.perf);
+    if (d.gate_suite) {
+      $('gateTable').querySelector('tbody').innerHTML = d.gate_suite.map(g => `<tr>
+        <td>${g.present ? '<span class="landdot" style="background:var(--ok)" title="gate exists"></span>'
+                        : '<span class="landdot" style="background:var(--err)" title="MISSING — cannot be green"></span>'}</td>
+        <td>${esc(g.name)}</td><td class="dim">${esc(g.guards)}</td>
+        <td class="faint">python ${esc(g.path)}</td></tr>`).join('');
+    }
     renderMigration(d.migration);
     renderCommits(d.commits);
     renderLanes(d.lanes);
