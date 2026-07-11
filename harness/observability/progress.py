@@ -43,7 +43,9 @@ PHASES = [
     {"id": "P5", "name": "The perf ladder", "gate": "G-KAIROS-P5 (llama.cpp parity)",
      "what": "Float-path repair, prefill program, high-acceptance drafter → spec_step wired",
      "landed_re": r"G-KAIROS-P5|llama\.cpp parity SEALED",
-     "progress_re": r"G-KAIROS-PERF|drafter H2H|float-path repair"},
+     # NB: not plain "G-KAIROS-PERF" — descriptive commits (e.g. the dashboard
+     # itself) mention the gate name; require actual perf-work markers.
+     "progress_re": r"G-KAIROS-PERF (GREEN|sealed|numbers)|drafter H2H|float-path repair"},
 ]
 
 # ── G-KAIROS-PERF bar (HINDSIGHT §4) — targets vs last measured ─────────────
