@@ -3,6 +3,10 @@ __pycache__/
 *.pyc
 engine/tools/sp_daemon/target*/
 engine/tools/sp_swarm/target/
+# B4-NIGHTSHIFT live episodes: the kairos binary bakes engine_root at compile
+# time (routes.rs env!(CARGO_MANIFEST_DIR)/../..) — production data, never repo
+# content. Unify under var/ when P1b makes the episode dir config.
+engine/_nightshift_live/
 var/voice/wav/
 var/voice/*.npz
 var/voice/*.log

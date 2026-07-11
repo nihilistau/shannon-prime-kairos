@@ -8,9 +8,12 @@
 engine_exe = 'D:/F/shannon-prime-repos/shannon-prime-kairos/engine/tools/sp_daemon/target-wirecuda/release/sp-daemon.exe'
 model      = 'D:/F/shannon-prime-repos/models/gemma4-12b-b1-reason.sp-model'
 tokenizer  = 'D:/F/shannon-prime-repos/models/gemma4-12b-b1.sp-tokenizer'
-# Production memory: the LIVE registry (engine _memory_live) until P1 moves it
-# to kairos var/memory — rows carry absolute episode dirs, so this is seamless.
-registry   = 'D:/F/shannon-prime-repos/shannon-prime-system-engine/_memory_live/registry.jsonl'
+# P1a follow-up (2026-07-11): production registry MIGRATED to kairos var/memory
+# (388 rows, SHA-verified copy; staging _memory_live stays as the frozen backup).
+# Rows carry absolute episode dirs (staging _nightshift_live) so old episodes
+# keep resolving; NEW episodes land in kairos engine/_nightshift_live (baked
+# engine_root, gitignored) until P1b makes the episode dir config.
+registry   = 'D:/F/shannon-prime-repos/shannon-prime-kairos/var/memory/registry.jsonl'
 spectest_head = 'D:/F/shannon-prime-repos/shannon-prime-system-engine/_faithful_corpus/f3/spectest_head_f1.bin'
 llvm_bin   = 'C:/Program Files/LLVM/bin'   # libomp.dll for the daemon
 
