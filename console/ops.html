@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Shannon-Prime — Operator</title>
+<style>
+  :root{--bg:#0c0d10;--panel:#14161b;--line:#232833;--txt:#dfe3ea;--dim:#8b93a3;
+        --accent:#7dd3fc;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--self:#c084fc;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);padding:26px;
+       font:14px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+  h1{font-size:19px;margin:0 0 4px;font-weight:600}
+  .sub{color:var(--dim);font-size:12.5px;margin-bottom:22px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+  .card h2{font-size:13.5px;margin:0 0 12px;color:var(--accent);font-weight:600}
+  .row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+  input,select{background:#0a0b0e;color:var(--txt);border:1px solid var(--line);
+               border-radius:6px;padding:7px 9px;font:inherit;flex:1;min-width:0}
+  
+  .btn{background:#1e2530;color:var(--txt);border:1px solid var(--line);border-radius:6px;
+       padding:7px 13px;font:600 12.5px inherit;cursor:pointer;white-space:nowrap}
+  .btn:hover{border-color:var(--accent)}
+  .btn.go{background:var(--accent);color:#06121a;border-color:var(--accent)}
+  .btn.danger:hover{border-color:var(--bad);color:var(--bad)}
+  .stat{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:12px;font-size:12.5px}
+  .stat b{color:var(--accent);font-variant-numeric:tabular-nums}
+  .mem{max-height:340px;overflow:auto;border-top:1px solid var(--line);margin-top:8px}
+  .m{display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--line);
+     font-size:12.5px}
+  .m .t{flex:1}
+  .tag{font-size:9.5px;padding:1px 5px;border-radius:3px;font-weight:700;letter-spacing:.3px;
+       border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+  .tag.self{color:var(--self);border-color:#5b3a8e}
+  .tag.dead{color:var(--dim);opacity:.6}
+  .x{cursor:pointer;color:var(--dim);font-weight:700;padding:0 4px}
+  .x:hover{color:var(--bad)}
+  pre{background:#0a0b0e;border:1px solid var(--line);border-radius:7px;padding:10px;
+      font-size:11.5px;color:var(--dim);max-height:190px;overflow:auto;margin:10px 0 0;
+      white-space:pre-wrap}
+  .note{color:var(--dim);font-size:11.5px;margin-top:6px}
+</style>
+
+<h1>Operator</h1>
+<div class="sub">Moods, memory, maintenance. Nothing here deletes —
+  cleanup <b>quarantines</b> (restorable), compaction <b>tombstones</b> (superseded, kept for
+  provenance). Every button returns a receipt of what it actually did.</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Mood &amp; traits</h2>
+    <div class="row">
+      <input id="mood" placeholder="mood — e.g. calm, flirty, focused">
+      <button class="btn go" onclick="setMood()">set mood</button>
+    </div>
+    <div class="row">
+      <input id="trait" placeholder="trait — e.g. sardonic">
+      <button class="btn" onclick="setTrait('add')">add</button>
+      <button class="btn danger" onclick="setTrait('remove')">remove</button>
+    </div>
+    <div class="note">Persists to persona.md — survives a restart. She can also change these
+      herself mid-conversation.</div>
+    <pre id="persona">—</pre>
+  </div>
+
+  <div class="card">
+    <h2>Maintenance</h2>
+    <div class="row">
+      <button class="btn" onclick="run('compact')">compaction</button>
+      <button class="btn" onclick="run('cleanup')">cleanup</button>
+      <button class="btn" onclick="run('nightshift')">nightshift</button>
+      <button class="btn" onclick="refresh()">refresh</button>
+    </div>
+    <div class="note">
+      <b>compaction</b> — fold duplicates, retire paraphrases, supersede conflicting facts.<br>
+      <b>cleanup</b> — quarantine what is not a memory (test corpus, instructions, chatter).<br>
+      <b>nightshift</b> — compaction + consolidate the day into durable facts.
+    </div>
+    <pre id="out">—</pre>
+  </div>
+
+  <div class="card" style="grid-column:1/-1">
+    <h2>Memory</h2>
+    <div class="stat" id="stat">—</div>
+    <div class="row">
+      <input id="fact" placeholder='a fact — "Knack&apos;s cat is called Tuffy"'>
+      <select id="who" style="flex:0 0 130px">
+        <option value="user">about Knack</option>
+        <option value="self">about herself</option>
+      </select>
+      <button class="btn go" onclick="addFact()">remember</button>
+    </div>
+    <div class="mem" id="mem"></div>
+  </div>
+</div>
+
+<script>
+const GW = 'http://127.0.0.1:8800';
+const j = async (p, b) => (await fetch(GW + p, b ? {
+  method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b)
+} : undefined)).json();
+
+const esc = s => (s || '').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+const show = o => document.getElementById('out').textContent = JSON.stringify(o, null, 2);
+
+async function run(op) {
+  document.getElementById('out').textContent = op + '…';
+  show(await j('/v1/maintenance/' + op, {}));
+  refresh();
+}
+
+async function setMood() {
+  const m = document.getElementById('mood').value.trim();
+  if (!m) return;
+  show(await j('/v1/persona/set/mood', {mood: m}));
+  loadPersona();
+}
+async function setTrait(action) {
+  const t = document.getElementById('trait').value.trim();
+  if (!t) return;
+  show(await j('/v1/persona/set/trait', {trait: t, action}));
+  loadPersona();
+}
+async function addFact() {
+  const f = document.getElementById('fact').value.trim();
+  if (!f) return;
+  const r = await j('/v1/memory/add', {fact: f, speaker: document.getElementById('who').value});
+  show(r);
+  if (r.ok) document.getElementById('fact').value = '';
+  refresh();
+}
+async function forget(name) {
+  show(await j('/v1/memory/forget', {name}));
+  refresh();
+}
+
+async function loadPersona() {
+  try {
+    const s = await j('/v1/persona/state');
+    document.getElementById('persona').textContent =
+      Object.entries(s).map(([k, v]) => `${k}: ${v}`).join('\n') || '—';
+  } catch { document.getElementById('persona').textContent = '(gateway down)'; }
+}
+
+async function refresh() {
+  loadPersona();
+  try {
+    const s = await j('/v1/maintenance/stats');
+    document.getElementById('stat').innerHTML =
+      `<span>live <b>${s.live}</b></span>
+       <span>superseded <b>${s.superseded}</b></span>
+       <span>about her <b>${s.self}</b></span>
+       <span>about you <b>${s.user}</b></span>
+       <span>legacy (no speaker) <b>${s.legacy_no_speaker}</b></span>`;
+    const m = await j('/v1/memory');
+    const rows = (m.memories || m.facts || m.rows || []);
+    document.getElementById('mem').innerHTML = rows.slice(0, 200).map(r => {
+      const dead = r.lifecycle ? ' dead' : '';
+      const self = r.speaker === 'self';
+      const txt = (r.text || r.topic || '').replace(/^The user said:\s*/, '');
+      return `<div class="m">
+        <span class="tag${self ? ' self' : ''}${dead}">${self ? 'SELF' : 'user'}</span>
+        <span class="tag${dead}">${esc(r.mem_class || '—')}</span>
+        <span class="t" style="${r.lifecycle ? 'opacity:.45;text-decoration:line-through' : ''}">${esc(txt)}</span>
+        ${r.lifecycle ? '' : `<span class="x" title="retire (tombstone, not delete)"
+              onclick="forget('${esc(r.name)}')">×</span>`}
+      </div>`;
+    }).join('') || '<div class="note" style="padding:10px">(empty)</div>';
+  } catch (e) {
+    document.getElementById('stat').textContent = '(gateway down)';
+  }
+}
+refresh();
+</script>
+

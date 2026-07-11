@@ -876,6 +876,46 @@ def _run_stdlib(host: str, port: int) -> None:
                 self.send_header("Content-Type", "text/event-stream"); self.end_headers()
                 for chunk in _native_chat_sse(body):
                     self.wfile.write(chunk); self.wfile.flush()
+            # ── OPERATOR PANEL (2026-07-12) ───────────────────────────────────────
+            # Moods/traits, memory add/retire, and the maintenance passes. Every one does
+            # REAL work and returns a RECEIPT of what changed — a maintenance button that
+            # says "done!" and cannot tell you what it did is how a store rots quietly, and
+            # this one already rotted once (487 rows, 375 of them ASR test corpus).
+            # Nothing here deletes: cleanup QUARANTINES, compaction TOMBSTONES.
+            elif self.path.startswith("/v1/maintenance/") or self.path.startswith("/v1/memory/") \
+                    or self.path.startswith("/v1/persona/set"):
+                body = self._body()
+                code, res = 200, {}
+                try:
+                    from harness.maintenance import ops
+                    p = self.path
+                    if p == "/v1/maintenance/compact":
+                        res = ops.compact()
+                    elif p == "/v1/maintenance/cleanup":
+                        res = ops.cleanup()
+                    elif p == "/v1/maintenance/nightshift":
+                        res = ops.nightshift()
+                    elif p == "/v1/maintenance/stats":
+                        res = ops.stats()
+                    elif p == "/v1/memory/add":
+                        res = ops.add(body.get("fact", ""), body.get("speaker", "user"))
+                    elif p == "/v1/memory/forget":
+                        res = ops.forget(body.get("name", ""))
+                    elif p == "/v1/persona/set/mood":
+                        from harness.personality.tools import adjust_mood
+                        res = {"ok": True, "result": adjust_mood(body.get("mood", ""))}
+                    elif p == "/v1/persona/set/trait":
+                        from harness.personality.tools import set_trait
+                        res = {"ok": True, "result": set_trait(body.get("trait", ""),
+                                                               body.get("action", "add"))}
+                    else:
+                        code, res = 404, {"ok": False, "error": "unknown op"}
+                except Exception as exc:
+                    code, res = 500, {"ok": False, "error": str(exc)}
+                payload = json.dumps(res).encode()
+                self.send_response(code); _cors(self)
+                self.send_header("Content-Type", "application/json"); self.end_headers()
+                self.wfile.write(payload)
             # TUNING: set / reset a knob. Live from the next turn — config that needs a
             # restart is config nobody tunes.
             elif self.path in ("/v1/tuning", "/v1/tuning/reset"):
