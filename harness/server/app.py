@@ -159,6 +159,15 @@ def _spine_json() -> Dict[str, Any]:
         return {"error": str(exc), "count": 0, "receipts": []}
 
 
+def _progress_json() -> Dict[str, Any]:
+    """HINDSIGHT build progress (phases, migration map, git lanes) for /dashboard.html."""
+    try:
+        from harness.observability.progress import progress_json
+        return progress_json()
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 def _persona_state() -> Dict[str, Any]:
     """The parsed ## Personality state block (voice/mood/traits) — the UI's personality chip."""
     try:
@@ -600,14 +609,49 @@ def _run_stdlib(host: str, port: int) -> None:
                 "/v1/persona": _persona_get,     # PK2 §P1 persona editor (load)
                 "/v1/persona/state": _persona_state,  # ADR-006 personality chip
                 "/v1/spine": _spine_json,        # ADR-008 receipts audit trail
+                "/v1/progress": _progress_json,  # HINDSIGHT dashboard data (phases/migration/git)
             }
             fn = _json_routes.get(self.path)
             if fn is not None:
                 self.send_response(200); _cors(self)
                 self.send_header("Content-Type", "application/json"); self.end_headers()
                 self.wfile.write(json.dumps(fn()).encode())
+            elif self._serve_console_static():
+                pass
             else:
                 self.send_error(404)
+
+        # ── console statics on the gateway (dashboard lives here; daemon-independent) ──
+        _STATIC_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css",
+                         ".js": "application/javascript", ".svg": "image/svg+xml",
+                         ".json": "application/json"}
+
+        def _serve_console_static(self) -> bool:
+            import os as _os
+            path = self.path.split("?", 1)[0]
+            if path == "/":
+                path = "/dashboard.html"
+            name = path.lstrip("/")
+            # single flat filename only — no traversal, no subdirs
+            if not name or "/" in name or "\\" in name or name.startswith("."):
+                return False
+            ext = _os.path.splitext(name)[1].lower()
+            ctype = self._STATIC_TYPES.get(ext)
+            if ctype is None:
+                return False
+            root = _os.path.join(_os.path.dirname(_os.path.dirname(
+                _os.path.dirname(_os.path.abspath(__file__)))), "console")
+            fp = _os.path.join(root, name)
+            if not _os.path.isfile(fp):
+                return False
+            with open(fp, "rb") as f:
+                data = f.read()
+            self.send_response(200); _cors(self)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return True
 
     logger.info("[gateway] stdlib AGENT server on %s:%d (operation=serve)", host, port)
     # Pre-warm is OPT-IN (SP_GATEWAY_PREWARM=1) until the byteexact-on prefill is fast OR the LCP
