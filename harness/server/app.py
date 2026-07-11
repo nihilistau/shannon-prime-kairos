@@ -405,6 +405,18 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
             from harness.control.spine import run_pre_turn, toolset_for
             _, decisions = run_pre_turn(user_text, recall=want_recall, toolset=want_toolset)
             for dec in decisions:
+                if dec.kind == "decline_recall":
+                    # P1b-2b MEM-OKF attr-gate (private-secret, absent attribute):
+                    # the fixed decline streams with ZERO model inference — the
+                    # turn never reaches the daemon, so confabulation/leak of the
+                    # secret's other attributes is impossible by construction.
+                    msg_text = dec.payload.get("message", "")
+                    if typed:
+                        yield ("data: " + json.dumps({"recall_decline": True}) + "\n\n").encode()
+                    yield ("data: " + json.dumps({"delta": msg_text}) + "\n\n").encode()
+                    msgs.append({"role": "assistant", "content": msg_text})
+                    yield b"data: [DONE]\n\n"
+                    return
                 if dec.kind == "inject_recall":
                     facts = dec.payload.get("facts", [])
                     if facts:

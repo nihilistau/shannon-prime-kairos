@@ -20,7 +20,15 @@ import urllib.request
 from typing import List
 
 _STOP = {"the", "a", "an", "is", "are", "of", "to", "in", "on", "and", "or",
-         "my", "your", "you", "it", "that", "this", "was", "were", "has", "have"}
+         "my", "your", "you", "it", "that", "this", "was", "were", "has", "have",
+         # P1b-2b: question/aux words are MATCH NOISE — "when did my locker
+         # combination last change?" scored 2/6=0.33 vs the 0.34 threshold
+         # purely because "when"/"did"/"last" diluted the denominator. Facts
+         # rarely contain these, so removing them sharpens matching symmetric-
+         # ally (the audit gates re-ran GREEN after this change).
+         "what", "who", "where", "when", "why", "how", "which",
+         "did", "does", "do", "can", "could", "would", "should", "will",
+         "had", "these", "those", "there", "here", "just", "please"}
 
 
 def _reg_path() -> str:
@@ -176,6 +184,52 @@ def count_memories() -> str:
 
 
 # ──── ADR-007: ranked memory search (scales past the list_memories dump) ─────
+# ── MEM-OKF per-entry policy dispatch (P1b-2b, G-MEMPOLICY-V3 doctrine) ──────
+# The fixed decline for a private-secret whose asked-about attribute is NOT in
+# the record: streamed with ZERO model inference so confabulation/leak is
+# impossible by construction (mirrors the engine attr-gate + mempolicy_run.py).
+DECLINE_MSG = "I have a record for that, but it does not include that specific detail."
+
+_ATTR_STOP = set(
+    "the a an of to in on at for and or is are was what which who where when "
+    "my your name number code colour color brand breed seat".split())
+
+
+def attr_absent(query: str, fact: str) -> bool:
+    """Deterministic attr-gate (G-MEMPOLICY-V3 doctrine, recalibrated): the query
+    matched the record (ranked overlap got us here) but asks for an attribute the
+    record lacks. CALIBRATION NOTE: the engine runner's `>= len(qs)*0.6` rule is
+    untrippable on its own printed test data (e.g. {installed, workshop, door}
+    with one absent = 1 < 1.8) — those cases fell to the tolerated forward
+    branch. Rehomed rule: decline iff ≥2 salient query tokens are absent AND
+    they are at least HALF the salient set — elaborated-but-present questions
+    ("…combination for the gym?", one stray token) still recite; genuinely
+    different-attribute questions ("when did … last change?") decline."""
+    qs = {w for w in re.findall(r"[a-z0-9]+", query.lower()) if len(w) > 2} - _ATTR_STOP - _STOP
+    if not qs:
+        return False
+    fs = {w for w in re.findall(r"[a-z0-9]+", fact.lower()) if len(w) > 2}
+    salient_absent = [w for w in qs if w not in fs]
+    return len(salient_absent) >= 2 and len(salient_absent) * 2 >= len(qs)
+
+
+def search_memories_ranked_rows(query: str, k: int = 5, min_overlap: float = 0.25):
+    """Like search_memories_ranked but returns (score, ROW) so callers can read
+    per-entry policy fields (mem_class etc.). The policy dispatch rides this."""
+    clause = re.split(r"[.:;!]", query)[-1].strip() or query
+    eps = _load()
+    scored = []
+    for e in eps:
+        t = _text(e)
+        ov = _overlap(query, t)
+        if clause != query:
+            ov = max(ov, _overlap(clause, t))
+        if ov >= min_overlap:
+            scored.append((ov, e))
+    scored.sort(key=lambda x: -x[0])
+    return scored[:k]
+
+
 def search_memories_ranked(query: str, k: int = 5, min_overlap: float = 0.25):
     """Internal: [(score, text)] of the top-k facts by token overlap with the query,
     filtered at min_overlap. The RecallDecider + search tool ride this.

@@ -116,6 +116,13 @@ def stop() -> None:
     print("stack stopped")
 
 
+def stop_gateway_only() -> None:
+    subprocess.run(["powershell", "-NoProfile", "-Command",
+                    "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+                    "Where-Object {$_.CommandLine -match 'harness.server.app'} | "
+                    "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"], capture_output=True)
+
+
 def main() -> int:
     name = next((a for a in sys.argv[1:] if not a.startswith("-")), "agent")
     if "--stop" in sys.argv:
@@ -124,6 +131,22 @@ def main() -> int:
     c = load_profile(name)
     os.makedirs(VAR, exist_ok=True)
     env = build_env(c)
+    # ── --gateway-only (P1b-2a lesson): restart JUST the gateway with the SAME
+    # schema-checked env the full boot uses. Hand-rolled envs wedged a daemon
+    # turn on 2026-07-11 (receipt G-KAIROS-P1b-2a) — the launcher owns the env.
+    if "--gateway-only" in sys.argv:
+        print(f"[kairos serve] profile={name} (gateway-only bounce; daemon untouched)")
+        stop_gateway_only()
+        gw_log = open(os.path.join(VAR, "gateway.log"), "w")
+        subprocess.Popen(
+            [sys.executable, "-m", "harness.server.app"],
+            env=env, cwd=ROOT, stdout=gw_log, stderr=subprocess.STDOUT,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+        if not wait_http(f"http://127.0.0.1:{c['serve']['gateway_port']}/health", 45):
+            print("!! gateway did not come up — see var/gateway.log")
+            return 1
+        print(f"[kairos serve] gateway up on :{c['serve']['gateway_port']}")
+        return 0
     print(f"[kairos serve] profile={name}")
     echo(env)
 

@@ -256,6 +256,12 @@ def agent_chat_stream(
         # generations and streamed answers may still carry a late fence (prose-then-fence
         # past the hold window). known-name filtering keeps code examples inert.
         calls = _parse_tool_calls(buf, known=set(tool_index))
+        # Round observability (P1b-2 forensics): one line per round in the gateway log —
+        # enough to reconstruct hold/flush/parse decisions without re-reproducing live.
+        import logging as _logging
+        _logging.getLogger(__name__).info(
+            "[agent] round=%d is_tool=%s buf=%dch flushed=%d calls=%d",
+            _round, is_tool, len(buf), flushed, len(calls))
         if not calls:
             # MALFORMED-FENCE RECOVERY (live: '```Tool-Code # just a comment' flushed raw):
             # the model opened a tool-ish fence but nothing parsed — re-prompt it once with
@@ -284,8 +290,13 @@ def agent_chat_stream(
         # HINDSIGHT 2026-07-10 numeric-fidelity fix: after a tool round, answer at low
         # temperature (the 0.6/1.3 chat config garbles numbers when paraphrasing tool
         # output — live: tool printed 3304, model said "3334") + an explicit verbatim rule.
+        # P1b-2b r1-truncation fix (2026-07-11): keep eot_bias OFF for post-tool rounds.
+        # Twice observed, the answer died mid-word at exactly "I don'": round 1 already
+        # said "don't", so the 't continuation is repetition-penalized, and at temp 0.15
+        # the +4-biased EOT outruns it MID-WORD. The bias solves boundary-stopping at
+        # NORMAL temp; at 0.15 the distribution is sharp enough to stop cleanly unaided.
         from dataclasses import replace as _dc_replace
-        cfg = _dc_replace(cfg, temperature=0.15, repetition_penalty=1.05)
+        cfg = _dc_replace(cfg, temperature=0.15, repetition_penalty=1.05, eot_bias=0.0)
         convo.append({"role": "user", "content": "```tool_output\n" + "\n".join(outputs) +
                       "\n```\nAnswer using the tool_output. Copy numbers, dates, and codes "
                       "EXACTLY as printed — do not rephrase or reformat them."})

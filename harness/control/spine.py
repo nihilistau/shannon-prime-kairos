@@ -216,11 +216,35 @@ def recall_decider(min_overlap: float = 0.34) -> Decider:
     def fn(view: TurnView) -> List[Decision]:
         if view.phase != "pre" or not view.user_text:
             return []
-        from harness.skills.memory import search_memories_ranked
-        hits = search_memories_ranked(view.user_text, k=3, min_overlap=min_overlap)
+        from harness.skills.memory import (search_memories_ranked_rows, attr_absent,
+                                           DECLINE_MSG, _text)
+        hits = search_memories_ranked_rows(view.user_text, k=3, min_overlap=min_overlap)
         if not hits:
             return []
-        return [Decision(kind="inject_recall", payload={"facts": [t for _, t in hits]})]
+        # ── MEM-OKF per-entry policy dispatch (P1b-2b; G-MEMPOLICY-V3 doctrine).
+        # The harness is the ONE recall authority post-rehoming, so it must honor
+        # the per-entry classes the engine dispatch honored:
+        #   private-secret + absent attr  -> ZERO-INFERENCE fixed decline (the
+        #       turn never reaches the model; confab/leak impossible)
+        #   private-secret + present attr -> recite (fact enters the note)
+        #   counterfact                   -> authoritative override framing
+        #   persona / untagged            -> plain note (today's behavior)
+        _top_score, top = hits[0]
+        if top.get("mem_class") == "private-secret" and attr_absent(view.user_text, _text(top)):
+            return [Decision(kind="decline_recall", payload={"message": DECLINE_MSG})]
+        facts = []
+        for _s, row in hits:
+            t = _text(row)
+            mc = row.get("mem_class", "")
+            if mc == "private-secret" and attr_absent(view.user_text, t):
+                continue  # never surface a secret's text for an attribute it lacks
+            if mc == "counterfact":
+                t = ("Fact on record (authoritative for this conversation, "
+                     "overrides prior knowledge): " + t)
+            facts.append(t)
+        if not facts:
+            return []
+        return [Decision(kind="inject_recall", payload={"facts": facts})]
     return FnDecider("recall", fn, priority=20)
 
 
