@@ -26,11 +26,16 @@ persist = true
 persist_b4 = true        # HINDSIGHT: cache alive under B4 growth (minutes -> seconds)
 ring_w = 2048
 pmax = 12096
-# P1c-2 (2026-07-11): gemma4_kv_shear — new chats over the shared preamble
-# restore by an O(1) position shear (ring-unwrapped invariant; byte-exact by
-# construction). The capture_batched composition was refuted first (receipt
-# gates/G-KAIROS-P1c-1: 10+min @100% GPU, 540 MiB); the shear replaced it.
-prefix_snapshot = true
+# P1c-2 SHEAR: DISARMED 2026-07-11 23:30 (live-play regression, operator).
+# The shear sets commit_pos = P, which REDEFINES the SWA undo-journal baseline
+# (jcur = dpos - commit_pos, bounded by Jmax=64). Once a conversation grows past
+# ring_W=2048 and journaling engages, that index is outside its bound => KV
+# corruption => the model emits end-of-turn immediately (1-26 char replies) on
+# every subsequent turn of that residency. My gates only ever tested SHORT fresh
+# chats after a shear; no gate covered "shear, then converse past the ring".
+# The verb stays in the tree; it does NOT run until it has a gate that grows a
+# conversation past ring_W after a shear. Default-off, as levers should be.
+prefix_snapshot = false
 
 [memory]
 recall_authority = 'L5'  # exactly one; serve.py refuses profiles that arm two

@@ -448,6 +448,19 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
         except Exception as exc:
             logger.warning("[gateway] pre-turn spine skipped: %s", exc)
 
+    # PHASE TIMING (live-play 2026-07-11: 40 s turns for 3-token answers — the
+    # cost is NOT decode. Name every phase so the thief cannot hide again.)
+    _t_phase = time.time()
+    _t_start = _t_phase
+
+    def _phase(name: str) -> None:
+        nonlocal _t_phase
+        now = time.time()
+        logger.info("[gateway] phase %-14s %.1fs", name, now - _t_phase)
+        _t_phase = now
+
+    _phase("pre-turn")
+
     reply_parts: list = []
 
     def _run():

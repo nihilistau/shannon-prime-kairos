@@ -179,6 +179,10 @@ def agent_chat(
         max_rounds=5, system_prefix=load_agent_system())
 
 
+# Static per-serve tool system (built once; see the live-play note in the stream).
+_SYS_CACHE = None
+
+
 def agent_chat_stream(
     messages: List[dict],
     *,
@@ -208,11 +212,24 @@ def agent_chat_stream(
                                     eot_bias=4.0, max_tokens=192, auto_recall=False)
     # OKFS-tiered tools: a few core up front, the rest as a load-on-demand index -- keeps the system
     # prompt small (the 1189-token inline preamble is what stalled the gateway).
+    # LIVE-PLAY FIX 2026-07-11: extra_tools() rebuilds the MCP bridge on EVERY
+    # turn (measured 5.5 s). The tool SET is static for a serve; build the system
+    # prompt+index ONCE and reuse. (It must also be stable anyway — a per-turn
+    # system-prompt rewrite diverges the persist-KV cache at token 0, the exact
+    # trap the agent profile documents for spine_toolset.)
+    import time as _time
+    _t = _time.time()
     if tools is not None:
         system_content, tool_index = build_tool_system(tools, [], system_prefix=load_agent_system())
     else:
-        system_content, tool_index = build_tool_system(core_tools(), extra_tools(),
-                                                       system_prefix=load_agent_system())
+        global _SYS_CACHE
+        if _SYS_CACHE is None:
+            _SYS_CACHE = build_tool_system(core_tools(), extra_tools(),
+                                           system_prefix=load_agent_system())
+        system_content, tool_index = _SYS_CACHE
+    import logging as _lg
+    _lg.getLogger(__name__).info("[agent] tool-system build %.1fs (cached=%s)",
+                                 _time.time() - _t, tools is None)
     system = {"role": "system", "content": system_content}
     convo = messages if mutate_messages else list(messages)
 
