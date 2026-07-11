@@ -72,6 +72,12 @@ class InferenceResponse:
     model: str = ""
     finish_reason: str = "stop"
     stats: Dict[str, Any] = field(default_factory=dict)
+    # KAIROS: the turn's continuation impulse, straight from the forward —
+    # {"eot_margin": float, "n_gen": int, "eot_bias": float}. None when SP_KAIROS is off.
+    # eot_margin is the RAW logit gap (best stop token − best continue token) at the step
+    # that ended the turn:  >>0 = done and knows it;  ~0 = stopped mid-thought;
+    # <0 = she only stopped because eot_bias tipped her, i.e. she was CUT OFF.
+    kairos: Optional[Dict[str, Any]] = None
 
 
 # ──── Client ──────────────────────────────────────────────────────────────
@@ -128,11 +134,21 @@ class SPDaemonClient:
             on_event(StreamEvent("chat.start"))
 
         url = f"{self.base_url}/v1/chat"
+        # KAIROS: the daemon emits a named `kairos` SSE event carrying the turn's
+        # continuation impulse (the raw stop-vs-continue logit margin). This loop used to
+        # drop every `event:` line on the floor — only `data:` lines were read — so a
+        # named event was invisible no matter what the engine sent. Track the event name.
+        sse_event = "message"
         try:
             with self._client.stream("POST", url, json=body) as stream:
                 stream.raise_for_status()
                 for line in stream.iter_lines():
-                    if not line or not line.startswith("data:"):
+                    if not line:
+                        continue
+                    if line.startswith("event:"):
+                        sse_event = line[len("event:"):].strip()
+                        continue
+                    if not line.startswith("data:"):
                         continue
                     payload = line[len("data:"):].strip()
                     if payload == "[DONE]":
@@ -142,9 +158,15 @@ class SPDaemonClient:
                     except json.JSONDecodeError:
                         logger.warning("[SPDaemonClient] bad SSE line (operation=parse): %s", payload[:120])
                         continue
-                    delta = evt.get("delta", "")
                     if chat_id is None:
                         chat_id = evt.get("chat_id")
+                    name, sse_event = sse_event, "message"   # the name applies to THIS data line
+                    if name == "kairos":
+                        resp.kairos = evt          # the continuation impulse for this turn
+                        if on_event:
+                            on_event(StreamEvent("kairos", content=payload, chat_id=chat_id))
+                        continue
+                    delta = evt.get("delta", "")
                     if delta:
                         text_parts.append(delta)
                         if on_event:

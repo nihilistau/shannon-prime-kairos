@@ -76,6 +76,11 @@ def build_env(c: dict) -> dict:
         # so arming it can only help or no-op. Gate before trusting: G-VERBATIM.
         "SP_KV_PREFILL_BATCH": b(kv.get("prefill_batch", False)),
         "SP_EOT_BIAS": str(dec["eot_bias"]),
+
+        # KAIROS: arm the continuation impulse (the raw stop-vs-continue logit margin the
+        # forward already computes and used to discard). Off => never computed, byte-identical.
+
+        "SP_KAIROS": b(c.get("kairos", {}).get("enabled", False)),
         "SP_NO_REPEAT_NGRAM": str(dec["no_repeat_ngram"]),
         # P5a: gateway serving regime. '0' = certified-float turns (explicit
         # client byteexact still wins; daemon default stays exact for gates).
@@ -237,3 +242,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

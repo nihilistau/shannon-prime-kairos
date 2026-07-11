@@ -3662,6 +3662,36 @@ Tag of the answer (or [NULL]):");
     };
     let mut eot_gen: Vec<i32> = Vec::new();
     let mut eot_ranks: Vec<usize> = Vec::new();
+    // ── KAIROS CONTINUATION SIGNAL (2026-07-12) ─────────────────────────────────────
+    // The impulse to keep talking is ALREADY COMPUTED on every turn — and thrown away
+    // one line later.
+    //
+    // At each step the forward produces a full logit vector. The gap between the best
+    // STOP token and the best NON-stop token is exactly "how much more did she have to
+    // say?". A large positive margin = she is done and knows it. A margin near zero (or
+    // negative, i.e. she only stopped because SP_EOT_BIAS tipped her) = she stopped
+    // RELUCTANTLY, mid-thought. That is the continuation impulse, free, no second model,
+    // no decode, no event tape.
+    //
+    // It must be read on the RAW logits (here, line ~3781) — BEFORE eot_bias is added at
+    // ~3782 — or the bias we inject to make her stop would masquerade as her wanting to.
+    // The engine already computes a stop_rank() for SP_EOT_DEBUG and discards it; this is
+    // the same observation, kept.
+    //
+    // Default-off: SP_KAIROS=1 arms it. Off ⇒ not computed ⇒ byte-identical + free.
+    let kairos_on = std::env::var("SP_KAIROS").as_deref() == Ok("1");
+    let eot_margin_of = |lg: &[f32]| -> f32 {
+        let mut best_stop = f32::NEG_INFINITY;
+        for &s in &eot_stop_ids { if lg[s] > best_stop { best_stop = lg[s]; } }
+        if !best_stop.is_finite() { return f32::NAN; }
+        let mut best_other = f32::NEG_INFINITY;
+        for (i, &v) in lg.iter().enumerate() {
+            if v > best_other && !eot_stop_ids.contains(&i) { best_other = v; }
+        }
+        best_stop - best_other
+    };
+    // the margin at the step that PRODUCED the token we are about to emit
+    let mut kairos_margin: f32 = f32::NAN;
     // PERSIST-KV: the tokens we commit to the KV this turn (each is decode_step'd in the loop
     // body below). Appended to the prompt to form the next turn's reusable committed prefix.
     let mut committed_gen: Vec<i32> = Vec::new();
@@ -3779,6 +3809,8 @@ Tag of the answer (or [NULL]):");
             break 'decode;
         }
         if eot_dbg && eot_ranks.len() < 64 { eot_ranks.push(stop_rank(logits).1); }
+        // KAIROS: read the impulse on the RAW logits, BEFORE the bias below tips her.
+        if kairos_on { kairos_margin = eot_margin_of(logits); }
         if eot_bias != 0.0 { for &s in &eot_stop_ids { logits[s] += eot_bias; } }
         next_token = sampler.sample(logits);
         sampler.observe(next_token);
@@ -3789,6 +3821,25 @@ Tag of the answer (or [NULL]):");
         let gids: Vec<String> = eot_gen.iter().take(40).map(|g| g.to_string()).collect();
         tracing::info!("EOT-DEBUG: stop_ids={:?} ngen={} stop_rank_per_step=[{}] gen_ids=[{}]",
             eot_stop_ids, eot_gen.len(), ranks.join(","), gids.join(","));
+    }
+    // KAIROS: hand the turn's continuation impulse to the scheduler. `eot_margin` is the
+    // raw logit gap (stop − best alternative) at the step that ended the turn:
+    //     >> 0  she is finished and knows it            -> silence
+    //     ~ 0   she stopped on the edge, mid-thought    -> she has more to say
+    //     <  0  she only stopped because eot_bias tipped her -> she was CUT OFF
+    // Emitted as its own SSE event so the text stream stays byte-identical for every
+    // client that does not care. Off (SP_KAIROS unset) ⇒ never sent.
+    if kairos_on {
+        let payload = serde_json::json!({
+            "eot_margin": if kairos_margin.is_finite() { serde_json::json!(kairos_margin) }
+                          else { serde_json::Value::Null },
+            "n_gen": committed_gen.len(),
+            "eot_bias": eot_bias,
+            "chat_id": chat_id,
+        });
+        tracing::info!("KAIROS: turn ended — eot_margin={:.3} n_gen={} (margin<=0 => she was cut off; ~0 => more to say)",
+                       kairos_margin, committed_gen.len());
+        let _ = tx.blocking_send(Ok(Event::default().event("kairos").data(payload.to_string())));
     }
 
     let flushed = dec_buf.flush();
