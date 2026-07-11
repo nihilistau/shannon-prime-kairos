@@ -68,6 +68,13 @@ def build_env(c: dict) -> dict:
         "SP_PERSIST_KV": b(kv["persist"]),
         "SP_PERSIST_B4": b(kv["persist_b4"]),
         "SP_PREFIX_SNAPSHOT": b(kv.get("prefix_snapshot", False)),  # P1c
+        # G-PERF (2026-07-12): prefill is ~60 ms/TOKEN per-token — the 1618-token
+        # preamble therefore costs ~96 s cold (measured: prefill 102035 ms for ~1600
+        # tok). CONTRACT-BATCH-PREFILL replaces the per-token launch storm with one
+        # n-wide forward. The C side enforces its preconditions (cold turn, ring-off,
+        # full cache) and ERRORS otherwise, falling through to the per-token path —
+        # so arming it can only help or no-op. Gate before trusting: G-VERBATIM.
+        "SP_KV_PREFILL_BATCH": b(kv.get("prefill_batch", False)),
         "SP_EOT_BIAS": str(dec["eot_bias"]),
         "SP_NO_REPEAT_NGRAM": str(dec["no_repeat_ngram"]),
         # P5a: gateway serving regime. '0' = certified-float turns (explicit
