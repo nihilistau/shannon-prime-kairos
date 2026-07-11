@@ -38,9 +38,15 @@ DAEMON = "http://127.0.0.1:3000/v1/chat"
 PASS = FAIL = 0
 
 
+def _safe(s: str) -> str:
+    """Windows consoles are cp1252; model output is not. Never let the GATE die
+    on an encoding error — a gate that crashes is a gate that gets ignored."""
+    return s.encode("ascii", "backslashreplace").decode("ascii")
+
+
 def check(name, ok, detail=""):
     global PASS, FAIL
-    print(f"  [{'PASS' if ok else 'FAIL'}] {name}{(' — ' + detail) if detail else ''}")
+    print(_safe('  [' + ('PASS' if ok else 'FAIL') + '] ' + name + ((' :: ' + detail) if detail else '')))
     PASS, FAIL = PASS + (1 if ok else 0), FAIL + (0 if ok else 1)
 
 
