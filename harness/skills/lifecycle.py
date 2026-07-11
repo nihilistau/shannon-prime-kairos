@@ -137,8 +137,28 @@ def find_superseded(new_fact: str, speaker: str, rows: Iterable[dict]) -> list[d
 # same invariant, or the one that doesn't becomes the leak. That is the same shape as
 # the two-recall-authorities bug and the two-admission-authorities bug: an invariant
 # guarded in one place is not guarded.
+# LIVE BUG (2026-07-12): she tried to store "The user is experimenting with personality
+# adjustments and memory management." and the store REFUSED it — because this list had
+# pronouns but not the word "user", which is exactly how the model refers to Knack when
+# writing in the third person. She then retried the identical call three times and blew
+# the tool loop. My rule was right in spirit and too tight in fact: "the user" IS a person.
 _PERSONAL_REF = re.compile(
-    r"\b(i|i'm|i've|im|my|me|mine|myself|you|you're|your|yours|we|our|us)\b", re.I)
+    r"\b(i|i'm|i've|im|my|me|mine|myself|you|you're|your|yours|we|our|us|"
+    r"user|user's|operator|knack|shannon|shannon-prime|she|he|her|his|him|they|their)\b",
+    re.I)
+
+# ...but an INSTRUCTION to her is not a fact about anyone. The transcript showed the
+# firehose capturing "you simply store memories about yourself if you want. edit your
+# personality. why don't you try it" and then RECALL serving it back as
+# "Fact on record (authoritative for this conversation, overrides prior knowledge)".
+# Meta-conversation about the system is not knowledge about a person.
+_INSTRUCTION = re.compile(
+    r"^\s*(why don'?t you|you should|you can|you could|try to|try and|go ahead|please\b|"
+    r"let'?s\b|now\b.*\btry|just\b.*\b(try|call|use|store|save)\b|"
+    r"remember to|don'?t forget to|make sure you)", re.I)
+_META = re.compile(
+    r"\b(tool|tools|call the|personality settings?|memory system|store (a |your )?memor|"
+    r"save (a |your )?memor|edit your personality|adjust(ing)? (your )?mood)\b", re.I)
 # A proper noun is decided by the WORD, not by its POSITION. Keying on "capitalised and
 # not sentence-initial" wrongly refused "Knack's lucky number is 7741" — a real fact that
 # happens to begin with the name. Instead: capitalised words minus the ones that are
@@ -156,6 +176,16 @@ def _has_proper_noun(t: str) -> bool:
     return any(w not in _CAP_STOP for w in _CAP.findall(t))
 
 
+# CONVERSATIONAL FILLER. A durable fact does not open with a discourse marker. The
+# transcript showed the firehose capturing "i mean, you just made yourself calmer by
+# choosing that you wanted to be calmer. thats pretty cool" and recall then serving it back
+# as an AUTHORITATIVE fact on record. That is a remark in a conversation, not knowledge.
+_CHATTER = re.compile(
+    r"^\s*(i mean\b|well\b|so\b|ok\b|okay\b|yeah\b|yep\b|nah\b|hmm+\b|huh\b|lol\b|haha\b|"
+    r"wow\b|oh\b|ah\b|right\b|sure\b|cool\b|nice\b|there you go\b|exactly\b|"
+    r"that'?s (pretty |so |really )?(cool|nice|interesting|fascinating)\b)", re.I)
+
+
 def is_memorable(fact: str) -> tuple[bool, str]:
     """A memory is ABOUT SOMEONE. An impersonal declarative ("The kind nurse painted the
     tall building as the sun went down") is a SENTENCE, not a memory — grammatical, in
@@ -163,6 +193,13 @@ def is_memorable(fact: str) -> tuple[bool, str]:
     t = (fact or "").strip()
     if len(t.split()) < 3:
         return False, "too short to be a standalone fact"
+    if _CHATTER.match(t):
+        return False, ("that is a remark in a conversation, not a durable fact. Keep what "
+                       "you LEARNED, not what was said.")
+    if _INSTRUCTION.match(t) or _META.search(t):
+        return False, ("that is an instruction or a note about how the system works, not a "
+                       "fact about a person. Store what you have LEARNED about Knack, or "
+                       "something true about yourself.")
     if _PERSONAL_REF.search(t) or _has_proper_noun(t):
         return True, ""
     return False, ("that is a sentence, not a memory — it is not about anyone. "

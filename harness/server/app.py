@@ -64,7 +64,16 @@ def _agent_text(body: Dict[str, Any]) -> str:
     use_tools = body.get("tools", body.get("use_tools", True)) is not False
     msgs = body.get("messages", [])
     if not use_tools:
-        text = get_client().chat(messages=msgs, config=_to_config(body)).text
+        # ARM THE SELF-REPEAT BAN HERE TOO. It was armed only inside agent_chat_stream —
+        # so this tools=False branch (which goes straight to the client) had no guard, and
+        # the very gate written to prove the fix ran down the unguarded path and "passed"
+        # on temperature luck. Same hole, third variant, one day. Arm it at EVERY path that
+        # reaches the model, not at the one you happened to be looking at.
+        from harness.agent import _arm_self_repeat_ban
+        _cfg = _to_config(body)
+        _arm_self_repeat_ban(_cfg, msgs)
+        text = get_client().chat(messages=msgs, config=_cfg).text
+        text = _repeat_guard(body, msgs, text, _cfg)
         _kairos_after_turn(body, text)
         return text
     from harness.agent import agent_chat
@@ -75,8 +84,39 @@ def _agent_text(body: Dict[str, Any]) -> str:
         auto_recall=False,  # the model uses tools, not the daemon's heuristic recall
     )
     text = agent_chat(msgs, config=cfg)
+    text = _repeat_guard(body, msgs, text, cfg)
     _kairos_after_turn(body, text)
     return text
+
+
+def _repeat_guard(body: Dict[str, Any], msgs: list, text: str, cfg) -> str:
+    """She may not say the same thing twice. See harness/quality/repeat_guard.py — the
+    operator caught her returning three BYTE-IDENTICAL replies to three different
+    messages. Narrow by design: this forbids repeating HER OWN LAST MESSAGE, and does
+    nothing to her ability to quote him, a memory, a tool result, or a number (all of
+    which the old no_repeat_ngram ban forbade, which is why it had to go)."""
+    try:
+        from harness.quality.repeat_guard import guard
+        prev = next((m.get("content", "") for m in reversed(msgs)
+                     if m.get("role") == "assistant"), "")
+        if not prev:
+            return text
+
+        def _reroll(nudge: str) -> str:
+            from harness.agent import agent_chat_stream
+            from harness.inference import InferenceConfig as _IC
+            hist = list(msgs) + [{"role": "system", "content": nudge}]
+            return "".join(agent_chat_stream(
+                hist, config=_IC(max_tokens=cfg.max_tokens, temperature=0.85,
+                                 auto_recall=False), tools=[]))
+
+        out, note = guard(text, prev, _reroll)
+        if note:
+            logger.warning("[repeat-guard] %s", note)
+        return out
+    except Exception as exc:
+        logger.warning("[repeat-guard] skipped: %s", exc)
+        return text
 
 
 def _kairos_after_turn(body: Dict[str, Any], reply: str) -> None:

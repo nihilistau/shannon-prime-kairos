@@ -44,6 +44,10 @@ class InferenceConfig:
     replay_npos: Optional[int] = None
     single_entry: Optional[bool] = None     # route text via residual seam
     eot_bias: Optional[float] = None        # logit bias on stop tokens so the model STOPS cleanly
+    # SELF-REPEAT BAN: N-grams from HER PREVIOUS REPLY only are forbidden (not from the
+    # whole prompt -- that was no_repeat_ngram, which banned QUOTING and had to go).
+    self_repeat_ngram: Optional[int] = None
+    self_repeat_text: Optional[str] = None
                                             # (without this the gateway path never terminates)
 
     # Routing / model selection (harness-side, not sent to daemon)
@@ -73,7 +77,7 @@ class InferenceConfig:
             "temperature", "top_p", "top_k", "repetition_penalty",
             "frequency_penalty", "seed", "max_tokens",
             "byteexact", "raw_logits", "auto_recall",
-            "replay", "replay_npos", "single_entry", "eot_bias",
+            "replay", "replay_npos", "single_entry", "eot_bias", "self_repeat_ngram", "self_repeat_text",
         ):
             v = getattr(self, k)
             if v is not None:

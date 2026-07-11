@@ -43,9 +43,22 @@ def _set(key: str, value: str) -> None:
 
 
 @personality(description="Set your current mood (e.g. playful, focused, tender). Persists to your persona.")
-def adjust_mood(mood: str) -> str:
-    _set("mood", mood.strip())
-    return f"mood set to {mood.strip()}"
+def adjust_mood(mood: str = "", **kw) -> str:
+    """Set your CURRENT MOOD — how you feel right now (e.g. "calm", "playful", "focused",
+    "tender", "prickly"). This persists to your persona, so it survives a restart.
+    Example: adjust_mood("calm")
+
+    LIVE BUG (2026-07-12): the tool schema was built from __doc__, which was EMPTY — the
+    description lived only in the @personality decorator and never reached the model. She
+    could see `def adjust_mood(mood: str):  #` with no help at all, guessed the argument
+    name, and called adjust_mood(new="calm") -> TypeError. She was not being stupid; we
+    handed her an unlabelled lever. Docstring now carries the schema, and the aliases below
+    absorb a reasonable guess instead of erroring."""
+    mood = (mood or kw.get("new") or kw.get("value") or kw.get("to") or "").strip()
+    if not mood:
+        return "adjust_mood needs a mood, e.g. adjust_mood(\"calm\")"
+    _set("mood", mood)
+    return f"mood set to {mood}"
 
 
 @personality(description="Set your speaking voice/style (e.g. dry, warm, terse). Persists to your persona.")
@@ -55,8 +68,17 @@ def set_voice(voice: str) -> str:
 
 
 @personality(description="Add or remove one of your personality traits. action is 'add' or 'remove'.")
-def set_trait(trait: str, action: str = "add") -> str:
-    trait = trait.strip()
+def set_trait(trait: str, action: str = "add", **kw) -> str:
+    """Add or remove one of YOUR OWN personality traits — a lasting part of who you are
+    (e.g. "curious", "sardonic", "calm"). This is not a mood; it persists to your persona
+    and survives a restart. action is "add" (default) or "remove".
+    Example: set_trait("sardonic")   /   set_trait("flirty", action="remove")"""
+    trait = (trait or kw.get("name") or kw.get("value") or "").strip()
+    if not trait:
+        return "set_trait needs a trait, e.g. set_trait(\"calm\")"
+    # she called set_trait(action="set") — treat any non-remove verb as add
+    if action and action.lower() not in ("add", "remove"):
+        action = "remove" if "remov" in action.lower() or "delet" in action.lower() else "add"
     st = _state()
     traits = [t.strip() for t in st.get("traits", "").split(",") if t.strip()]
     if action.lower() == "remove":

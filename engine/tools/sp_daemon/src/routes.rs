@@ -244,6 +244,13 @@ pub struct ChatRequest {
     // SP_EOT_BIAS env default. Tunable per-request from the console GUI.
     #[serde(default)]
     pub eot_bias: Option<f32>,
+    // SELF-REPEAT BAN: forbid N-grams drawn from `self_repeat_text` (= her PREVIOUS reply)
+    // only, NOT from the whole prompt. This is the narrow replacement for the global
+    // no_repeat_ngram that had to be turned off because it banned quoting (G-VERBATIM).
+    #[serde(default)]
+    pub self_repeat_ngram: Option<usize>,
+    #[serde(default)]
+    pub self_repeat_text: Option<String>,
     // CONTRACT-CHAT-FULLSTACK B5 — the GENERIC residual-frame channel. Raw E-float
     // residual vectors fed straight to gemma4_kv_inject_seq (the seam AUDIO/EAR and
     // MEMORY-as-residual sources also use). Each inner Vec is one E-length frame;
@@ -495,6 +502,8 @@ pub async fn v1_chat(
     // inject_frames feeds raw residual frames (audio/memory) through the same seam.
     let single_entry = req.single_entry.unwrap_or(false);
     let eot_bias = req.eot_bias; // N5: per-request override of the SP_EOT_BIAS default
+    let req_self_repeat_ngram = req.self_repeat_ngram;   // SELF-REPEAT BAN (narrow scope)
+    let req_self_repeat_text = req.self_repeat_text.clone();
     let inject_frames = req.inject_frames.clone();
     let inject_ph = req.inject_ph;
     // A2: build the per-request sampler from the (flattened) ChatRequest knobs.
@@ -550,6 +559,41 @@ pub async fn v1_chat(
             if nrg >= 2 {
                 sampler.set_no_repeat_ngram(nrg);
                 sampler.set_ngram_prefix(tokens.clone());
+            }
+            // ── SELF-REPEAT BAN (2026-07-12) — the NARROW version of the above ──────────
+            // The operator caught her emitting three BYTE-IDENTICAL replies to three
+            // different messages (and again, four times running). Not a stale prompt: the
+            // daemon log shows the prompt growing and the new text prefilled. She read his
+            // words and chose to say her last reply again. A degeneration attractor on a
+            // low-content turn ("you can", "cool huh?").
+            //
+            // `no_repeat_ngram=3` used to make that impossible — because it seeded the ban
+            // from `tokens` = THE WHOLE PROMPT. That is also precisely why it had to die:
+            // banning every trigram in context bans QUOTING, so "4471" came back "4417"
+            // and every number in memory/tools/persona was garbled (G-VERBATIM).
+            //
+            // The fix is the same mechanism with the right SCOPE. Seed the ban from ONLY
+            // her PREVIOUS REPLY, not from the context. She then cannot parrot herself,
+            // and can still quote him, a memory, a tool result, or a number — none of which
+            // are in the ban set. Prevention in the sampler, so it works on the STREAMING
+            // console path where a post-hoc re-roll cannot retract what is already on screen.
+            let srn = req_self_repeat_ngram.unwrap_or(0);
+            if srn >= 2 {
+                if let Some(prev) = req_self_repeat_text.as_deref() {
+                    let prev = prev.trim();
+                    if !prev.is_empty() {
+                        if let Ok(ptoks) = tokenizer.encode(prev) {
+                            if ptoks.len() >= srn {
+                                sampler.set_no_repeat_ngram(srn);
+                                sampler.set_ngram_prefix(ptoks);
+                                tracing::info!(
+                                    "SELF-REPEAT BAN: {}-grams from her previous reply only \
+                                     ({} tok) — quoting the user/memory/tools is UNAFFECTED",
+                                    srn, prev.split_whitespace().count());
+                            }
+                        }
+                    }
+                }
             }
         }
 

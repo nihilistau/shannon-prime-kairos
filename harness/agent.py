@@ -200,6 +200,7 @@ def agent_chat(
     # slow (~233ms/tok exact-integer attention); fixing the float path is the real speed unlock.
     cfg = config or InferenceConfig(temperature=0.6, repetition_penalty=1.3,
                                     eot_bias=4.0, max_tokens=192, auto_recall=False)
+    _arm_self_repeat_ban(cfg, messages)
     # OKFS-tiered tools: core up front + the rest as a load-on-demand index (small system prompt).
     return run_with_tools(
         list(messages), core, extra_tools=extra, client=client, config=cfg, on_tool=on_tool,
@@ -208,6 +209,38 @@ def agent_chat(
 
 # Static per-serve tool system (built once; see the live-play note in the stream).
 _SYS_CACHE = None
+
+
+def _arm_self_repeat_ban(cfg, messages: List[dict]) -> None:
+    """SELF-REPEAT BAN (2026-07-12).
+
+    The operator caught her returning three BYTE-IDENTICAL replies to three different
+    messages, and again four in a row. Not a stale prompt — the daemon log shows the
+    prompt growing (n=4563 -> 4672 -> 4781) and the new suffix prefilled. She read his
+    words and chose to emit her previous reply verbatim: a degeneration attractor on a
+    low-content turn ("you can", "cool huh?").
+
+    `no_repeat_ngram=3` used to make that impossible, because it seeded the ban from THE
+    WHOLE PROMPT. That is also exactly why it had to die: banning every trigram in context
+    bans QUOTING — she wanted '7' at a logit margin of 9.0 and the sampler masked it, so
+    "4471" came back "4417", and every number in memory, tools and persona was garbled
+    (G-VERBATIM). Both things were true at once: it was strangling the system AND sitting
+    on this bug.
+
+    So: same mechanism, correct scope. Ban n-grams drawn ONLY from her previous reply. She
+    cannot parrot herself; she can still quote him, a memory, a tool result, or a number,
+    none of which are in the ban set. Done in the sampler (not as a post-hoc re-roll)
+    because the console STREAMS — you cannot retract what is already on the screen.
+
+    Armed here, in the one place both entry points converge. A guard wired into one of two
+    paths is a guard wired into neither; that mistake has been made four times today."""
+    if getattr(cfg, "self_repeat_ngram", None) is not None:
+        return
+    prev = next((m.get("content", "") for m in reversed(messages)
+                 if m.get("role") == "assistant" and (m.get("content") or "").strip()), "")
+    if prev and len(prev.split()) >= 5:
+        cfg.self_repeat_ngram = 4     # 4-grams: kills parroting, spares short idioms
+        cfg.self_repeat_text = prev
 
 
 def agent_chat_stream(
@@ -237,6 +270,7 @@ def agent_chat_stream(
     # slow (~233ms/tok exact-integer attention); fixing the float path is the real speed unlock.
     cfg = config or InferenceConfig(temperature=0.6, repetition_penalty=1.3,
                                     eot_bias=4.0, max_tokens=192, auto_recall=False)
+    _arm_self_repeat_ban(cfg, messages)
     # OKFS-tiered tools: a few core up front, the rest as a load-on-demand index -- keeps the system
     # prompt small (the 1189-token inline preamble is what stalled the gateway).
     # LIVE-PLAY FIX 2026-07-11: extra_tools() rebuilds the MCP bridge on EVERY
