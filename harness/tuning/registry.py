@@ -106,6 +106,25 @@ KNOBS: list[Knob] = [
          receipt="gates/G-VERBATIM-digits-broken.md — 0/6 -> 6/6 when set to 0.",
          danger="ANY value >= 2 breaks verbatim quoting. serve.py refuses to launch with it."),
 
+    # ── ROLEPLAY ──────────────────────────────────────────────────────────────────
+    Knob("roleplay.enabled", "Roleplay", "Enabled", "bool", True,
+         "She can flip into a scene when you ask for one (\"wanna roleplay?\", \"be my...\", "
+         "or naming a scenario). Off = she stays herself no matter what."),
+    Knob("roleplay.max_heat", "Roleplay", "Heat ceiling", "int", 7,
+         "HARD CEILING on the physical thread, enforced in the engine — not in the prompt. "
+         "1 light_touch · 2 kiss · 3 caress · 4 striptease · 5 intimate · 6 explicit · "
+         "7 depraved. Set it to 2 and the scene never goes past a kiss no matter what "
+         "either of you types. She can never skip a rung, and \"stop\"/\"ooc\" breaks the "
+         "scene instantly at ANY level.",
+         min=0, max=7, step=1,
+         danger="This is the ceiling for ALL scenes. Adults, fiction, your machine — but it "
+                "is the one number that decides how far it can go."),
+    Knob("roleplay.dwell_scale", "Roleplay", "Pacing (build)", "float", 1.0,
+         "Multiplies how many exchanges must be spent on a rung before the next can open. "
+         "1.0 = the tuned pacing (3 exchanges at first touch, 2 thereafter). Raise it for a "
+         "slower, hotter burn; drop it toward 0 to let it move fast.",
+         min=0.0, max=4.0, step=0.25),
+
     # ── MEMORY ────────────────────────────────────────────────────────────────────
     Knob("memory.admit_personal_only", "Memory", "Only remember facts about someone", "bool", True,
          "A memory is ABOUT SOMEONE. With this off, any grammatical declarative gets "

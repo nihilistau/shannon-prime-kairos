@@ -63,6 +63,13 @@ def _agent_text(body: Dict[str, Any]) -> str:
     of a passthrough with no tool calling. Set body['tools']=false (or 'use_tools':false) to skip."""
     use_tools = body.get("tools", body.get("use_tools", True)) is not False
     msgs = body.get("messages", [])
+    # ROLEPLAY: may inject the scene's system prompt + this turn's director note, or return
+    # the scenario OFFER outright. Wired at BOTH entry points (here and _native_chat_sse) —
+    # a hook wired into one of two paths has been the single most reliable bug in this
+    # system, four times over in one day.
+    _offer = _roleplay_pre_turn(body, msgs)
+    if _offer:
+        return _offer
     if not use_tools:
         # ARM THE SELF-REPEAT BAN HERE TOO. It was armed only inside agent_chat_stream —
         # so this tools=False branch (which goes straight to the client) had no guard, and
@@ -117,6 +124,76 @@ def _repeat_guard(body: Dict[str, Any], msgs: list, text: str, cfg) -> str:
     except Exception as exc:
         logger.warning("[repeat-guard] skipped: %s", exc)
         return text
+
+
+def _roleplay_pre_turn(body: Dict[str, Any], msgs: list) -> Optional[str]:
+    """ROLEPLAY MODE. Returns a canned reply to stream instead of running the model (the
+    scenario OFFER), or None to continue normally — after possibly injecting the scene's
+    system prompt + this turn's DIRECTOR NOTE into `msgs`.
+
+    The director note is recomputed from live scene state EVERY turn (the room, the rung,
+    how many beats we have spent there, whether the scene is idling). That is the
+    anti-drift mechanism: the model is never more than one turn away from being told again
+    who it is and where it is standing. A system prompt alone drifts out in four turns."""
+    try:
+        from harness.roleplay import engine as rp
+        from harness.tuning import registry as tune
+        if not tune.get("roleplay.enabled"):
+            return None
+
+        session = str(body.get("session") or body.get("session_id") or "default")
+        user = next((m.get("content", "") for m in reversed(msgs)
+                     if m.get("role") == "user"), "")
+        scene = rp.active(session)
+
+        # OUT — checked first, always. A stop is a stop, at any heat, no exceptions.
+        if scene and rp.wants_out(user):
+            rp.leave(session)
+            return None            # she answers as herself, normally, from here on
+
+        # IN
+        if not scene:
+            pending = rp.is_pending(session)
+            # She offered a menu last turn — so THIS turn is his pick. Without this state she
+            # proposes and then cannot hear the answer ("the penthouse one" matches no ENTER
+            # keyword, falls through to normal chat, and no scene ever starts).
+            if not pending and not rp.wants_in(user):
+                return None
+            chosen = rp.pick_from(user)
+            if not chosen:
+                if pending:
+                    rp.clear_pending(session)   # he changed his mind; drop it, do not nag
+                    return None
+                rp.mark_offered(session)
+                return rp.offer(user)           # she OFFERS; a good host proposes
+            rp.clear_pending(session)
+            scene = rp.enter(session, chosen.id)
+            if not scene:
+                return None
+            logger.info("[roleplay] ENTER %s (%s)", scene.scenario.id, scene.scenario.theme)
+
+        # already in a scene, or just entered: compose the standing prompt + the note
+        cap = int(tune.get("roleplay.max_heat"))
+        note = rp.director_note(scene, user, cap)
+        if note.startswith("SCENE BROKEN"):
+            rp.leave(session)
+            return None
+
+        # TOOLS OFF INSIDE A SCENE. She is a person in a room, not an assistant with a
+        # toolbox — a character does not call web_search mid-kiss. Live symptom: the first
+        # scene turn HUNG, because the agent loop kept trying to take tool rounds against a
+        # system prompt that gives it nothing to do. It is an immersion break and a
+        # performance bug at the same time, and both are fixed by the same line.
+        body["tools"] = False
+        msgs.insert(0, {"role": "system", "content": rp.system_prompt(scene, cap)})
+        if note:
+            msgs.insert(len(msgs) - 1, {"role": "system", "content": note})
+        logger.info("[roleplay] %s heat=%s beats=%d%s", scene.scenario.id,
+                    scene.heat.name, scene.beats, " (hook fired)" if "IDLING" in note else "")
+        return None
+    except Exception as exc:
+        logger.warning("[roleplay] skipped: %s", exc)
+        return None
 
 
 def _kairos_after_turn(body: Dict[str, Any], reply: str) -> None:
@@ -585,6 +662,19 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
         now = time.time()
         logger.info("[gateway] phase %-14s %.1fs", name, now - _t_phase)
         _t_phase = now
+
+    # ROLEPLAY (console path). Same hook as the OpenAI path — a scenario OFFER short-circuits
+    # the model entirely; otherwise the scene's system prompt + this turn's DIRECTOR NOTE
+    # are injected into the message list before the agent runs.
+    try:
+        _rp_offer = _roleplay_pre_turn(body, msgs)
+        if _rp_offer:
+            yield ("data: " + json.dumps({"delta": _rp_offer}) + "\n\n").encode()
+            msgs.append({"role": "assistant", "content": _rp_offer})
+            yield b"data: [DONE]\n\n"
+            return
+    except Exception as exc:
+        logger.warning("[gateway] roleplay pre-turn skipped: %s", exc)
 
     _phase("pre-turn")
 
