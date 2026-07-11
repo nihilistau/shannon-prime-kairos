@@ -26,7 +26,12 @@ persist = true
 persist_b4 = true        # HINDSIGHT: cache alive under B4 growth (minutes -> seconds)
 ring_w = 2048
 pmax = 12096
-prefix_snapshot = false  # P1: CUDA-lane snapshot verb not built yet
+# P1c-1 REFUTED for the capture_batched composition (2026-07-11): capturing the
+# 1652-token preamble ground 10+ min at 100% GPU (540 MiB store; the episode
+# capture path is built for ~30-token episodes, 50x OOD). Lever stays default-off
+# with receipt gates/G-KAIROS-P1c-1; the real fix is the device-side snapshot
+# verb (copy resident KV rows out/in — no re-forward, no disk) = P1c-2.
+prefix_snapshot = false
 
 [memory]
 recall_authority = 'L5'  # exactly one; serve.py refuses profiles that arm two

@@ -48,6 +48,7 @@ def build_env(c: dict) -> dict:
         "SP_DAEMON_KVDECODE_PMAX": str(kv["pmax"]),
         "SP_PERSIST_KV": b(kv["persist"]),
         "SP_PERSIST_B4": b(kv["persist_b4"]),
+        "SP_PREFIX_SNAPSHOT": b(kv.get("prefix_snapshot", False)),  # P1c
         "SP_EOT_BIAS": str(dec["eot_bias"]),
         "SP_NO_REPEAT_NGRAM": str(dec["no_repeat_ngram"]),
         "CUBLAS_WORKSPACE_CONFIG": ":16:8",
