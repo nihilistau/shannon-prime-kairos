@@ -1,4 +1,0 @@
-=== CLEAN TTS (expect: quick brown fox) ===
- wrap+transcribe -> ''
- wrap+what       -> 'The user said: [voice utterance — injected as 4 latent audio frames]'
- nowrap+transcr  -> ''

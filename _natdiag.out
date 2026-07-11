@@ -1,6 +1,0 @@
-frames (29, 3840) per-frame L2 min/mean/max 47.05/79.51/122.71
-BOA/text emb L2 ref ~62.0
-scale=1 -> "I'm a system. I help with the user interface in this app, but for now it seems like there was an error loading audio content from their post?\nIf they sent me something to listen to or play back then t"
-scale=12 -> '[translate]'
-scale=30 -> '[image]'
-scale=62 -> '<img src="https://media.progate.com/image-03527c18e49b6dff" />'

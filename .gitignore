@@ -14,3 +14,13 @@ engine/_nightshift_live/
 var/voice/wav/
 var/voice/*.npz
 var/voice/*.log
+
+# session scratch (G-VERBATIM cleanup 2026-07-12)
+_*.py
+_*.log
+_*.err
+_*.out
+_*.ps1
+core)
+var/commitmsg.txt
+var/hidden/

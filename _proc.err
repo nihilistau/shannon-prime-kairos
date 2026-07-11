@@ -1,7 +1,0 @@
-Traceback (most recent call last):
-  File "D:\F\shannon-prime-repos\shannon-prime-kairos\_proc.py", line 11, in <module>
-    fe=AutoFeatureExtractor.from_pretrained(d, trust_remote_code=True)
-       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Knack\AppData\Local\Programs\Python\Python311\Lib\site-packages\transformers\models\auto\feature_extraction_auto.py", line 367, in from_pretrained
-    raise ValueError(
-ValueError: Unrecognized feature extractor in D:\Files\Models\Gemma4\gemma-4-12b-bucket. Should have a `feature_extractor_type` key in its preprocessor_config.json of config.json, or one of the following `model_type` keys in its config.json: audio-spectrogram-transformer, audioflamingo3, clap, clvp, cohere_asr, csm, dac, data2vec-audio, dia, encodec, gemma3n, gemma4, glmasr, granite_speech, higgs_audio_v2_tokenizer, hubert, kyutai_speech_to_text, lasr_ctc, lasr_encoder, markuplm, mimi, moonshine, moshi, musicgen, musicgen_melody, parakeet_ctc, parakeet_encoder, pe_audio, pe_audio_video, phi4_multimodal, pop2piano, qwen2_5_omni, qwen2_audio, qwen3_omni_moe, seamless_m4t, seamless_m4t_v2, sew, sew-d, speech_to_text, speecht5, unispeech, unispeech-sat, univnet, vibevoice_acoustic_tokenizer, vibevoice_asr, voxtral, voxtral_realtime, wav2vec2, wav2vec2-bert, wav2vec2-conformer, wavlm, whisper, xcodec
