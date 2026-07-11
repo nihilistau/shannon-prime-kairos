@@ -1,0 +1,100 @@
+# kairos agent profile — THE daily driver (G-KAIROS-P3).
+# serve.py maps this to the engine/gateway env and ECHOES the effective config.
+
+[paths]
+# P1a (2026-07-11): kernel tree migrated; daily driver = the KAIROS build.
+# Rollback = point this back at the staging exe:
+#   shannon-prime-system-engine/tools/sp_daemon/target-wirecuda/release/sp-daemon.exe
+engine_exe = 'D:/F/shannon-prime-repos/shannon-prime-kairos/engine/tools/sp_daemon/target-wirecuda/release/sp-daemon.exe'
+model      = 'D:/F/shannon-prime-repos/models/gemma4-12b-b1-reason.sp-model'
+tokenizer  = 'D:/F/shannon-prime-repos/models/gemma4-12b-b1.sp-tokenizer'
+# P1a follow-up (2026-07-11): production registry MIGRATED to kairos var/memory
+# (388 rows, SHA-verified copy; staging _memory_live stays as the frozen backup).
+# Rows carry absolute episode dirs (staging _nightshift_live) so old episodes
+# keep resolving; NEW episodes land in kairos engine/_nightshift_live (baked
+# engine_root, gitignored) until P1b makes the episode dir config.
+registry   = 'D:/F/shannon-prime-repos/shannon-prime-kairos/var/memory/registry.jsonl'
+spectest_head = 'D:/F/shannon-prime-repos/shannon-prime-system-engine/_faithful_corpus/f3/spectest_head_f1.bin'
+llvm_bin   = 'C:/Program Files/LLVM/bin'   # libomp.dll for the daemon
+
+[serve]
+port = 3000
+gateway_port = 8800
+
+[kv]
+persist = true
+persist_b4 = true        # HINDSIGHT: cache alive under B4 growth (minutes -> seconds)
+ring_w = 2048
+pmax = 12096
+# P1c-2 SHEAR: DISARMED 2026-07-11 23:30 (live-play regression, operator).
+# The shear sets commit_pos = P, which REDEFINES the SWA undo-journal baseline
+# (jcur = dpos - commit_pos, bounded by Jmax=64). Once a conversation grows past
+# ring_W=2048 and journaling engages, that index is outside its bound => KV
+# corruption => the model emits end-of-turn immediately (1-26 char replies) on
+# every subsequent turn of that residency. My gates only ever tested SHORT fresh
+# chats after a shear; no gate covered "shear, then converse past the ring".
+# The verb stays in the tree; it does NOT run until it has a gate that grows a
+# conversation past ring_W after a shear. Default-off, as levers should be.
+prefix_snapshot = false
+
+[memory]
+recall_authority = 'L5'  # exactly one; serve.py refuses profiles that arm two
+auto_recall_default = true
+l5_tau = 0.30
+attr_gate = true
+attr_tau = 0.5
+qonly = true
+delivery = 'plain'       # Hodor binding: never systemecho globally
+growth = true            # SP_B4_NIGHTSHIFT
+persist_growth = true    # SP_NIGHTSHIFT_PERSIST
+store_verb = true        # SP_MEM_STORE
+classify = true          # SP_MEM_CLASSIFY
+policy = true            # SP_MEM_POLICY (per-entry delivery dispatch)
+qkey_mint = true         # question-space ep.l5 keys
+
+[agent]
+# OFF (live-play 4): the per-turn toolset swap REWRITES THE SYSTEM PROMPT, which
+# diverges the persist-KV cache at token 0 and re-prefills the whole conversation —
+# any message mentioning building/code stalled for minutes. Coding tools are in the
+# load-on-demand index tier instead (all_tools); one stable system prompt per session.
+spine_toolset = false
+spine_recall = true
+personality = true
+mcp_tools = true
+# Hydrate the ~1.5k-token persona+tools preamble into the persist cache at BOOT (background)
+# so the user's FIRST message reuses it (LCP) instead of paying the one-time ~100s cold
+# prefill live. The cost moves to startup; every turn after is a strict extension.
+prewarm = true
+# 'spine' = the harness owns recall on gateway turns (fast: strict-extension prompt
+# composes with persist-KV). Daemon L5 delivery clears the committed cache on every
+# recalled turn -> minutes-long interrogative turns through the gateway. Direct
+# daemon chats (gateway down) still use L5 via the console checkbox.
+authority = 'spine'
+
+[decode]
+mtp = false  # P5: verify machinery proven byte-exact, but prompt-lookup drafts are
+             # 0.87x on real text (the 40.8 headline was a degenerate-prompt artifact);
+             # needs a high-acceptance drafter before this flips.
+# P5a FLOAT SERVING: REFUTED at the DETAIL level (2026-07-11, battery v2).
+# Float prefill/decode stays COHERENT but corrupts ATTENDED DETAIL: the
+# float-prewarmed persona read back as "Shannon-15 ... RTX 3067" (is: Shannon-
+# Prime, RTX 2060) and a tool time copied as "2014-365". Gist survives (the
+# 2.1k summary probe passed); numerals in attended rows do NOT. The byte-exact
+# doctrine is vindicated in its subtlest form. The g_float_parity gate passed
+# 4/4 because simple facts answer from WEIGHTS — certification requires
+# attended-content probes (persona details + tool-number copying); documented
+# in the gate. Lever stays (explicit byteexact:false per request), default OFF.
+byteexact = false
+eot_bias = 4.0
+# G-VERBATIM (2026-07-12) — ROOT CAUSE OF THE DIGIT/COPY BUG. MUST STAY 0.
+# no_repeat_ngram=N bans any N-token sequence ALREADY IN CONTEXT. Verbatim copying
+# IS that: to echo "4471" the model must re-emit the trigram 4->4->7 it can see in
+# the prompt. The ban fired, the (certain, margin 9.0) correct token '7' was masked,
+# and the sampler took the next-best digit -> "4417". Same mechanism garbled every
+# tool number, memory fact and persona detail in the system.
+# Anti-degeneration is eot_bias + the admission cap, NOT this. Gate: harness_tests/g_verbatim.py
+no_repeat_ngram = 0
+
+[veto]
+spectest = true
+

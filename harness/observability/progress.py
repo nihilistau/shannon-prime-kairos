@@ -65,7 +65,8 @@ GATES = [
     ("G-CONVERSATION", "harness_tests/g_conversation_e2e.py",
      "10 turns, one session, past ring_W: completeness, no degeneration, recall, latency"),
     ("G-VERBATIM", "harness_tests/g_verbatim.py",
-     "can the model copy digits/words out of its own context? (numbers currently FAIL)"),
+     "can the model quote its own context? GREEN 6/6 — root cause was no_repeat_ngram=3 "
+     "banning re-emission of any trigram in context, which IS verbatim copying"),
     ("G-MEMPOLICY-V3", "harness_tests/g_mempolicy_v3_offline.py",
      "per-entry policy: secret decline (zero-inference), counterfact framing, null floor"),
     ("G-PK2-SPINE", "harness_tests/g_pk2_spine_offline.py", "decide→execute→verify receipts"),
