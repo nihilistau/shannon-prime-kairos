@@ -1593,6 +1593,14 @@ fn run_kvdecode_chat(
         tracing::info!("TURN-PHASE: prefill {} tok in {} ms ({:.0} ms/tok)",
                        head.len(), t_prefill_ms, t_prefill_ms as f64 / head.len() as f64);
     }
+    // G-PERF (2026-07-12): `other` was 4132 ms/turn with the heads on vs 54 ms with
+    // them off -- LARGER than the decode it wraps -- and it was one anonymous bucket.
+    // Everything between here and decode_t0 is the RECALL stage: L5 search, the B3
+    // judge (which runs its own forward passes that never appear in the token count,
+    // which is why short recall turns reported an absurd "0.8 tok/s"), replay, ablate.
+    // Name it, and count the forwards it burns. We cannot cut what we have not named.
+    let t_recall0 = std::time::Instant::now();
+    let steps_before_recall = kv::step_count();
     // G-INT-2-FIX (text-in-context recall): the synthesis tail token. Defaults to
     // last[0] (the original prompt's last token). When the B3-JUDGE PICKs a memory
     // it rebuilds the cache from an AUGMENTED prompt (memory text prepended to the
@@ -1794,19 +1802,30 @@ fn run_kvdecode_chat(
         && unsafe { kv::position(handle) } > 0
     {
         use sp_daemon::recall;
+        // G-PERF: the recall stage costs 2.7-4.2 s/turn while running exactly ONE
+        // forward. So it is CPU/disk, not inference. Name its sub-blocks.
+        let rp_t0 = std::time::Instant::now();
         let ruser = raw_user.clone().unwrap_or_default();
         let n_global = recall::NL / recall::PERIOD;
         let mut ql = vec![0.0f32; n_global * recall::G_NH * recall::HD];
         let read_ok = unsafe { kv::read_global_q(handle, last[0], &mut ql) }.is_ok();
         let l5_query = if read_ok { recall::l5_query_embed(&ql) } else { Vec::new() };
         let global_q = if read_ok { ql } else { Vec::new() };
+        let rp_query_ms = rp_t0.elapsed().as_millis();
+        let rp_t1 = std::time::Instant::now();
         // Any graduated latent head joins the fold: load the W_c recall head if deployed
         // (SP_B3_WC), and build_pipeline runs it FIRST (a fired head short-circuits cosine).
         let wc = std::env::var("SP_B3_WC").ok().filter(|s| !s.is_empty())
             .filter(|_| cfg!(feature = "legacy_policy"))  // W_c head = RESEARCH
             .and_then(|p| recall::load_wc(&p));
+        // SUSPECT #1: this DEEP-CLONES every nightshift episode on EVERY turn, and each
+        // Episode carries `gk` = [n_global][npos][HD] f32 (~0.5 MB). Measured, not assumed.
         let ns_snapshot: Vec<recall::Episode> =
             app.nightshift.read().unwrap().iter().cloned().collect();
+        let rp_snap_ms = rp_t1.elapsed().as_millis();
+        let rp_snap_mb: f64 = ns_snapshot.iter()
+            .map(|e| (e.gk.len() * 4 + e.text.len()) as f64).sum::<f64>() / 1.048_576e6;
+        let rp_t2 = std::time::Instant::now();
         let registry = app.recall_registry.as_ref().unwrap();
         let framing = crate::spine::Delivery::from_env(
             std::env::var("SP_RECALL_L5_PROMPT").as_deref().unwrap_or("systemecho"));
@@ -1825,6 +1844,8 @@ fn run_kvdecode_chat(
             framing,
         };
         let decision = crate::spine::decide(&view, &crate::spine::build_pipeline(wc, framing));
+        let rp_decide_ms = rp_t2.elapsed().as_millis();
+        let rp_t3 = std::time::Instant::now();
         let ctx = crate::spine::ExecCtx {
             handle,
             tokenizer: app.tokenizer.as_ref(),
@@ -1836,6 +1857,11 @@ fn run_kvdecode_chat(
         if outcome.recalled.is_some() { recalled = outcome.recalled; }
         if outcome.symbolic_decline.is_some() { symbolic_decline = outcome.symbolic_decline; }
         syn_last = outcome.syn_last;
+        tracing::info!(
+            "RECALL-PHASE: query {} ms + snapshot {} ms ({} eps, {:.1} MB deep-cloned) \
+             + decide {} ms + execute {} ms",
+            rp_query_ms, rp_snap_ms, ns_snapshot.len(), rp_snap_mb,
+            rp_decide_ms, rp_t3.elapsed().as_millis());
     // P1b-2 (rehomed console, 2026-07-11): the in-kernel L5 DELIVERY lane is
     // legacy. The harness (spine executors, gateway authority) is the ONE
     // recall authority; the console reaches it via :8800 and falls back to
@@ -3634,8 +3660,14 @@ Tag of the answer (or [NULL]):");
     // B3-JUDGE grounding: accumulate the synthesized answer for the post-hoc check.
     let mut answer_text = String::new();
     let decode_t0 = std::time::Instant::now(); // LM-B2b: turn decode timing (n_out / decode_s = tok/s)
+    // G-PERF: close the RECALL phase here — everything above (L5 search + B3 judge
+    // forwards + replay) is pre-decode work that used to hide inside `other`.
+    let t_recall_ms = t_recall0.elapsed().as_millis();
+    let recall_steps = kv::step_count().saturating_sub(steps_before_recall);
+    let mut t_gen_ms: u128 = 0;   // wall time at the last emitted token (excludes post-decode)
 
     'decode: for _ in 0..max_tokens {
+        t_gen_ms = decode_t0.elapsed().as_millis();
         if (!tokenizer.eos_ids.is_empty() && tokenizer.eos_ids.contains(&next_token))
             || turn_stop_ids.contains(&next_token)
         {
@@ -4385,13 +4417,22 @@ Tag of the answer (or [NULL]):");
     // that a 3-token answer spends its 52 s outside decode.
     {
         let n_out = committed_gen.len().max(1);
-        let dec_ms = decode_t0.elapsed().as_millis();
         let total_ms = t_turn.elapsed().as_millis();
+        // POST = capture / spectest / qkey mint / growth, i.e. everything AFTER the last
+        // emitted token. It used to be folded into "decode", inflating the decode ms and
+        // deflating the reported tok/s.
+        let post_ms = decode_t0.elapsed().as_millis().saturating_sub(t_gen_ms);
+        let other_ms = total_ms
+            .saturating_sub(t_prefill_ms)
+            .saturating_sub(t_recall_ms)
+            .saturating_sub(t_gen_ms)
+            .saturating_sub(post_ms);
         tracing::info!(
-            "TURN-PHASE: total {} ms = prefill {} ms + decode {} ms ({} tok, {:.1} tok/s) + other {} ms (byteexact={})",
-            total_ms, t_prefill_ms, dec_ms, n_out,
-            (n_out as f64) / (dec_ms.max(1) as f64 / 1000.0),
-            total_ms.saturating_sub(t_prefill_ms).saturating_sub(dec_ms), byteexact);
+            "TURN-PHASE: total {} ms = prefill {} + recall {} ({} fwd) + decode {} ({} tok, {:.1} tok/s) \
+             + post {} + other {} (byteexact={})",
+            total_ms, t_prefill_ms, t_recall_ms, recall_steps, t_gen_ms, n_out,
+            (n_out as f64) / (t_gen_ms.max(1) as f64 / 1000.0),
+            post_ms, other_ms, byteexact);
     }
     if persist_kv {
         let mut c = KV_COMMITTED.lock().unwrap();
