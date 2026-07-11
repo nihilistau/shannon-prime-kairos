@@ -1,0 +1,5 @@
+loaded
+CONTINUOUS latent z (1, 512, 43) L2/frame 1.63
+codes (1, 8, 43)
+ROUNDTRIP OK rec (1, 1, 82560)
+quantizer methods: T_destination,_apply,_backward_hooks,_backward_pre_hooks,_buffers,_call_impl,_compiled_call_impl,_ema_frozen,_forward_hooks,_forward_hooks_always_called,_forward_hooks_with_kwargs,_forward_pre_hooks,_forward_pre_hooks_with_kwargs,_get_backward_hooks,_get_backward_pre_hooks,_get_name,_is_full_backward_hook,_load_from_state_dict,_load_state_dict_post_hooks,_load_state_dict_pre_hooks,_maybe_warn_non_

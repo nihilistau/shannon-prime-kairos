@@ -33,6 +33,16 @@ fn frontend_dir() -> std::path::PathBuf {
 /// Unified router (Phase 2-L3.FG): the L1-backed inference + PoUW + mesh surface
 /// serves both host and android (the C ABI links on android now). The two
 /// `/v1/dsp/*` handlers each have host (501) and android (real) cfg variants, so
+/// G-VERBATIM K-diff forensics route (CUDA-only handler).
+#[cfg(feature = "wire_cuda_backend")]
+fn kdiff_route() -> Router<Arc<AppState>> {
+    Router::new().route("/v1/debug/kdiff", post(crate::routes::v1_debug_kdiff))
+}
+#[cfg(not(feature = "wire_cuda_backend"))]
+fn kdiff_route() -> Router<Arc<AppState>> {
+    Router::new()
+}
+
 /// the routes are wired unconditionally and resolve per target.
 pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
@@ -57,6 +67,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // the smoke harness validates startup registration as well as
         // first-prefill dispatch.
         .route("/v1/debug/backend_counts", get(v1_debug_backend_counts))
+        // G-VERBATIM forensics (2026-07-12): are two IDENTICAL tokens at different
+        // positions distinguishable in the STORED KEYS? If not, attention cannot
+        // tell the two "4"s of "4471" apart — the observed copy failure. CUDA only;
+        // on other backends the handler is absent and this route is not wired.
+        .merge(kdiff_route())
         // Console static files. ServeDir with a RELATIVE path resolves against the
         // process CWD, which depends on where the launcher ran (G-12B-SERVE aftermath:
         // engine-root launches 404'd the console). Resolve robustly: prefer the dir

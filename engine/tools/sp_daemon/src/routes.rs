@@ -4473,6 +4473,66 @@ pub async fn v1_capture(
     }
 }
 
+// ── /v1/debug/kdiff — G-VERBATIM forensics (2026-07-12) ───────────────────
+// THE QUESTION: the served model cannot disambiguate two positions holding the
+// SAME token ("4471" -> "4417"; "QXZP" -> perfect). If RoPE reaches the stored
+// keys, the K rows of two identical tokens at DIFFERENT positions must DIFFER.
+// If they are identical, position never entered the keys and attention cannot
+// tell the two "4"s apart — which is precisely the observed failure.
+//
+// POST {"text":"4 4"} -> prefills the raw tokens into the resident cache and
+// returns, per prefilled position, the token id + the cosine similarity of its
+// GLOBAL-owner K row against every other position's. Read-only forensics.
+#[cfg(feature = "wire_cuda_backend")]
+pub async fn v1_debug_kdiff(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    use sp_daemon::cuda_kvdecode_dispatch as kv;
+    use sp_daemon::recall;
+    let app = state.clone();
+    let text = req.get("text").and_then(|v| v.as_str()).unwrap_or("4 4 7 1").to_string();
+    let res = task::spawn_blocking(move || -> Result<serde_json::Value, String> {
+        let toks = app.tokenizer.encode(&text).map_err(|e| format!("encode: {e}"))?;
+        if toks.len() < 2 { return Err("need >= 2 tokens".into()); }
+        let cache = app.cuda_kvdecode_handle.as_ref().ok_or("no resident cache")?;
+        let guard = cache.lock().unwrap();
+        let handle = guard.0;
+        unsafe { kv::reset_cold(handle) }?;
+        unsafe { kv::prefill(handle, &toks) }?;
+        let npos = toks.len() as i32;
+        let n_global = recall::NL / recall::PERIOD;      // global owner layers
+        let mut kbuf = vec![0.0f32; n_global * recall::HD * npos as usize];
+        let ng = unsafe { kv::read_global_k(handle, &mut kbuf, npos) }? as usize;
+        // per position: the concatenated global-K vector across owner layers
+        let d = recall::HD;
+        let vec_at = |p: usize| -> Vec<f32> {
+            (0..ng).flat_map(|g| {
+                let base = g * d * (npos as usize) + p * d;
+                kbuf[base..base + d].to_vec()
+            }).collect()
+        };
+        let cos = |a: &[f32], b: &[f32]| -> f32 {
+            let (mut d0, mut na, mut nb) = (0.0f32, 0.0f32, 0.0f32);
+            for i in 0..a.len() { d0 += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+            if na <= 0.0 || nb <= 0.0 { 0.0 } else { d0 / (na.sqrt() * nb.sqrt()) }
+        };
+        let vecs: Vec<Vec<f32>> = (0..toks.len()).map(vec_at).collect();
+        let mut rows = Vec::new();
+        for i in 0..toks.len() {
+            let sims: Vec<f32> = (0..toks.len()).map(|j| (cos(&vecs[i], &vecs[j]) * 1000.0).round() / 1000.0).collect();
+            rows.push(serde_json::json!({"pos": i, "tok": toks[i], "cos_vs_all": sims}));
+        }
+        let _ = unsafe { kv::reset_cold(handle) };
+        Ok(serde_json::json!({"text": text, "n_global_layers": ng, "positions": rows}))
+    }).await;
+    match res {
+        Ok(Ok(v)) => (StatusCode::OK, Json(v)).into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("join: {e}")}))).into_response(),
+    }
+}
+
 // ── /v1/abort/{id} ────────────────────────────────────────────────────────
 
 pub async fn v1_abort(

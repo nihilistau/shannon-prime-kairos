@@ -41,6 +41,23 @@ def read_wav16(path: str) -> np.ndarray:
     return x
 
 
+def trim_silence(x: np.ndarray, pad: int = 1600) -> np.ndarray:
+    """Trim leading/trailing silence (real recordings have long dead air that
+    bloated Tmax 3.5x and is poor CTC data). Keep a small pad each side."""
+    win = 320
+    n = len(x) // win
+    if n < 2:
+        return x
+    e = np.sqrt((x[: n * win].reshape(n, win) ** 2).mean(axis=1) + 1e-9)
+    thr = max(e.mean() * 0.2, e.max() * 0.05)
+    voiced = np.where(e > thr)[0]
+    if len(voiced) == 0:
+        return x
+    a = max(0, voiced[0] * win - pad)
+    b = min(len(x), (voiced[-1] + 1) * win + pad)
+    return x[a:b]
+
+
 def augment(x: np.ndarray, rng: np.random.Generator, real: bool) -> np.ndarray:
     """P1.5 real-mic bridge: SAPI voices are clean/dry; real mic input has room
     reverb, coloration, background noise, and level variation. Simulate that in
@@ -131,7 +148,7 @@ def main() -> int:
             wp = os.path.join(real_dir, r["wav"])
             if not os.path.isfile(wp):
                 continue
-            base = read_wav16(wp)
+            base = trim_silence(read_wav16(wp))    # cut dead air (Tmax + data quality)
             for c in range(REAL_REPEAT):        # upweight real samples
                 x = augment(base, rng, real=(c > 0))   # 1 clean + light aug copies
                 mel = logmel(x)
@@ -155,10 +172,11 @@ def main() -> int:
     TL = np.array(tlens, np.int64)
     sent_ids = np.array(sent_ids)
 
-    # held-out eval: ~10% of SENTENCES (not utterances) so eval voices/sentences are unseen-ish
-    uniq = np.unique(sent_ids)
+    # held-out eval: ~10% of SAPI SENTENCES only (ids < 1e6). Real recordings
+    # (ids >= 1e6) are PRECIOUS and always TRAIN — never held out.
+    sapi_uniq = np.unique(sent_ids[sent_ids < 1_000_000])
     rng2 = np.random.default_rng(1)
-    ev_sent = set(rng2.choice(uniq, max(1, len(uniq) // 10), replace=False).tolist())
+    ev_sent = set(rng2.choice(sapi_uniq, max(1, len(sapi_uniq) // 10), replace=False).tolist())
     ev = np.array([s in ev_sent for s in sent_ids])
     tr = ~ev
 
@@ -167,7 +185,6 @@ def main() -> int:
 
     trX, trY, trFL, trTL = pack(tr)
     evX, evY, evFL, evTL = pack(ev)
-    # eval_expect = the sentence text (for readable logging)
     ev_texts = np.array([corpus[int(s)]["text"] for s in sent_ids[ev]], dtype=object)
 
     np.savez(os.path.join(OUT, "voice_frames.npz"),

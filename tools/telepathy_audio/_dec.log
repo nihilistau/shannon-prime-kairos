@@ -1,0 +1,3 @@
+refit train cos 0.761
+held-out 'Good morning, I hope you had a...' h(15, 3840) -> z_hat(15, 512)
+WROTE D:\F\shannon-prime-repos\shannon-prime-kairos\tools\telepathy_audio\voicehead_decode.wav (quantized) (28800,) sr=24000

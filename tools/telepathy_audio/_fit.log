@@ -1,0 +1,4 @@
+fit_voicehead: 1653 pairs  h3840 -> z512
+linear warm-start:
+  [train] relL2 0.5111  cos 0.8102
+  [held] relL2 0.9674  cos 0.3794

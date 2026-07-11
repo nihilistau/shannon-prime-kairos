@@ -89,3 +89,49 @@ a reference — that gap is exactly where this bug has been living.
 digit echo, tool-shaped composite. Run it after ANY engine/model/profile change.
 **Until it is GREEN, no number the system reports about itself, its tools, or
 its memories can be trusted.**
+
+# HUNT LOG — 2026-07-12 (continued)
+
+## New forensics tool: POST /v1/debug/kdiff  (shipped, CUDA-only)
+
+Prefills raw tokens into the resident cache and returns, per position, the token
+id + the cosine of its GLOBAL-owner K row against every other position. Read-only.
+This is how you ask the engine "can attention even TELL these two tokens apart?"
+
+    curl -s localhost:3000/v1/debug/kdiff -d '{"text":"4 4 7 1"}'
+
+## Result: the keys DO carry position (RoPE reaches the cache)
+
+    pos 1  tok 236812 ('4')   cos vs pos 3 ('4') = 0.618
+    pos 2  tok 236743 (' ')   cos vs pos 4 (' ') = 0.740, vs pos 6 = 0.592
+
+Two IDENTICAL tokens at different positions are NOT identical in the stored keys.
+So RoPE is applied and reaches the KV cache. (Note the cosine floor is high BY
+DESIGN: partial_rotary_factor 0.25 leaves 384 of 512 global dims un-rotated, so
+identical tokens share 75% of their key vector. Fine positional discrimination
+lives in the SWA layers, which carry full RoPE.)
+
+## Also eliminated this round
+
+- **Attention scaling** — HF self.scaling = 1.0; the engine folds ascale=1.0
+  (comment: "gemma4 scaling=1.0 (folded)"). Match. A too-flat softmax would have
+  produced exactly our symptom; it is not that.
+
+## The HF reference is still THE decisive experiment — and it is BLOCKED ON DISK
+
+	ransformers 5.5.4 is now importable (the install was broken by a
+huggingface_hub version mismatch — fixed). But:
+- the checkpoint is gemma4_unified, which 5.5.4 does not wrap. Its TEXT stack
+  (Gemma4ForCausalLM + Gemma4TextConfig) is exactly right, so
+  	ools/reference/make_text_ckpt.py re-shards model.language_model.* into a
+  loadable checkpoint (streams tensor-by-tensor; peak RAM ~3 GB).
+- **It needs ~23 GB free on a drive. D: has 22 GB.** Free space (or point OUT at
+  another drive) and run:
+
+      python tools/reference/make_text_ckpt.py
+      <Python311>\python.exe tools/reference/hf_reference.py
+
+  Loading 12B bf16 needs offload (32 GB RAM / 12 GB VRAM) — slow, but this is a
+  CORRECTNESS reference, not a benchmark. If HF copies "4471" and the engine says
+  "4417", the engine's gemma-4 forward is wrong and the bisect starts (the engine
+  already carries ttn_only bisect modes + BX_REC tensor dumps for this).

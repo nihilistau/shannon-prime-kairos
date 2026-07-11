@@ -1,0 +1,25 @@
+start
+torch 2.6.0+cu124 cuda=True
+hf_hub imported
+moshi imported
+weights C:\Users\Knack\.cache\huggingface\hub\models--kyutai--moshiko-pytorch-bf16\snapshots\2bfc9ae6e89079a5cc7ed2a68436010d91a3d289\tokenizer-e351c8d8-checkpoint125.safetensors
+mimi loaded fr=12.5 sr=24000
+ERR OSError(22, 'The specified procedure could not be found', None, 127, None)
+Traceback (most recent call last):
+  File "D:\F\shannon-prime-repos\shannon-prime-kairos\tools\telepathy_audio\_mimi2.py", line 12, in <module>
+    import numpy as np, wave, torchaudio
+  File "C:\Users\Knack\AppData\Local\Programs\Python\Python311\Lib\site-packages\torchaudio\__init__.py", line 7, in <module>
+    from . import _extension  # noqa  # usort: skip
+    ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Knack\AppData\Local\Programs\Python\Python311\Lib\site-packages\torchaudio\_extension\__init__.py", line 30, in <module>
+    _IS_TORCHAUDIO_EXT_AVAILABLE = _load_lib("_torchaudio")
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Knack\AppData\Local\Programs\Python\Python311\Lib\site-packages\torchaudio\_extension\utils.py", line 56, in _load_lib
+    torch.ops.load_library(paths[0])
+  File "C:\Users\Knack\AppData\Local\Programs\Python\Python311\Lib\site-packages\torch\_ops.py", line 1357, in load_library
+    ctypes.CDLL(path)
+  File "C:\Users\Knack\AppData\Local\Programs\Python\Python311\Lib\ctypes\__init__.py", line 376, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: [WinError 127] The specified procedure could not be found
+
