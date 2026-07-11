@@ -135,3 +135,48 @@ huggingface_hub version mismatch — fixed). But:
   CORRECTNESS reference, not a benchmark. If HF copies "4471" and the engine says
   "4417", the engine's gemma-4 forward is wrong and the bisect starts (the engine
   already carries ttn_only bisect modes + BX_REC tensor dumps for this).
+
+## HUNT LOG 2 — the operator's line of attack (the custom machinery), 2026-07-12
+
+The operator's instinct: stop auditing stock model math, audit OUR custom stack —
+the SWA ring, persist-KV splicing, the inject/capture seams, the recall/spectest
+heads. Correct instinct. Tested, one variable at a time, all daemon-direct at temp 0:
+
+| config | result |
+|---|---|
+| SWA ring OFF (ring_w=0, full cache, no journal) | **byte-identical failure** |
+| SWA ring 2048 + ALL heads/taps/growth/qkey/spectest OFF | **byte-identical failure** |
+| PERSIST-KV OFF (no LCP splicing; clean full prefill/turn) | **byte-identical failure** |
+
+Three very different KV configurations, the SAME wrong bytes out. The custom KV
+machinery (ring, journal, persist splicing) and every head/tap are ELIMINATED —
+the forward is deterministically wrong on its own.
+
+### The failure is at READ, not COPY
+
+Under the bare profile the model misreads a digit that is sitting in the PROMPT:
+    "What is 2+2?"  ->  "2+4=6."
+It is not merely failing to copy; it is not seeing the token correctly.
+
+### Embedding transcode: VERIFIED CORRECT (tools/reference/embd_parity.py)
+
+Dequantised sp-model rows vs the original bf16 weights, by cosine:
+    '0' 0.9984  '1' 0.9981  '4' 0.9981  '7' 0.9972  '9' 0.9982  ' ' 0.9986
+    id 100 0.9999   id 1000 1.0000   id 50000 0.9999   id 200000 1.0000
+No row mix-up, no int32 overflow on high ids (digits live at 236770-236832).
+
+### BUT — a live lead from that same measurement
+
+The dequantised rows have **norm 127** where the true weights have **norm 1.0** —
+exactly int8_max. On the INPUT side this is harmless (RMSNorm cancels a global
+scale). On the TIED HEAD it may not be: logits = embd @ h, then
+inal_logit_softcapping = 30 applies 30*tanh(x/30). If the head's scale
+convention is off by ~127, the tanh SATURATES and the logit differences flatten —
+the model would pick near-arbitrarily among plausible tokens while keeping
+semantics. That is exactly the observed behaviour.
+
+**NEXT (cheap, decisive):** read gemv_w_packed + the OK_Q8 "O_K-lifted int8 +
+per-row Frobenius scale" convention in cuda_forward.cu and confirm whether the
+kernel divides by int8_max. Then dump the top-5 logits for the position where the
+model should emit '7' in "4471": if '7' and '8' (and friends) are within a hair of
+each other, the softcap is saturating and this is the bug.
