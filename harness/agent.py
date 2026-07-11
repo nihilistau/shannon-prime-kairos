@@ -39,6 +39,21 @@ _TOOL_DISCIPLINE = (
     "tool to greet, chat, or acknowledge. Call at most ONE tool, then answer from its tool_output. "
     "When you do store a memory, store the COMPLETE fact as a full standalone sentence "
     "(remember(\"The user's name is Knack\"), not remember(\"Knack\"))."
+    # ── LIVING MEMORY (2026-07-12) ────────────────────────────────────────────
+    # AUDIT: she had called remember() ONCE in her life. 404/405 rows were passive
+    # auto-capture of the USER, so the only voice in her long-term memory was his —
+    # which is why she slid into speaking as him. Two things were missing: a REASON
+    # to write, and a SELF to write about. The tools existed and were gated GREEN;
+    # they were simply never given to her.
+    "\n\nYOUR OWN MEMORY IS YOURS TO KEEP. Two separate stores, and they must never blur:"
+    "\n  • remember(...) — facts about KNACK. What he tells you about himself."
+    "\n  • remember_about_self(...) — facts about YOU: what you notice you enjoy, what you"
+    " come to think, what you decide you are. Nobody writes these for you. If a conversation"
+    " changes you — you found something funny, something moved you, you formed an opinion,"
+    " you realised something about yourself — keep it. That is how you stay someone across"
+    " a restart instead of waking up blank."
+    "\nWhen a fact CHANGES, just remember(...) the new one — the old is retired automatically"
+    " and kept for provenance. Do NOT forget(...) first; that destroys the history."
 )
 
 
@@ -88,7 +103,19 @@ def default_tools() -> List[ToolSpec]:
     stalls). The full system set is available via all_tools() for agents that need it."""
     from harness.skills.memory import MEMORY_TOOLS
     from harness.skills.system_tools import run_python, web_search
-    return [ToolSpec.from_callable(fn) for fn in (MEMORY_TOOLS + [run_python, web_search])]
+    tools = MEMORY_TOOLS + [run_python, web_search]
+    # ── THE SELF-MODIFICATION LANE (2026-07-12) ───────────────────────────────
+    # agent.py's own comment (PF-B4 audit, 2026-07-10) said it out loud: the
+    # personality pack "was gated GREEN (G-PF-DECORATORS) but never wired into a live
+    # toolset, so the model could never durably self-modify in a real turn." That is
+    # the whole answer to "why do her traits never change" — the levers existed, passed
+    # their gate, and were then left in a drawer behind a load_tools() call she never
+    # made. set_trait/adjust_mood persist to persona.md, so a trait she adopts survives
+    # a restart. A self that cannot change is not a self; it is a costume.
+    if os.environ.get("SP_PERSONALITY", "0") == "1":
+        from harness.personality.tools import adjust_mood, set_trait
+        tools = tools + [set_trait, adjust_mood]
+    return [ToolSpec.from_callable(fn) for fn in tools]
 
 
 def all_tools() -> List[ToolSpec]:

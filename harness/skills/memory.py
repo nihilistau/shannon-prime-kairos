@@ -140,14 +140,21 @@ def remember(fact: str, source: str = "") -> str:
     }
     lc.stamp(line, fact, speaker, source, supersedes=[r.get("name", "") for r in retired])
 
+    # INTEROP (load-bearing): the DAEMON already excludes superseded episodes from the
+    # live recall set — but it keys on the integer `lifecycle` field (recall.rs:587,
+    # routes.rs:2342: `if ep.lifecycle != 0 { continue }`), NOT on `superseded_by`.
+    # A tombstone that only carries `superseded_by` is invisible to the engine and the
+    # retired fact keeps getting recalled. Stamp BOTH: `lifecycle` for the engine,
+    # `superseded_by`/`superseded_at` for the audit trail.
+    line["lifecycle"] = 0
     if retired:
-        # rewrite the retired rows with a forward pointer (the tombstone)
         rows = _load()
         names = {r.get("name") for r in retired}
         with open(p, "w", encoding="utf-8") as f:
             for r in rows:
                 if r.get("name") in names:
-                    r["superseded_by"] = line["name"]
+                    r["lifecycle"] = 1                     # the engine reads THIS
+                    r["superseded_by"] = line["name"]      # the audit trail reads these
                     r["superseded_at"] = line["ts"]
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
@@ -395,7 +402,11 @@ def compact_registry() -> str:
 
 
 # HOT chat set stays curated (the banked ≤6-tools rule: a 12B stalls exploring a big set).
-MEMORY_TOOLS = [list_memories, count_memories, remember, forget]
+# remember_about_self is READY-NOW, not an extra. It is the SELF lane — the one she
+# never had. Leaving it behind a load_tools() call is exactly how she ended up with 404
+# memories of the user and none of herself. count_memories drops to the index tier to
+# keep the ready-now set small (list_memories subsumes it).
+MEMORY_TOOLS = [remember, remember_about_self, list_memories, forget]
 # Extra tier: discoverable via the OKFS load_tools index (full signature on demand).
 MEMORY_TOOLS_EXTRA = [provenance, search_memories, memory_stats]
 # Hygiene tools are curation-tier (not in the hot chat set); used by the agency round + operator.
