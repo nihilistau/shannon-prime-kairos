@@ -121,21 +121,68 @@ def remember(fact: str, source: str = "") -> str:
         minted = bool(j.get("ok", False)) or npos > 0
     except Exception:
         minted = False
+    # ── MEM-OKF v2 LIFECYCLE (2026-07-12) ───────────────────────────────────────
+    # SUPERSEDE-ON-CONFLICT. A fact that fills the same slot with a DIFFERENT value
+    # retires the old one — tombstoned, never deleted, so "what did I used to think?"
+    # stays answerable. Without this the registry was an append-only tape: it could
+    # accumulate "My cat's name is Tuffy" AND "My cat's name is Milo" and recall would
+    # cheerfully surface whichever matched first.
+    from harness.skills import lifecycle as lc
+    speaker = lc.infer_speaker(fact, _AUTHOR)
+    retired = lc.find_superseded(fact, speaker, existing)
+
     line = {
         "name": os.path.basename(out_dir),
         "dir": out_dir,
         "npos": npos,
         "topic": fact[:40],
-        "text": fact,
         "sig_bits": "0" * 64,
-        # MEM-OKF v2 §M1 provenance lane: stamp WHERE + WHEN this fact entered memory.
-        # Additive fields — older readers ignore them; recall recites them on demand.
-        "src": source or "user",
-        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    lc.stamp(line, fact, speaker, source, supersedes=[r.get("name", "") for r in retired])
+
+    if retired:
+        # rewrite the retired rows with a forward pointer (the tombstone)
+        rows = _load()
+        names = {r.get("name") for r in retired}
+        with open(p, "w", encoding="utf-8") as f:
+            for r in rows:
+                if r.get("name") in names:
+                    r["superseded_by"] = line["name"]
+                    r["superseded_at"] = line["ts"]
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
     with open(p, "a", encoding="utf-8") as f:
-        f.write(json.dumps(line) + "\n")
-    return f"stored: {fact}" + ("" if minted else " (note: episode not minted; recall-on-restart only)")
+        f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+    note = ""
+    if retired:
+        old = lc.strip_prefix(_text(retired[0]))
+        note = f" (superseded: '{old}')"
+    return (f"stored: {fact}{note}"
+            + ("" if minted else " (note: episode not minted; recall-on-restart only)"))
+
+
+# WHO IS SPEAKING THIS TURN. The gateway sets this before dispatching tools. It is the
+# load-bearing bit for identity: the SAME sentence ("I am male") is a fact about the
+# USER when the user says it and a fact about SHANNON when she says it. Inferring the
+# owner from the words at READ time is exactly how she started speaking as the user.
+_AUTHOR = "user"
+
+
+def set_author(who: str) -> None:
+    global _AUTHOR
+    _AUTHOR = "self" if who == "self" else "user"
+
+
+def remember_about_self(fact: str) -> str:
+    """Store a fact about YOURSELF (Shannon) — your own traits, your history, what you
+    think or have come to believe. Use this for things true of YOU, not of the user.
+    e.g. remember_about_self("I find astronomy genuinely moving") — NOT the user's facts."""
+    set_author("self")
+    try:
+        return remember(fact, source="self")
+    finally:
+        set_author("user")
 
 
 def provenance(fact: str) -> str:

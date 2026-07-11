@@ -24,6 +24,8 @@ Reports tok/s at each context bucket and enforces a floor so a silent regression
 from __future__ import annotations
 
 import json
+import os
+import re
 import statistics
 import sys
 import time
@@ -72,32 +74,65 @@ def _run(prompt: str, max_tokens: int) -> tuple[int, float]:
     return len(text), el
 
 
+DAEMON_LOG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "var", "daemon.log")
+_TP = re.compile(r"decode (\d+) \((\d+) tok, ([\d.]+) tok/s\)")
+
+
+def _decode_rate_from_log(before: int) -> float | None:
+    """THE AUTHORITATIVE RATE. Wall clock is prefill-dominated and therefore lies —
+    at 1700 ctx the prefill is ~100 s and the decode is ~15 s, so a wall-clock 'tok/s'
+    measures the prefill, not the decode. The daemon's own TURN-PHASE line separates
+    them; read that. (The first version of this gate reported wall clock and produced
+    exactly the kind of unpinned number this gate exists to abolish.)"""
+    try:
+        with open(DAEMON_LOG, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()[before:]
+    except OSError:
+        return None
+    hits = [_TP.search(ln) for ln in lines if "TURN-PHASE: total" in ln]
+    hits = [h for h in hits if h]
+    return float(hits[-1].group(3)) if hits else None
+
+
+def _log_len() -> int:
+    try:
+        with open(DAEMON_LOG, encoding="utf-8", errors="replace") as f:
+            return len(f.readlines())
+    except OSError:
+        return 0
+
+
 def main() -> int:
-    print("G-PERF-DECODE — pinned generation length, pinned context. temp 0, byteexact.\n")
+    print("G-PERF-DECODE — pinned generation length, pinned context. temp 0, byteexact.")
+    print("  rate = the daemon's OWN TURN-PHASE decode figure (prefill/recall excluded).\n")
     print(f"  {'bucket':<24}{'gen':>6}{'tok/s (median)':>18}{'floor':>8}")
     ok = True
     for label, ctx, floor in BUCKETS:
-        # ask for a long open-ended answer so the model actually emits GEN_TOKENS
         ask = ("Write a detailed description of a thunderstorm over the ocean. "
                "Keep writing; do not stop early.")
         prompt = (_pad(ctx) + " Now: " + ask) if ctx else ask
         rates = []
         for _ in range(REPEATS):
-            chars, el = _run(prompt, GEN_TOKENS)
-            toks = max(1, chars // 4)            # ~4 chars/token; the daemon's own
-            rates.append(toks / el)              # TURN-PHASE line is the authority
+            mark = _log_len()
+            _run(prompt, GEN_TOKENS)
+            r = _decode_rate_from_log(mark)
+            if r:
+                rates.append(r)
+        if not rates:
+            print(f"  {label:<24}{GEN_TOKENS:>6}{'no TURN-PHASE line':>18}")
+            ok = False
+            continue
         med = statistics.median(rates)
         good = med >= floor
         ok &= good
         flag = "" if good else "   <<< BELOW FLOOR"
         print(f"  {label:<24}{GEN_TOKENS:>6}{med:>18.1f}{floor:>8.1f}{flag}")
 
-    print("\n  NOTE: the daemon's own TURN-PHASE line is the authoritative rate "
-          "(it excludes prefill/recall).\n  This gate's wall-clock figure is a "
-          "conservative upper bound on cost. Cross-check var/daemon.log.")
     print(f"\nG-PERF-DECODE: {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
