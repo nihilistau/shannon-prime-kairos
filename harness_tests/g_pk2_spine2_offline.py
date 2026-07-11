@@ -76,8 +76,11 @@ def main() -> int:
     os.environ["SP_SPINE_TOOLSET"] = "1"
     import harness.server.app as app
 
-    def fake_stream(messages, config=None, on_tool=None, tools=None):
-        # prove the recall system-note reached the model's turn
+    def fake_stream(messages, config=None, on_tool=None, tools=None, **kwargs):
+        # prove the recall system-note reached the model's turn.
+        # **kwargs: the real agent_chat_stream gained mutate_messages (HINDSIGHT
+        # canonical-transcript fix, a93ae4a) — the stub must absorb new kwargs
+        # or the gateway call errors and the note check false-fails.
         has_note = any(m.get("role") == "system" and "teal" in m.get("content", "")
                        for m in messages)
         yield "noted:" + ("yes" if has_note else "no")
