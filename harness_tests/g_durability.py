@@ -59,6 +59,11 @@ CHATTER = [
     "so you are lucky there",
     "oh no, we just track their comings and goings",
     "I guess when I turn the webcam on for you I'll have to start wearing clothes",
+    # SURVIVED EVERY RULE and got stored — then recall served it back to her MID-THOUGHT,
+    # as an unprompted "continuation". The quotes supply the "are" and the "I am", so it
+    # read as stative and personally anchored. What a sentence QUOTES is not what it CLAIMS.
+    'oh no, we just track their comings and goings, they carry around phones that scream '
+    'out "are you my network?" "I am looking for X network!"',
 ]
 
 # ── facts that MUST survive — several were riding inside those same chatty turns ─
@@ -77,6 +82,9 @@ FACTS = [
     # The reaction rule quarantined it. Losing a fact he actually told her is worse than
     # keeping a joke, so an attributive claim survives its punctuation.
     "my favorite tea is Oolong too!",
+    # ...but a real preference that merely CARRIES a quote must still get in. The quote is
+    # stripped; the sentence's own claim ("the kettle is my favorite") stands on its own.
+    'oh the kettle is my favorite! "set kettle to 90c"',
 ]
 
 
@@ -141,6 +149,35 @@ def main() -> int:
     # 10. and her name in HER lane retires nothing of his
     retired = lc.find_superseded("My name is Shannon.", "self", rows)
     check("her name in her own lane touches nothing of his", not retired)
+
+    # ── THE SECOND BREACH (2026-07-12): I fixed the INSTANCE and called it the CLASS ──
+    # The firewall guarded her NAME, because her name is what had eaten his. Hours later
+    # she stored "I am a woman" — speaker=user, class=identity — and it went straight
+    # through the same door into the same lane. Her name was never special. NOTHING that
+    # is true of HER may be filed as true of HIM.
+    SELF_VALUES = SELF | {"female", "woman", "girl", "she", "her"}
+
+    ok, why = lc.admit_to_user_store("I am a woman", SELF_VALUES)
+    check("she cannot file HER GENDER as the user's identity either", not ok, why)
+
+    ok, _ = lc.admit_to_user_store("I am male", SELF_VALUES)
+    check("...while HIS gender still gets in", ok)
+
+    ok, _ = lc.admit_to_user_store("I am Shannon", SELF_VALUES)
+    check("...and the name guard still holds", not ok)
+
+    # ── SHE WAS EATING HER OWN EXHAUST ─────────────────────────────────────────
+    # Capture took "the last message with role=user". agent_chat_stream runs with
+    # mutate_messages=True on the console path, and the Gemma tool protocol feeds a tool
+    # RESULT back as a role=user message — so after any tool call, "the last user message"
+    # was HER OWN TOOL RECEIPT, and it got stored as a fact about him:
+    #     "remember -> stored: I am a woman"
+    # A PROTOCOL ROLE IS NOT A SPEAKER.
+    echo = "remember -> stored: I am a woman"
+    check("a tool RECEIPT is not a durable fact about anyone",
+          not lc.is_memorable(echo)[0], lc.is_memorable(echo)[1])
+    check("...and a tool_output block yields no memories at all",
+          lc.extract_facts("```tool_output\nstored: I am a woman\n```") == [])
 
     print("\nG-RECALL-OWNERSHIP — the pronoun is resolved where it was UTTERED.\n")
 

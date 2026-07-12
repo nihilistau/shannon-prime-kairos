@@ -57,6 +57,25 @@ def _chunk(delta: str, model: str, finish: str | None = None) -> str:
     return f"data: {json.dumps(obj)}\n\n"
 
 
+def _session_of(body: Dict[str, Any]) -> str:
+    """THE session key. One function, because there were four sites and two rules:
+
+        _agent_text / _kairos_after_turn :  session | session_id | default
+        _native_chat_sse                 :  session | chat_id    | default
+
+    ...and console.html sends `session_id`. So on the console path — the one a human
+    actually uses — kairos filed her unprompted message under "default" while the console
+    would have polled the outbox for its own uuid. She would have spoken, correctly, into a
+    session nobody was listening to, and every symptom would have said "she never spoke".
+
+    A key derived in more than one place is a key that disagrees with itself."""
+    for k in ("session", "session_id", "chat_id"):
+        v = body.get(k)
+        if v:
+            return str(v)
+    return "default"
+
+
 def _agent_text(body: Dict[str, Any]) -> str:
     """Run the request through the AGENT loop (Gemma tool calling) unless tools are disabled.
     This is the unification: the model CALLS its tools (memory/system/web) in the chat, instead
@@ -67,7 +86,7 @@ def _agent_text(body: Dict[str, Any]) -> str:
     # the scenario OFFER outright. Wired at BOTH entry points (here and _native_chat_sse) —
     # a hook wired into one of two paths has been the single most reliable bug in this
     # system, four times over in one day.
-    _arm_turn(msgs)
+    _human = _arm_turn(msgs)     # what he TYPED — taken before the tool loop touches msgs
     _offer = _roleplay_pre_turn(body, msgs)
     if _offer:
         return _offer
@@ -82,7 +101,7 @@ def _agent_text(body: Dict[str, Any]) -> str:
         _arm_self_repeat_ban(_cfg, msgs)
         text = get_client().chat(messages=msgs, config=_cfg).text
         text = _repeat_guard(body, msgs, text, _cfg)
-        _capture_after_turn(msgs)
+        _capture_after_turn(_human)
         _kairos_after_turn(body, text)
         return text
     from harness.agent import agent_chat
@@ -94,12 +113,34 @@ def _agent_text(body: Dict[str, Any]) -> str:
     )
     text = agent_chat(msgs, config=cfg)
     text = _repeat_guard(body, msgs, text, cfg)
-    _capture_after_turn(msgs)
+    _capture_after_turn(_human)
     _kairos_after_turn(body, text)
     return text
 
 
-def _arm_turn(msgs: list) -> None:
+def _human_turn(msgs: list) -> str:
+    """What the HUMAN actually typed this turn — and nothing else.
+
+    THE FEEDBACK LOOP (2026-07-12). Capture used to take "the last message with role=user".
+    But agent_chat_stream runs with mutate_messages=True on the console path (the canonical
+    transcript must match what the daemon saw, for persist-KV strict extension), and the
+    Gemma tool protocol feeds a tool RESULT back as a role=user message. So after any tool
+    call, "the last user message" is HER OWN TOOL OUTPUT. The store filled with things like
+
+        remember -> stored: I am a woman        <- her tool's receipt, filed as a fact about HIM
+
+    She was eating her own exhaust: a write produced an output, the output looked like the
+    user talking, and the output got written. Round and round.
+
+    A protocol role is not a speaker. `role=user` means "this slot in the template", not
+    "a human said this". The only text a human ever typed is the last user message AS IT
+    ARRIVED — before the model ran and before the tool loop appended anything — so we take
+    it at the top of the turn and hold it. Capture can then never see anything else."""
+    return next((m.get("content", "") for m in reversed(msgs or [])
+                 if m.get("role") == "user"), "")
+
+
+def _arm_turn(msgs: list) -> str:
     """Hand the memory lane HIS ACTUAL WORDS for this turn.
 
     recall() needs them to resolve ownership. Asked "what is YOUR name?" she calls
@@ -107,20 +148,30 @@ def _arm_turn(msgs: list) -> None:
     Asked "what is MY name?" she calls recall(query="What is my name?"): the identical
     string. Two opposite questions, one query, so her paraphrase cannot say who is being
     asked after. His sentence can, and always could — in it, "my" is Knack and "your" is
-    Shannon. Resolve the pronoun where it was uttered."""
+    Shannon. Resolve the pronoun where it was uttered.
+
+    Returns the human's turn so the caller can hand the SAME text to capture at the end —
+    taken here, at the top, before the tool loop can append anything that merely wears
+    role=user."""
+    human = _human_turn(msgs)
     try:
-        last_user = next((m.get("content", "") for m in reversed(msgs or [])
-                          if m.get("role") == "user"), "")
         from harness.skills import memory as M
-        M.set_question(last_user)
+        M.set_question(human)
         M.set_author("user")
     except Exception:
         pass
+    return human
 
 
-def _capture_after_turn(msgs: list) -> None:
+def _capture_after_turn(human_text: str) -> None:
     """THE CAPTURE LANE (2026-07-12). Pull the durable facts out of the user's turn — and
     only those.
+
+    Takes the human's text as an ARGUMENT, captured at the top of the turn by _arm_turn().
+    It used to re-derive it from the message list, and by the end of a turn that list has
+    tool outputs in it wearing role=user — so it captured her own tool receipts as facts
+    about him. A function that goes looking for its input can be handed the wrong one; a
+    function that is given it cannot.
 
     WHAT THIS REPLACES. The daemon (routes.rs, SP_B4_NIGHTSHIFT) stored `raw_user` — the
     WHOLE user turn, verbatim, as one episode — if it passed a word count and mentioned a
@@ -143,13 +194,14 @@ def _capture_after_turn(msgs: list) -> None:
     keep the durable ones, and put each through remember() — which dedupes, supersedes, and
     respects the identity firewall."""
     try:
-        last_user = next((m.get("content", "") for m in reversed(msgs or [])
-                          if m.get("role") == "user"), "")
-        if not last_user.strip():
+        if not (human_text or "").strip():
+            return
+        # BELT AND BRACES: even given the right text, never ingest a tool round.
+        if "```tool_output" in human_text or "```tool_code" in human_text:
             return
         from harness.skills import lifecycle as lc
         from harness.skills import memory as M
-        facts = lc.extract_facts(last_user)
+        facts = lc.extract_facts(human_text)
         if not facts:
             return
         M.set_author("user")
@@ -207,7 +259,7 @@ def _roleplay_pre_turn(body: Dict[str, Any], msgs: list) -> Optional[str]:
         if not tune.get("roleplay.enabled"):
             return None
 
-        session = str(body.get("session") or body.get("session_id") or "default")
+        session = _session_of(body)
         user = next((m.get("content", "") for m in reversed(msgs)
                      if m.get("role") == "user"), "")
         scene = rp.active(session)
@@ -279,7 +331,7 @@ def _kairos_after_turn(body: Dict[str, Any], reply: str) -> None:
         reply = (reply or "").strip()
         if not reply:
             return
-        session = str(body.get("session") or body.get("session_id") or "default")
+        session = _session_of(body)
 
         def _continue(nudge: str) -> str:
             from harness.agent import agent_chat_stream, _arm_self_repeat_ban
@@ -756,7 +808,10 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
     # ROLEPLAY (console path). Same hook as the OpenAI path — a scenario OFFER short-circuits
     # the model entirely; otherwise the scene's system prompt + this turn's DIRECTOR NOTE
     # are injected into the message list before the agent runs.
-    _arm_turn(msgs)          # the console path resolves pronouns from HIS words too
+    # THIS is the path that mutates msgs (mutate_messages=True keeps the canonical
+    # transcript the daemon saw), so this is where "the last user message" turns into a
+    # tool receipt by the end of the turn. Take his words NOW.
+    _human = _arm_turn(msgs)
     try:
         _rp_offer = _roleplay_pre_turn(body, msgs)
         if _rp_offer:
@@ -774,7 +829,7 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
     # conversation instead of two monologues interleaving.
     try:
         from harness.kairos import scheduler as _ks0
-        _ks0.on_user_turn(str(body.get("session") or body.get("chat_id") or "default"))
+        _ks0.on_user_turn(_session_of(body))
     except Exception:
         pass
 
@@ -818,7 +873,7 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
     # CAPTURE: the console path writes memories too. Wiring a hook into one of the two
     # entry points and calling it done is the single most repeated bug in this system —
     # kairos, the repeat-guard and roleplay each shipped half-wired first. Not this one.
-    _capture_after_turn(msgs)
+    _capture_after_turn(_human)
     # ── KAIROS: the turn is over. Does she have more to say? ───────────────────────
     # Almost always: no. The policy (harness/kairos/impulse.py) is SILENT by default and
     # every bound is checked before the impulse is even consulted — she cannot chain, she
@@ -831,19 +886,30 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
     try:
         from harness.kairos import scheduler as _ks
         _final = "".join(reply_parts).strip()
-        _session = str(body.get("session") or body.get("chat_id") or "default")
+        _session = _session_of(body)
         if _final:
             def _continue(nudge: str) -> str:
                 """Run ONE more turn with the nudge appended. She is continuing herself,
                 so the nudge is a SYSTEM aside — not a new user message. (If it were a
                 user message the transcript would grow a turn the operator never typed,
                 and the next prefill would diverge from the persist cache.)"""
-                from harness.agent import agent_chat_stream
+                from harness.agent import agent_chat_stream, _arm_self_repeat_ban
                 from harness.inference import InferenceConfig
                 hist = list(body.get("messages", []))
                 hist.append({"role": "assistant", "content": _final})
                 hist.append({"role": "system", "content": nudge})
-                ccfg = InferenceConfig(max_tokens=120, temperature=cfg.temperature)
+                # A CONTINUATION MUST NOT DO RECALL. This config left auto_recall at its
+                # default, so the daemon injected memories into her continuation — and her
+                # first live one on this path came out as
+                #     "From the record: oh no, we just track their comings and goings..."
+                # She was finishing a sentence about a thunderstorm. Recall answers a
+                # QUESTION; there is no question here, only her own severed clause, so a
+                # memory arriving now can only derail it. (The OpenAI path already set
+                # this. Two paths, one setting, and the one a human uses was the one that
+                # missed it — the same shape as every other bug this week.)
+                ccfg = InferenceConfig(max_tokens=120, temperature=cfg.temperature,
+                                       auto_recall=False)
+                _arm_self_repeat_ban(ccfg, hist)
                 return "".join(agent_chat_stream(hist, config=ccfg, tools=[]))
 
             _ks.on_reply(_session, _final, get_client().last_kairos, _continue)

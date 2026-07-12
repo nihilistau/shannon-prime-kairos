@@ -192,6 +192,18 @@ def worth_saying(continuation: str, previous_reply: str) -> tuple[bool, str]:
         if low.startswith(opener):
             return False, f"dropped: it was a {opener!r}-style filler, not a thought"
 
+    # A RECITED MEMORY IS NOT A CONTINUATION. Her first live continuation on the console
+    # path came back as "From the record: oh no, we just track their comings and goings..."
+    # — she was mid-sentence about a thunderstorm. The cause was upstream (the continuation
+    # config left auto_recall on, so the daemon injected memories into a turn that had no
+    # question to answer), and that is fixed. But this is the LAST gate before the operator
+    # sees anything, and an unprompted message that arrives as a recitation is exactly the
+    # kind of thing that makes a person switch the feature off. Two locks on this door.
+    for framing in ("from the record", "fact on record", "you said:", "you told me:",
+                    "according to my memory", "in my memory"):
+        if low.startswith(framing):
+            return False, "dropped: that is a recited memory, not a continuation of her thought"
+
     # near-restatement of the reply she just gave
     def toks(s: str) -> set:
         return {w for w in re.findall(r"[a-z0-9']+", s.lower()) if len(w) > 3}

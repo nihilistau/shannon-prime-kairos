@@ -270,6 +270,22 @@ _ATTRIBUTIVE = re.compile(
 
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+|\s*\n+\s*")
 
+# What a sentence QUOTES is not what it CLAIMS.
+_QUOTED = re.compile(r"[\"“”'‘’]{1}[^\"“”'‘’]{4,}[\"“”'‘’]{1}")
+
+# MACHINE TEXT IS NOT TESTIMONY. She stored her own tool receipt as a fact about him —
+#     "remember -> stored: I am a woman"
+# — because it CONTAINS a durable-looking sentence, and every content rule I had was
+# looking at the sentence. The tell is not in the claim, it is in the FRAME: a tool fence,
+# a `verb -> result` receipt, a store's own reply. No human types these. The store must
+# never ingest its own output, or it launders whatever it just said back in as evidence.
+_MACHINE = re.compile(
+    r"```|"                                     # any fenced block (tool_code / tool_output)
+    r"^\s*\w+\s*->\s*|"                         # "remember -> stored: ..."  (a receipt)
+    r"^\s*\(?(?:stored|not stored|already in memory|retired|no stored facts|"
+    r"memory is empty|nothing in memory|tool_output|tool_code)\b",
+    re.I)
+
 
 def split_sentences(turn: str) -> list[str]:
     """A turn is not a fact — it is a bag of sentences, some durable, most not."""
@@ -286,6 +302,13 @@ def is_memorable(fact: str) -> tuple[bool, str]:
     if not t:
         return False, "empty"
 
+    # MACHINE TEXT FIRST. A tool receipt can contain a perfectly good sentence — that is
+    # exactly how "remember -> stored: I am a woman" got in. Judge the FRAME before the
+    # content, or the content will always talk you round.
+    if _MACHINE.search(t):
+        return False, ("that is the system's own output (a tool result), not something "
+                       "anyone told you. Never store what a tool said back to you.")
+
     # meta/instruction first — these are about the SYSTEM, not about a person
     if _INSTRUCTION.match(t) or _META.search(t):
         return False, ("that is an instruction or a note about how the system works, not a "
@@ -295,6 +318,21 @@ def is_memorable(fact: str) -> tuple[bool, str]:
     core = _DISCOURSE_LEAD.sub("", t).strip()   # strip the hat, keep the fact
     if not core:
         return False, "that is conversational filler, not a fact."
+
+    # QUOTED SPEECH IS NOT THE SENTENCE'S OWN CLAIM. This one survived every other rule:
+    #
+    #   'we just track their comings and goings, they carry around phones that scream out
+    #    "are you my network?" "I am looking for X network!"'
+    #
+    # It asserts nothing standing about anybody — but the quotes contain "are" and "I am",
+    # so it read as stative and personally-anchored, got stored, and recall later served it
+    # back to her mid-thought. What a sentence QUOTES is not what it CLAIMS. Judge the
+    # claim: strip the quoted spans first, and see if anything is left standing.
+    # ("oh the kettle is my favorite! 'set kettle to 90c'" survives — its own clause is a
+    #  preference; only the borrowed voice goes.)
+    claim = _QUOTED.sub(" ", core).strip()
+    if not claim or len(claim.split()) < 3:
+        return False, "that is a quotation, not a fact about anyone."
 
     if core.endswith("?"):
         return False, "that is a question, not a fact."
@@ -319,13 +357,14 @@ def is_memorable(fact: str) -> tuple[bool, str]:
     if _REACTION.search(core) and len(words) < 7 and not _ATTRIBUTIVE.search(core):
         return False, "that is a reaction, not a record."
 
-    if not _STATIVE.search(core):
+    # from here on, judge the CLAIM (quotes removed), not the borrowed voice inside it
+    if not _STATIVE.search(claim):
         return False, ("that asserts nothing standing — a durable fact says what something "
                        "IS, HAS, or LIKES, not what just happened in the chat.")
 
     # ANCHORED, not merely mentioning. See _ANCHOR: being named in a sentence is not being
     # what the sentence is about.
-    if not _ANCHOR.search(core):
+    if not _ANCHOR.search(claim):
         return False, ("that is a sentence, not a memory — it is not ABOUT anyone. "
                        "Store facts about Knack, or about yourself.")
 
@@ -365,27 +404,43 @@ def extract_facts(turn: str) -> list[str]:
 # the line: HER OWN NAME MAY NOT BE FILED AS HIS. It is refused at the door, with the
 # right door named in the refusal.
 _IDENT_ASSERT = re.compile(
-    r"\b(?:my name is|i am called|i'm called|im called|i am|i'm|im)\s+([a-z][\w'-]*)", re.I)
+    r"\b(?:my name is|i am called|i'm called|im called|i am|i'm|im)\s+"
+    r"(?:an?\s+)?([a-z][\w'-]*)", re.I)
 
 
 def asserted_identity(fact: str) -> str:
-    """The NAME this sentence claims for its first-person subject, if any."""
+    """The identity VALUE this sentence claims for its first-person subject — a name, or a
+    gender. "My name is Shannon" -> shannon. "I am a woman" -> woman."""
     m = _IDENT_ASSERT.search(fact or "")
     return (m.group(1) or "").strip().lower() if m else ""
 
 
-def about_self(fact: str, self_names: Iterable[str]) -> bool:
-    """Is this first-person sentence asserting HER identity? ("My name is Shannon.")"""
+def about_self(fact: str, self_values: Iterable[str]) -> bool:
+    """Is this first-person sentence asserting HER identity?"""
     v = asserted_identity(fact)
-    return bool(v) and v in {n.strip().lower() for n in self_names if n and n.strip()}
+    return bool(v) and v in {n.strip().lower() for n in self_values if n and n.strip()}
 
 
-def admit_to_user_store(fact: str, self_names: Iterable[str]) -> tuple[bool, str]:
-    """The door to KNACK's store. Her identity does not come through it."""
-    if about_self(fact, self_names):
-        return False, ("that is YOUR name, not his — it belongs in your own memory. "
+def admit_to_user_store(fact: str, self_values: Iterable[str]) -> tuple[bool, str]:
+    """The door to KNACK's store. HER identity does not come through it.
+
+    THE FIREWALL WAS TOO NARROW, AND THE SECOND BREACH PROVED IT (2026-07-12). The first
+    version guarded her NAME, because her name was what had eaten his. Then she stored
+
+        "I am a woman"   speaker=user  class=identity
+
+    ...and supersede did its job: it retired "I am male". The store then asserted that
+    KNACK IS A WOMAN. Same mechanism, same lane, one attribute to the left — and the guard
+    did not cover it, because I had fixed the INSTANCE and called it the class.
+
+    Her name is not special. NOTHING that is true of HER may be filed as true of HIM. The
+    guard now takes every value that constitutes her identity (name, gender, pronouns —
+    read live from the persona), not the one that happened to break first."""
+    v = asserted_identity(fact)
+    if v and v in {n.strip().lower() for n in self_values if n and n.strip()}:
+        return False, (f"'{v}' is true of YOU, not of him — it belongs in your own memory. "
                        "Call remember_about_self(...) for facts about yourself. "
-                       "(Refused: writing this to Knack's store would rename him.)")
+                       "(Refused: writing this to Knack's store would overwrite who HE is.)")
     return True, ""
 
 

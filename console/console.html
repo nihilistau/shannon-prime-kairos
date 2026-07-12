@@ -143,6 +143,14 @@
   .msg.ai .who   { color: var(--gold); }
   .msg.err .who  { color: var(--err); }
   .msg .who .meta { color: var(--text-faint); font-weight: 400; font-size: 8.5px; letter-spacing: 2px; margin-left: auto; }
+  /* KAIROS: she spoke without being asked. It must LOOK different from an answer — an
+     unprompted message that arrives dressed as a reply is just confusing. The left rule
+     marks it as hers; the tag says what kind, and its tooltip carries the reason and the
+     raw eot_margin, so an unexpected message can always be audited rather than guessed at. */
+  .msg.unprompted { border-left: 2px solid var(--gold); padding-left: 12px; margin-left: -14px; }
+  .msg .kairos-tag { font-size: 8.5px; letter-spacing: 1.5px; font-weight: 600; text-transform: none;
+                     color: #0d1117; background: var(--gold); border-radius: 3px; padding: 1px 6px;
+                     cursor: help; }
   .msg .msg-content { color: var(--text); text-wrap: pretty; word-break: break-word; white-space: pre-wrap; }
   .msg.err .msg-content { color: var(--err); }
   .msg .tok { display: inline; animation: tokFade 0.3s ease-out forwards; opacity: 0; }
@@ -759,6 +767,39 @@
     if (curChatId != null) { try { await fetch(`${DAEMON}/v1/abort/${curChatId}`, { method: 'POST' }); } catch (_) {} }
     if (abortCtrl) abortCtrl.abort();
   }
+
+  /* ===== 5b. KAIROS  (GET /v1/kairos/outbox -> what she decided to say unprompted) ====
+     THE LAST MILE, AND IT WAS MISSING. The impulse fires, the policy allows it, she
+     generates, worth_saying() approves, the scheduler puts the message in the outbox —
+     and NOTHING WAS LISTENING. Every part of the chain was built and gated except the one
+     that lets a human see it, so an armed kairos would have spoken into a void and every
+     symptom would have read "she never speaks".
+
+     Her unprompted turn is pushed into `history` like any other assistant turn. If it were
+     shown but not remembered, the next turn's context would have a hole exactly where she
+     had spoken — she would say something and then not know she had said it. */
+  async function pollKairos() {
+    if (abortCtrl) return;                       // never interleave with a live generation
+    if (CHAT_FALLBACK) return;                   // daemon-direct: no gateway, so no kairos
+    try {
+      const r = await fetch(`${GATEWAY}/v1/kairos/outbox?session=${encodeURIComponent(sessionId)}`);
+      if (!r.ok) return;
+      const { messages } = await r.json();
+      for (const m of (messages || [])) {
+        const { msg, body } = appendMessage('ai', m.text);
+        msg.classList.add('unprompted');
+        const who = msg.querySelector('.who');
+        // SHE SAYS WHY, AND THE OPERATOR CAN SEE IT. An unprompted message with no
+        // account of itself is indistinguishable from a bug.
+        if (who) who.innerHTML += ` <span class="kairos-tag" title="${(m.reason || '').replace(/"/g,'&quot;')}` +
+          `${m.margin != null ? ' · eot_margin ' + Number(m.margin).toFixed(2) : ''}">` +
+          `${m.kind === 'continue' ? 'picked the thread back up' : 'spoke up'}</span>`;
+        const ic = msg.querySelector('.gen-icon'); if (ic) ic.style.display = 'none';
+        history.push({ role: 'assistant', content: m.text });
+      }
+    } catch (_) { /* gateway down — the chat still works; she just cannot speak first */ }
+  }
+  setInterval(pollKairos, 4000);
 
   /* ===== 6. REWIND (client-side scrub of the last reply) ========= */
   function openRewind()  { rewindBar.classList.add('open'); rewindScrub.value = 100; applyRewind(100); }

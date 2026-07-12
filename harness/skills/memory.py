@@ -207,11 +207,23 @@ def set_author(who: str) -> None:
     _AUTHOR = "self" if who == "self" else "user"
 
 
+_GENDER_WORDS = {
+    "female": {"female", "woman", "girl", "she", "her"},
+    "male": {"male", "man", "boy", "he", "him"},
+}
+
+
 def _self_names() -> set:
-    """HER names — the ones that may never be filed as the user's identity. Read from the
-    live persona so a rename renames the firewall too; the literals are the floor, not the
-    source of truth."""
-    names = {"shannon", "shannon-prime"}
+    """EVERY VALUE THAT CONSTITUTES HER — not just her name.
+
+    The first firewall guarded the name, because the name is what had eaten his. Then she
+    filed "I am a woman" as HIS identity and supersede retired "I am male": the store came
+    out asserting that Knack is a woman. Same mechanism, one attribute to the left. I had
+    fixed the instance and called it the class.
+
+    So this returns her name AND her gender words, read live from the persona — a rename or
+    a re-gender moves the firewall with her. The literals are the floor, not the truth."""
+    vals = {"shannon", "shannon-prime"}
     try:
         from harness.personality.persona_file import parse_persona
         path = os.environ.get("SP_PERSONA_FILE") or os.path.join(
@@ -222,10 +234,13 @@ def _self_names() -> set:
         for k in ("name", "self_name"):
             v = (state or {}).get(k)
             if isinstance(v, str) and v.strip():
-                names.add(v.strip().lower())
+                vals.add(v.strip().lower())
+        g = (state or {}).get("gender")
+        if isinstance(g, str) and g.strip():
+            vals |= _GENDER_WORDS.get(g.strip().lower(), {g.strip().lower()})
     except Exception:
         pass
-    return names
+    return vals
 
 
 def remember_about_self(fact: str) -> str:
