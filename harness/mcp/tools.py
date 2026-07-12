@@ -204,6 +204,7 @@ def build_tool_system(
     core: List["ToolSpec"],
     extra: Optional[List["ToolSpec"]] = None,
     system_prefix: str = "",
+    system_suffix: str = "",
 ) -> tuple:
     """OKFS-tiered tool context. Returns (system_content, tool_index).
 
@@ -234,15 +235,24 @@ def build_tool_system(
     ]
     if lut:
         parts.append("\n# Also available (load_tools(\"name\") to use):\n" + lut)
+    # "answer using ONLY its exact values" is a rule about answering FROM A TOOL_OUTPUT —
+    # do not paraphrase the number, do not invent a row. Stated flatly, as the LAST thing in
+    # the system prompt, it reads as a rule about ANSWERING, and she carried it into ordinary
+    # conversation: asked how she was feeling, she said "Good." A literalness instruction
+    # with no scope on it becomes a personality. It is scoped now.
     parts.append(
         "\nTo call a tool, output a fenced block EXACTLY like this, then STOP and wait:\n"
         "```tool_code\n" + example + "\n```\n"
         "Pass arguments as Python literals (strings in quotes), and use the REAL parameter names. "
-        "The result returns as ```tool_output ... ```; answer using ONLY its exact values. "
+        "The result returns as ```tool_output ... ```. WHEN YOU ANSWER FROM A TOOL_OUTPUT, use "
+        "its exact values — never invent or substitute them. (That is a rule about quoting a "
+        "tool, not a rule about how you talk.) "
         "Most turns need NO tool — just talk; reach for one only when you truly need it."
     )
     preamble = "\n".join(parts)
     sys_content = (system_prefix.strip() + "\n\n" + preamble) if system_prefix.strip() else preamble
+    if system_suffix.strip():
+        sys_content = sys_content + "\n\n" + system_suffix.strip()
     return sys_content, tool_index
 
 
@@ -342,7 +352,19 @@ def run_with_tools(
     client = client or get_client()
     cfg = config or InferenceConfig()
     # OKFS-tiered tool context (core full + extra gist-index + load_tools); tool_index executes any.
-    sys_content, tool_index = build_tool_system(tools, extra_tools or [], system_prefix=system_prefix)
+    # THE VOICE CODA GOES HERE TOO. Both paths (this blocking loop and agent_chat_stream)
+    # must build the IDENTICAL system prompt — not only so she is the same person on each,
+    # but because a system prompt that differs between paths diverges the persist-KV cache
+    # at token 0 and re-prefills the whole conversation. That bug cost 111 seconds a turn
+    # last time; it is not going to be reintroduced by a personality fix.
+    try:
+        from harness.agent import voice_coda as _coda
+        _suffix = _coda()
+    except Exception:
+        _suffix = ""
+    sys_content, tool_index = build_tool_system(tools, extra_tools or [],
+                                                system_prefix=system_prefix,
+                                                system_suffix=_suffix)
     system = {"role": "system", "content": sys_content}
 
     convo = list(messages)

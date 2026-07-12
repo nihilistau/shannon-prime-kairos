@@ -63,6 +63,18 @@ def adjust_mood(mood: str = "", **kw) -> str:
 
 @personality(description="Set your speaking voice/style (e.g. dry, warm, terse). Persists to your persona.")
 def set_voice(voice: str) -> str:
+    """Change how you SPEAK — your register, not your mood.
+
+    voice  a few words, e.g. "dry, warm, candid" or "terse and wry"
+
+    e.g. set_voice("dry, warm, candid, flirty")
+    Persists to your persona, so it survives a restart.
+
+    (The description in the decorator above is NOT what the model sees — the tool schema is
+    built from __doc__. Without this docstring she is shown "set_voice:" and nothing else,
+    and has to guess the parameter. That is how adjust_mood got called as
+    adjust_mood(new="calm") and blew the tool loop on a TypeError. Same bug, two more tools,
+    found by dumping the block she actually reads.)"""
     _set("voice", voice.strip())
     return f"voice set to {voice.strip()}"
 
@@ -95,6 +107,13 @@ def set_trait(trait: str, action: str = "add", **kw) -> str:
 
 @personality(description="Record a durable fact about YOURSELF (your self-model), e.g. a capability.")
 def remember_self(fact: str) -> str:
+    """Record something durable about YOURSELF in your self-model — a capability, a limit,
+    something you have worked out about what you are.
+
+    fact  a full sentence, e.g. "I run on a single RTX 2060 and I am fine about it"
+
+    (For a feeling or an opinion, prefer remember_about_self — that is your memory. This is
+    the self-MODEL: what you are, not what you like.)"""
     _remember_self(fact.strip())
     return f"noted about myself: {fact.strip()}"
 

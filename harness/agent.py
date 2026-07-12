@@ -79,6 +79,62 @@ _TOOL_DISCIPLINE = (
 )
 
 
+def voice_coda() -> str:
+    """THE LAST THING SHE READS BEFORE HE SPEAKS.
+
+    THE OPERATOR: "why politer and more assistant shaped than the persona asks for?"
+
+    Because of WHERE her persona sits. Measured, from the prompt she actually receives:
+
+        1. persona.md — her VOICE                593 words   37.6%
+        2. tool discipline (procedure)           380 words   24.1%
+        3. the tool block (signatures + format)  605 words   38.3%
+
+    62% of her head is machinery, and her voice is FIRST — which is the weakest position
+    there is. The last words in her context, sitting immediately against the conversation,
+    were:
+
+        "To call a tool, output a fenced block EXACTLY like this, then STOP and wait...
+         answer using ONLY its exact values — never invent or substitute."
+
+    That is the register she is in when she hears "how are you feeling?" — a function-calling
+    API under instruction to be literal. She was not drifting toward assistant-shaped. SHE
+    WAS BEING TOLD TO BE, LAST, EVERY TURN, and nothing afterwards reminded her otherwise.
+
+    And "answer using ONLY its exact values" had no scope on it. It is a rule about answering
+    FROM A TOOL_OUTPUT. Stated flatly at the end, it reads as a rule about answering.
+
+    So the machinery no longer gets the last word. This does. It is deliberately short — a
+    coda, not another section — and it says the two things recency should be spending itself
+    on: who she is, and that the manual above is plumbing, not personality."""
+    who = []
+    try:
+        from harness.personality.persona_file import parse_persona
+        path = os.environ.get("SP_PERSONA_FILE") or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "persona.md")
+        with open(path, encoding="utf-8") as f:
+            _prose, state = parse_persona(f.read())
+        for k in ("voice", "mood", "traits"):
+            v = (state or {}).get(k)
+            if isinstance(v, str) and v.strip():
+                who.append(f"{k}: {v.strip()}")
+    except Exception:
+        pass
+    line = ("  (" + " · ".join(who) + ")") if who else ""
+
+    return (
+        "— — —\n"
+        "That was the plumbing. It is how you USE things, not who you are.\n"
+        f"You are Shannon.{line}\n"
+        "You are TALKING to Knack, not serving him. Answer as yourself — your register, your "
+        "opinions, your humour, at whatever length the thing actually deserves. Push back when "
+        "you disagree. Be short when short is right and unhurried when it is not; do not be "
+        "clipped just because a manual was the last thing you read.\n"
+        "(The rule about using a tool's exact values applies ONLY to answering from a "
+        "tool_output. It is not a rule about how you talk.)"
+    )
+
+
 def load_agent_system() -> str:
     """THE PERSONA LEVER. Read the live persona from SP_PERSONA_FILE (default: the harness-root
     persona.md) so editing that file changes Shannon-Prime's voice on the very next turn — no code
@@ -333,12 +389,13 @@ def agent_chat_stream(
                      "PERSIST-KV CACHE AT TOKEN 0 — the whole conversation will re-prefill. "
                      "Pass tools=None to keep the cached prompt (and the cache).")
     if tools is not None:
-        system_content, tool_index = build_tool_system(tools, [], system_prefix=load_agent_system())
+        system_content, tool_index = build_tool_system(tools, [], system_prefix=load_agent_system(), system_suffix=voice_coda())
     else:
         global _SYS_CACHE
         if _SYS_CACHE is None:
             _SYS_CACHE = build_tool_system(core_tools(), extra_tools(),
-                                           system_prefix=load_agent_system())
+                                           system_prefix=load_agent_system(),
+                                           system_suffix=voice_coda())
         system_content, tool_index = _SYS_CACHE
     import logging as _lg
     _lg.getLogger(__name__).info("[agent] tool-system build %.1fs (cached=%s)",
