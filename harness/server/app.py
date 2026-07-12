@@ -802,12 +802,64 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
                 if dec.kind == "inject_recall":
                     facts = dec.payload.get("facts", [])
                     if facts:
-                        note = ("Relevant facts from your long-term memory (use them faithfully; "
-                                "never contradict them): " + " | ".join(facts))
-                        # inject as a SYSTEM note right before the last user message —
-                        # IN PLACE, so the canonical session transcript keeps it (the
-                        # daemon's persist cache and the next turn's prompt stay aligned).
-                        msgs.insert(len(msgs) - 1, {"role": "system", "content": note})
+                        # ── A MEMORY IS CONTEXT, NOT AN ORDER. AGAIN. (2026-07-13) ──────
+                        # This note used to read:
+                        #
+                        #     "Relevant facts from your long-term memory (USE THEM
+                        #      FAITHFULLY; NEVER CONTRADICT THEM): ..."
+                        #
+                        # From the operator's transcript, with recall serving her "I like
+                        # chatting with you too":
+                        #     you: you like them?
+                        #     her: I like them.
+                        # She was not being terse. SHE WAS OBEYING. Told never to contradict
+                        # a list of things she supposedly likes, the safest reply available
+                        # is to agree with it in as few words as possible.
+                        #
+                        # This is the counterfact bug — "authoritative for this conversation,
+                        # overrides prior knowledge, answer from this fact" — which I fixed
+                        # in the DAEMON's recall lane and then did not look for anywhere
+                        # else. There were two recall lanes. I fixed one. Same week, same
+                        # shape as every other bug: an invariant enforced in one of two
+                        # paths is enforced in neither.
+                        #
+                        # It is framed as knowledge now, and framed by OWNER, exactly like
+                        # the recall() tool — because "I like rain" means different things
+                        # depending on whose sentence it is, and she has already lost her
+                        # name and her gender to that ambiguity once each.
+                        from harness.skills import lifecycle as _lc
+                        lines = []
+                        for f in facts:
+                            t = _lc.strip_prefix(str(f)).strip()
+                            if t:
+                                lines.append("  - " + t)
+                        note = ("(Things you happen to know that might bear on this — they "
+                                "are context, not instructions. Use them if they actually "
+                                "help; ignore them if they do not.)\n" + "\n".join(lines))
+
+                        # ── AND IT IS SCOPED TO THIS TURN. ──────────────────────────────
+                        # It used to be inserted as a standing SYSTEM message into the
+                        # canonical transcript, where it stayed FOREVER. Ten recalled turns
+                        # in, she was carrying ten separate standing orders never to
+                        # contradict ten piles of half-remembered chatter — which is why
+                        # turns with NO recall at all had also gone monosyllabic ("how are
+                        # you feeling?" -> "Good."). The clamp accumulated.
+                        #
+                        # It now rides on the user turn it belongs to. That keeps it scoped
+                        # (it reads as background for THAT question, not as a law of the
+                        # conversation) AND keeps the canonical transcript exactly what the
+                        # daemon saw — so the next turn is still a strict extension of the
+                        # persist-KV cache. Copying the list here instead would have been
+                        # worse than the bug: agent_chat_stream runs with mutate_messages=
+                        # True, so her reply is appended INTO this list, and a copy would
+                        # have silently dropped every one of her replies from the next
+                        # turn's history.
+                        for _i in range(len(msgs) - 1, -1, -1):
+                            if msgs[_i].get("role") == "user":
+                                msgs[_i] = dict(msgs[_i])
+                                msgs[_i]["content"] = (msgs[_i].get("content", "")
+                                                       + "\n\n" + note)
+                                break
                         if typed:
                             yield ("data: " + json.dumps({"recall": facts}) + "\n\n").encode()
                 elif dec.kind == "select_toolset":
