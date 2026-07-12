@@ -1043,6 +1043,63 @@ def _run_stdlib(host: str, port: int) -> None:
             # says "done!" and cannot tell you what it did is how a store rots quietly, and
             # this one already rotted once (487 rows, 375 of them ASR test corpus).
             # Nothing here deletes: cleanup QUARANTINES, compaction TOMBSTONES.
+            # THE BOARD — write side. Everything from the PANEL is authored by HIM; her own
+            # notes come in through her tools, which stamp `self`. Ownership is set by which
+            # door the write came through, never inferred from the text — the fact store
+            # spent a day learning that, and the board is not going to relearn it.
+            elif self.path.startswith("/v1/notes/"):
+                body = self._body()
+                code, res = 200, {}
+                try:
+                    from harness.skills import notes as _N
+                    from harness.skills.duetime import parse_due as _pd
+                    _N.set_author(_N.SPEAKER_USER)         # the panel is HIM
+                    p = self.path
+                    if p == "/v1/notes/add":
+                        due_raw = (body.get("due") or "").strip()
+                        iso, human = _pd(due_raw)
+                        if due_raw and not iso:
+                            code, res = 400, {"ok": False, "error": f"could not read '{due_raw}' as a time"}
+                        else:
+                            n = _N.add(title=body.get("title", ""), body=body.get("body", ""),
+                                       category=body.get("category", "note"),
+                                       due_at=iso, colour=body.get("colour", ""))
+                            res = {"ok": True, "note": n, "due_human": human}
+                    elif p == "/v1/notes/update":
+                        f = {k: v for k, v in body.items()
+                             if k in ("title", "body", "category", "colour", "done", "raised")}
+                        due_raw = (body.get("due") or "").strip()
+                        if due_raw:
+                            iso, _h = _pd(due_raw)
+                            if not iso:
+                                code, res = 400, {"ok": False, "error": f"could not read '{due_raw}'"}
+                                f = None
+                            else:
+                                f["due_at"] = iso
+                                f["raised"] = False
+                        elif body.get("due") == "":
+                            f["due_at"] = ""
+                        if f is not None and code == 200:
+                            n = _N.update(body.get("id", ""), **f)
+                            res = ({"ok": True, "note": n} if n
+                                   else {"ok": False, "error": "no such note"})
+                    elif p == "/v1/notes/remove":
+                        n = _N.remove(body.get("id", ""))
+                        res = ({"ok": True, "note": n} if n
+                               else {"ok": False, "error": "no such note"})
+                    else:
+                        code, res = 404, {"ok": False, "error": "unknown notes op"}
+                    if isinstance(res, dict) and res.get("ok"):
+                        res["stats"] = _N.stats()
+                except Exception as exc:
+                    code, res = 500, {"ok": False, "error": str(exc)}
+                payload = json.dumps(res).encode()
+                self.send_response(code); _cors(self)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
             elif self.path.startswith("/v1/maintenance/") or self.path.startswith("/v1/memory/") \
                     or self.path.startswith("/v1/persona/set"):
                 body = self._body()
@@ -1167,6 +1224,19 @@ def _run_stdlib(host: str, port: int) -> None:
                 # can only be reached by POST is a trap; this is the fix.
                 "/v1/maintenance/stats": lambda: __import__(
                     "harness.maintenance.ops", fromlist=["x"]).stats(),
+                # THE BOARD — notes/ideas/reminders, shared with her. Read side.
+                "/v1/notes": lambda: {
+                    "notes": __import__("harness.skills.notes", fromlist=["x"]).live(),
+                    "stats": __import__("harness.skills.notes", fromlist=["x"]).stats(),
+                    "categories": list(__import__(
+                        "harness.skills.notes", fromlist=["x"]).CATEGORIES),
+                    "colours": __import__(
+                        "harness.skills.notes", fromlist=["x"]).CATEGORY_COLOUR,
+                },
+                "/v1/notes/due": lambda: {
+                    "due": __import__("harness.skills.notes",
+                                      fromlist=["x"]).due(include_raised=True),
+                },
             }
             # query-string routes (session-scoped)
             _base = self.path.split("?", 1)[0]

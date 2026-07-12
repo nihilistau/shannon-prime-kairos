@@ -53,6 +53,20 @@ _TOOL_DISCIPLINE = (
     "answer from what it returns. Never guess at a fact you could have looked up. recall "
     "tells you WHOSE fact it is: \"Knack told me: ...\" is about HIM, \"About myself: ...\" "
     "is about YOU. \"What is my name?\" is asking about HIM."
+    # THE BOARD. Distinct from memory on purpose: memory is what is TRUE about someone; the
+    # board is what either of you wants KEPT IN VIEW. "Knack's cat is called Tuffy" is a
+    # fact. "Buy a 3090 if stock returns" is a note. Blurring them is how the fact store
+    # filled with shopping lists.
+    "\n\nTHE BOARD is a shared list of notes, ideas and reminders that Knack can see on his "
+    "screen. It is not memory — memory is what is TRUE about someone; the board is what "
+    "either of you wants kept in view."
+    "\n  • \"note that...\" / \"add an idea\" / \"put X on the list\"  -> add_note(...)"
+    "\n  • \"remind me to X on Friday\"  -> add_note(\"X\", due=\"friday\") — say the time back "
+    "to him so a misheard time is caught now, not on Friday."
+    "\n  • \"what's on the board?\" / \"did I write down...?\"  -> find_notes(...)"
+    "\n  • \"anything I need to be reminded about?\"  -> due_reminders()"
+    "\nYou may put things on the board YOURSELF — an idea you had, something you want to "
+    "come back to. It is your board too."
     "\n\nYOUR OWN MEMORY IS YOURS TO KEEP. Two separate stores, and they must never blur:"
     "\n  • remember(...) — facts about KNACK. What he tells you about himself."
     "\n  • remember_about_self(...) — facts about YOU: what you notice you enjoy, what you"
@@ -123,6 +137,19 @@ def default_tools() -> List[ToolSpec]:
     if os.environ.get("SP_PERSONALITY", "0") == "1":
         from harness.personality.tools import adjust_mood, set_trait
         tools = tools + [set_trait, adjust_mood]
+    # ── THE BOARD (2026-07-12) ────────────────────────────────────────────────
+    # Notes/ideas/reminders, shared with the operator. FIVE verbs, not the eight the
+    # feature naturally wants, because of the warning three lines above this one: a 12B
+    # picks reliably from ~6 tools and 14 overwhelms it. add_note absorbs "remind me"
+    # (a note with a due date IS a reminder) and find_notes with no query absorbs "list
+    # them all". This takes the live set to 13, which is past where that comment says
+    # comfortable — so G-NOTES-TOOLS MEASURES the selection rather than assuming it: it
+    # asks her to add a note, recall a fact, set a reminder and answer a plain question,
+    # and checks she reaches for the right one each time. If the set is too big, the gate
+    # is where we find out, not the operator.
+    if os.environ.get("SP_NOTES", "1") != "0":
+        from harness.skills.note_tools import NOTE_TOOLS
+        tools = tools + NOTE_TOOLS
     return [ToolSpec.from_callable(fn) for fn in tools]
 
 
@@ -364,6 +391,20 @@ def agent_chat_stream(
                 yield buf[flushed:]   # (flushed=0 when nothing streamed = whole buf)
             return
         convo.append({"role": "assistant", "content": buf})
+        # ONE CALL PER ROUND. See the note in mcp/tools.py: on the first live notes turn she
+        # emitted THREE calls in one fence — add_note, edit_note, remove_note — and narrated
+        # it as she went ("I'll remove the temporary note after editing it"). She created the
+        # note, tidied it, and deleted it, all without ever seeing a tool_output, then told
+        # him it was done. The board was empty.
+        #
+        # An action taken before observing the result of the previous one is a guess. The
+        # loop exists to act, observe, decide; three calls in a fence skips the observing.
+        # She may still call another tool — next round, knowing what the first one did.
+        if len(calls) > 1:
+            _logging.getLogger(__name__).info(
+                "[agent] %d calls in one fence — taking the FIRST (%s); she sees its result "
+                "before deciding the next", len(calls), calls[0][0])
+            calls = calls[:1]
         outputs = []
         from harness.mcp.tools import resolve_tool
         for name, args, kwargs in calls:

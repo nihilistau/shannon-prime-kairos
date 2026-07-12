@@ -26,7 +26,7 @@ from collections import defaultdict, deque
 from typing import Any, Callable, Optional
 
 from harness.kairos.impulse import (
-    CHECK_IN, CONTINUE, CHECK_IN_NUDGE, continue_nudge,
+    CHECK_IN, CONTINUE, REMIND, CHECK_IN_NUDGE, continue_nudge, remind_nudge,
     Impulse, KairosConfig, TurnState, decide, note_spoke, note_user, worth_saying,
 )
 from harness.tuning import registry as tune
@@ -92,9 +92,11 @@ def on_reply(
         margin = kairos_payload.get("eot_margin")
 
     now = time.monotonic()
+    due = _due_notes()
     with _LOCK:
         st = _STATE[session]
-        imp = decide(cfg=cfg, state=st, now=now, reply_text=reply_text, eot_margin=margin)
+        imp = decide(cfg=cfg, state=st, now=now, reply_text=reply_text,
+                     eot_margin=margin, due_notes=due)
 
     logger.info("[kairos] session=%s margin=%s -> %s (%s)",
                 session, f"{margin:.2f}" if isinstance(margin, float) else margin,
@@ -102,25 +104,52 @@ def on_reply(
     if not imp.speaks:
         return imp
 
-    _arm(session, imp, reply_text, generate, margin)
+    _arm(session, imp, reply_text, generate, margin, notes=due if imp.action == REMIND else None)
     return imp
 
 
-def _arm(session, imp, reply_text, generate, margin) -> None:
+def _due_notes() -> list:
+    """Reminders that have come due and have not been raised yet. Kept out of impulse.py so
+    the policy stays pure and gateable without a store."""
+    try:
+        from harness.skills import notes as N
+        return N.due()
+    except Exception:
+        return []
+
+
+def _arm(session, imp, reply_text, generate, margin, notes=None) -> None:
     """Wait the delay, generate, and let worth_saying() have the last word."""
     def _fire():
         # the CONTINUE nudge is built from the reply so she can see WHERE she was cut —
         # without the tail she just restates the whole thing and worth_saying() drops it.
-        nudge = continue_nudge(reply_text) if imp.action == CONTINUE else CHECK_IN_NUDGE
+        if imp.action == CONTINUE:
+            nudge = continue_nudge(reply_text)
+        elif imp.action == REMIND:
+            nudge = remind_nudge(notes or [])
+        else:
+            nudge = CHECK_IN_NUDGE
         try:
             text = (generate(nudge) or "").strip()
         except Exception as exc:                      # never let a continuation break the app
             logger.warning("[kairos] continuation failed: %s", exc)
             return
-        ok, why = worth_saying(text, reply_text)
-        if not ok:
-            logger.info("[kairos] DROPPED: %s :: %r", why, text[:60])
-            return
+
+        # A REMINDER IS NOT SUBJECT TO worth_saying(). That gate exists to let her decide,
+        # after thinking, that she had nothing worth saying — and that freedom is right for
+        # a continuation or a check-in. It is WRONG here: he asked to be reminded, and a
+        # reminder she talked herself out of is a broken promise that looks exactly like a
+        # bug. She still chooses the words; she does not get to choose silence.
+        if imp.action != REMIND:
+            ok, why = worth_saying(text, reply_text)
+            if not ok:
+                logger.info("[kairos] DROPPED: %s :: %r", why, text[:60])
+                return
+        elif not text:
+            # she produced nothing at all — say it plainly rather than drop the promise
+            titles = ", ".join((n.get("title") or "") for n in (notes or [])[:3])
+            text = f"Reminder: {titles}."
+
         with _LOCK:
             note_spoke(_STATE[session], time.monotonic())
             _OUTBOX[session].append({
@@ -128,8 +157,20 @@ def _arm(session, imp, reply_text, generate, margin) -> None:
                 "kind": imp.action,
                 "reason": imp.reason,
                 "margin": margin,
+                "notes": [n.get("id") for n in (notes or [])],
                 "at": time.time(),
             })
+
+        # SHE REMINDS; SHE DOES NOT NAG. Marked only AFTER it actually reached the outbox,
+        # so a reminder that failed to generate is still owed and will fire on a later tick.
+        if imp.action == REMIND:
+            try:
+                from harness.skills import notes as N
+                for n in (notes or []):
+                    N.mark_raised(n.get("id"))
+            except Exception as exc:
+                logger.warning("[kairos] could not mark reminder raised: %s", exc)
+
         logger.info("[kairos] SPOKE (%s): %r", imp.action, text[:70])
 
     with _LOCK:
@@ -159,6 +200,7 @@ def tick_once(now: Optional[float] = None) -> None:
     if not cfg.enabled:
         return
     now = now if now is not None else time.monotonic()
+    due = _due_notes()          # THE CLOCK IS WHAT MAKES A REMINDER POSSIBLE AT ALL.
     with _LOCK:
         sessions = list(_LAST.items())
     for session, (reply_text, generate) in sessions:
@@ -167,11 +209,14 @@ def tick_once(now: Optional[float] = None) -> None:
             if _TIMERS.get(session) and _TIMERS[session].is_alive():
                 continue                       # she is already about to say something
             imp = decide(cfg=cfg, state=st, now=now,
-                         reply_text=reply_text, eot_margin=None)
+                         reply_text=reply_text, eot_margin=None, due_notes=due)
         if not imp.speaks:
             continue
         logger.info("[kairos] session=%s idle tick -> %s (%s)", session, imp.action, imp.reason)
-        _arm(session, imp, reply_text, generate, None)
+        _arm(session, imp, reply_text, generate, None,
+             notes=due if imp.action == REMIND else None)
+        if imp.action == REMIND:
+            break              # one session gets the reminder, not every open tab
 
 
 def start_ticker(period_s: float = 15.0) -> None:

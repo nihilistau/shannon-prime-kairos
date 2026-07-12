@@ -46,6 +46,7 @@ from typing import Optional
 SILENT = "silent"
 CONTINUE = "continue"      # she was mid-thought — pick the thread back up
 CHECK_IN = "check_in"      # the room went quiet — she says something unprompted
+REMIND = "remind"          # he asked to be reminded, and it is time. She keeps her word.
 
 
 @dataclass
@@ -119,17 +120,17 @@ def decide(
     eot_margin: Optional[float],
     user_present: bool = True,
     rng: Optional[random.Random] = None,
+    due_notes: Optional[list] = None,
 ) -> Impulse:
-    """The whole policy. Pure — inject `now` and `rng` and it is fully determinable."""
+    """The whole policy. Pure — inject `now`, `rng` and `due_notes` and it is fully
+    determinable. (The scheduler fetches the due reminders and passes them in; this module
+    never touches a store, which is what keeps it gateable without a daemon.)"""
     rng = rng or random
 
     if not cfg.enabled:
         return Impulse(SILENT, reason="kairos disabled")
 
-    # ── the hard bounds. These are checked FIRST and cannot be argued with. ──────
-    if state.chain >= cfg.max_chain:
-        return Impulse(SILENT, reason=f"chain limit ({state.chain}/{cfg.max_chain}) — she waits for him")
-
+    # ── SPAM BOUNDS. Even a promise does not get to machine-gun him. ─────────────
     if state.last_spoke_at and (now - state.last_spoke_at) < cfg.cooldown_s:
         left = cfg.cooldown_s - (now - state.last_spoke_at)
         return Impulse(SILENT, reason=f"cooldown ({left:.0f}s left)")
@@ -137,6 +138,36 @@ def decide(
     recent = [t for t in state.spoken_times if now - t < 3600.0]
     if len(recent) >= cfg.max_per_hour:
         return Impulse(SILENT, reason=f"hourly cap ({len(recent)}/{cfg.max_per_hour})")
+
+    # ── REMIND: HE ASKED TO BE REMINDED, AND IT IS TIME. ─────────────────────────
+    # This is checked ABOVE the chain limit and above the asked-a-question rule, and that
+    # placement is the whole design. Those two rules exist to stop her CHATTERING — to keep
+    # her from talking over a thought of his, or filling a silence she created. A reminder
+    # is not chatter. It is a promise he asked her to keep, with a time on it.
+    #
+    # If it sat below the chain limit, then one unprompted remark would mute every reminder
+    # until he next spoke. If it sat below the question rule, then a reply of hers ending in
+    # "?" would mute them indefinitely while he was away — which is exactly when a reminder
+    # matters. Either way he misses his flight, and the feature is worse than not having it,
+    # because he TRUSTED it.
+    #
+    # It still obeys the cooldown and the hourly cap above, so it cannot become an alarm
+    # clock with a stuck bell. And notes.mark_raised() means each one fires ONCE: she
+    # reminds, she does not nag.
+    if due_notes:
+        n = due_notes[0]
+        title = (n.get("title") or "").strip() if isinstance(n, dict) else str(n)
+        lo, hi = cfg.checkin_delay
+        return Impulse(
+            REMIND,
+            delay_s=rng.uniform(lo, hi),
+            score=float(len(due_notes)),
+            reason=f"he asked to be reminded: {title!r} — and it is due",
+        )
+
+    # ── the hard bounds for everything else. ────────────────────────────────────
+    if state.chain >= cfg.max_chain:
+        return Impulse(SILENT, reason=f"chain limit ({state.chain}/{cfg.max_chain}) — she waits for him")
 
     if _asked_a_question(reply_text):
         return Impulse(SILENT, reason="she asked HIM a question — she waits for the answer")
@@ -266,4 +297,28 @@ CHECK_IN_NUDGE = (
     "remembered, something you want to ask. Do not greet him. Do not ask if he is still "
     "there. If nothing is really on your mind, say nothing at all.)"
 )
+
+
+def remind_nudge(notes: list) -> str:
+    """The one nudge that MUST produce something. Everywhere else in kairos she is free to
+    decide she had nothing to say — that freedom is what keeps her from being a leaky tap.
+    Here she is not free: he asked to be reminded, the time has come, and silence would be
+    a broken promise.
+
+    So the reminder text is handed to her verbatim rather than left to be recalled. She
+    chooses the words; she does not get to choose the facts, and she cannot forget them
+    between the impulse and the sentence."""
+    lines = []
+    for n in notes[:3]:
+        t = (n.get("title") or "").strip()
+        b = (n.get("body") or "").strip()
+        lines.append(f"  - {t}" + (f" ({b})" if b else ""))
+    body = "\n".join(lines)
+    return (
+        "(He asked you to remind him about the following, and it is now due:\n"
+        f"{body}\n"
+        "Tell him — briefly, in your own voice, one or two sentences. Do not greet him, do "
+        "not preamble, do not read it out like a list unless there is more than one. This "
+        "is a promise you made; say it plainly.)"
+    )
 

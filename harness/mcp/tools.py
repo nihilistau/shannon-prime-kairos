@@ -371,6 +371,23 @@ def run_with_tools(
             final = text
             break
         convo.append({"role": "assistant", "content": text})
+        # ONE CALL PER ROUND, AND THE ROUND IS THE ENFORCEMENT (2026-07-12).
+        #
+        # The prompt has said "Call at most ONE tool" since the beginning. Nothing enforced
+        # it, and on the first live notes turn she emitted THREE in one fence — add_note,
+        # then edit_note, then remove_note — and narrated it herself: "I'll remove the
+        # temporary note after editing it". She added the note, tidied it, and then deleted
+        # it, all before seeing a single tool_output. The board came back empty and she told
+        # him it was done.
+        #
+        # A tool call is an ACTION ON THE WORLD, and an action taken without seeing the
+        # result of the previous one is a guess. Truncating to one forces the loop to do
+        # what a loop is for: act, observe, then decide. She can still call a second tool —
+        # on the next round, knowing what the first one did.
+        if len(calls) > 1:
+            logger.info("[tools] %d calls in one fence — taking the FIRST (%s) and letting "
+                        "her see its result before the next", len(calls), calls[0][0])
+            calls = calls[:1]
         outputs = []
         for name, args, kwargs in calls:
             spec = resolve_tool(tool_index, name)

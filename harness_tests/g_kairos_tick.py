@@ -19,9 +19,20 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# ISOLATE THE STORES BEFORE IMPORTING ANYTHING THAT RESOLVES THEM.
+# The tick now consults the NOTES store (an overdue reminder is a reason to speak), and
+# notes.jsonl is resolved from SP_RECALL_REGISTRY. Without this the gate reads PRODUCTION:
+# it passed, then failed, then passed again — not because the code changed but because a
+# reminder in the operator's real board happened to come due between runs, turning a
+# CHECK_IN into a REMIND. A gate that reads live data fails for reasons that have nothing
+# to do with the code it is testing, and a flaky gate is worse than no gate: it teaches you
+# to ignore a red light.
+os.environ["SP_RECALL_REGISTRY"] = os.path.join(tempfile.mkdtemp(), "registry.jsonl")
 
 from harness.kairos import impulse as I          # noqa: E402
 from harness.kairos import scheduler as S        # noqa: E402
