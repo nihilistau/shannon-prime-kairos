@@ -1114,6 +1114,7 @@
         // itself is indistinguishable from a bug.
         const label = m.kind === 'continue' ? 'picked the thread back up'
                     : m.kind === 'remind'   ? 'reminding you'
+                    : m.kind === 'muse'     ? 'been thinking'
                     : 'spoke up';
         if (who) who.innerHTML += ` <span class="kairos-tag" title="${
           String(m.reason || '').replace(/"/g, '&quot;')}${

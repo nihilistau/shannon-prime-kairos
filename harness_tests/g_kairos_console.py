@@ -100,6 +100,20 @@ def main() -> int:
     check("...and it shows the board",
           "/v1/notes" in page and "the board" in page)
 
+    # ── EVERY CHAT PATH MUST TELL THE SCHEDULER THAT HE SPOKE ──────────────────
+    # on_user_turn() lived only in the console path. On the OpenAI path the scheduler never
+    # learned a human had said anything, so her CHAIN never reset (one unprompted message
+    # and she was muted for good) and last_user_at stayed 0, so the room never counted as
+    # quiet and reflection could not fire at all. Both failures are SILENT — nothing errors,
+    # she just quietly stops being alive on that path. Sixth instance of the same bug in one
+    # week, so it gets a gate rather than another comment.
+    app = open(os.path.join(ROOT, "harness", "server", "app.py"), encoding="utf-8").read()
+    n_paths = app.count("_kairos_after_turn(body, text)") + app.count("ks.on_reply(")
+    n_told = app.count("on_user_turn(")
+    check("every chat path tells the scheduler that HE SPOKE (chain reset + idle clock)",
+          n_told >= 2, f"on_user_turn called at {n_told} site(s); "
+                       f"a path that never resets the chain mutes her permanently")
+
     # ── 2. THE KEY. Drive it exactly as the console does: session_id. ───────────
     sess = f"gkc{int(time.time()) % 100000}"
     post("/v1/tuning", {"values": {"kairos.enabled": True, "kairos.cooldown_s": 0.0}})

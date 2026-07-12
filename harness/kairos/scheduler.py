@@ -26,7 +26,8 @@ from collections import defaultdict, deque
 from typing import Any, Callable, Optional
 
 from harness.kairos.impulse import (
-    CHECK_IN, CONTINUE, REMIND, CHECK_IN_NUDGE, continue_nudge, remind_nudge,
+    CHECK_IN, CONTINUE, REMIND, MUSE, CHECK_IN_NUDGE, continue_nudge, remind_nudge,
+    muse_nudge,
     Impulse, KairosConfig, TurnState, decide, note_spoke, note_user, worth_saying,
 )
 from harness.tuning import registry as tune
@@ -108,6 +109,109 @@ def on_reply(
     return imp
 
 
+# ── REFLECTION ON THE CLOCK (2026-07-13) ─────────────────────────────────────
+#
+# THINKING IS NOT SPEAKING, and keeping them apart is the whole design.
+#
+# She reflects SILENTLY whenever the room has been still long enough: she reads what she
+# knows about him and writes down what she has come to believe. That happens whether or not
+# he ever hears about it — it is how the model of him gets built, and most of what she
+# concludes should simply become part of what she knows, unremarked. A person who told you
+# every single thing they had ever noticed about you would be unbearable.
+#
+# Only a genuinely SURPRISING conclusion earns an interruption (reflect.speak_bits). The bar
+# is not "did she think of something" — she thinks on a clock, she will always have thought
+# of something. The bar is whether the model itself did not see it coming, which is the one
+# property of a conclusion that cannot be faked.
+#
+# NO NEW EVIDENCE, NO NEW THINKING. If nothing has been added to the store since the last
+# reflection, she does not run: re-reading the same facts just re-derives the same
+# conclusion and presents it as a discovery. (Reinforcement makes that harmless in the
+# STORE — a re-derived belief strengthens rather than duplicating — but it would be deadly
+# in the CHANNEL, where the same thought arriving twice is how a companion becomes a bore.)
+_LAST_REFLECT_AT: float = 0.0
+_LAST_EVIDENCE: int = -1
+_PENDING_INSIGHT: dict = {}
+
+
+def _evidence_count() -> int:
+    """How much she has been told. Cheap, and enough to answer 'has anything changed?'"""
+    try:
+        from harness.skills.memory import _load
+        return len(_load())
+    except Exception:
+        return -1
+
+
+def reflect_tick(now: Optional[float] = None) -> Optional[dict]:
+    """Think about him, quietly. Returns an insight worth SAYING, or None (usually None)."""
+    global _LAST_REFLECT_AT, _LAST_EVIDENCE
+    from harness.tuning import registry as tune
+    if not bool(tune.get("reflect.enabled")):
+        return None
+
+    now = now if now is not None else time.monotonic()
+    idle_s = float(tune.get("reflect.idle_s"))
+    cool_s = float(tune.get("reflect.cooldown_s"))
+
+    with _LOCK:
+        # the room must be still — reflection is a whole model turn and must never race him
+        # for the GPU while he is mid-sentence
+        last_user = max((st.last_user_at for st in _STATE.values()), default=0.0)
+        if not last_user or (now - last_user) < idle_s:
+            return None
+        if _LAST_REFLECT_AT and (now - _LAST_REFLECT_AT) < cool_s:
+            return None
+        ev = _evidence_count()
+        if ev == _LAST_EVIDENCE:
+            return None                       # nothing new to think ABOUT
+        _LAST_REFLECT_AT, _LAST_EVIDENCE = now, ev
+
+    try:
+        from harness.maintenance import ops
+        from harness.model.person import PersonModel
+        res = ops.insight()
+    except Exception as exc:
+        logger.warning("[kairos] reflection failed: %s", exc)
+        return None
+
+    # 1. HAS SOMETHING GONE QUIET? The neighbour who did not wave carries more information
+    #    than the one who did, and noticing it is not retrieval — nobody asked a question.
+    try:
+        pm = PersonModel.from_registry()
+        sil = pm.silences()
+        if sil and sil[0]["bits"] >= float(tune.get("reflect.speak_bits")):
+            logger.info("[kairos] reflection: a silence worth asking about (%.1f bits)",
+                        sil[0]["bits"])
+            return {"text": sil[0]["claim"], "bits": sil[0]["bits"], "silence": sil[0]}
+    except Exception:
+        pass
+
+    # 2. Otherwise: did she CONCLUDE anything, and was it surprising enough to interrupt for?
+    wrote = res.get("wrote") or []
+    if not wrote:
+        logger.info("[kairos] reflected — nothing new concluded")
+        return None
+    # a REINFORCED belief is one she already held; it is stronger now, but it is not NEWS
+    fresh = [w for w in wrote if "-> stored" in w]
+    if not fresh:
+        logger.info("[kairos] reflected — only re-derived what she already believed")
+        return None
+
+    text = fresh[0].split(" -> ")[0].strip()
+    try:
+        bits = PersonModel.from_registry().surprisal(text)
+    except Exception:
+        bits = 0.0
+    floor = float(tune.get("reflect.speak_bits"))
+    if bits < floor:
+        logger.info("[kairos] reflected and kept it to herself (%.1f < %.1f bits): %r",
+                    bits, floor, text[:50])
+        return None
+    logger.info("[kairos] reflection worth saying (%.1f bits): %r", bits, text[:60])
+    return {"text": text, "bits": bits}
+
+
 def _due_notes() -> list:
     """Reminders that have come due and have not been raised yet. Kept out of impulse.py so
     the policy stays pure and gateable without a store."""
@@ -118,7 +222,7 @@ def _due_notes() -> list:
         return []
 
 
-def _arm(session, imp, reply_text, generate, margin, notes=None) -> None:
+def _arm(session, imp, reply_text, generate, margin, notes=None, insight=None) -> None:
     """Wait the delay, generate, and let worth_saying() have the last word."""
     def _fire():
         # the CONTINUE nudge is built from the reply so she can see WHERE she was cut —
@@ -127,6 +231,8 @@ def _arm(session, imp, reply_text, generate, margin, notes=None) -> None:
             nudge = continue_nudge(reply_text)
         elif imp.action == REMIND:
             nudge = remind_nudge(notes or [])
+        elif imp.action == MUSE:
+            nudge = muse_nudge(insight or {})
         else:
             nudge = CHECK_IN_NUDGE
         try:
@@ -201,6 +307,17 @@ def tick_once(now: Optional[float] = None) -> None:
         return
     now = now if now is not None else time.monotonic()
     due = _due_notes()          # THE CLOCK IS WHAT MAKES A REMINDER POSSIBLE AT ALL.
+
+    # SHE THINKS ON THE SAME CLOCK SHE SPEAKS ON, but they are not the same act. reflect_tick
+    # writes what she concludes into the store REGARDLESS; it returns something here only on
+    # the rare occasion the conclusion was surprising enough to be worth interrupting him
+    # for. Most reflections end in her simply knowing something new and saying nothing.
+    insight = None
+    try:
+        insight = reflect_tick(now)
+    except Exception as exc:
+        logger.warning("[kairos] reflect_tick: %s", exc)
+
     with _LOCK:
         sessions = list(_LAST.items())
     for session, (reply_text, generate) in sessions:
@@ -209,14 +326,16 @@ def tick_once(now: Optional[float] = None) -> None:
             if _TIMERS.get(session) and _TIMERS[session].is_alive():
                 continue                       # she is already about to say something
             imp = decide(cfg=cfg, state=st, now=now,
-                         reply_text=reply_text, eot_margin=None, due_notes=due)
+                         reply_text=reply_text, eot_margin=None, due_notes=due,
+                         insight=insight)
         if not imp.speaks:
             continue
         logger.info("[kairos] session=%s idle tick -> %s (%s)", session, imp.action, imp.reason)
         _arm(session, imp, reply_text, generate, None,
-             notes=due if imp.action == REMIND else None)
-        if imp.action == REMIND:
-            break              # one session gets the reminder, not every open tab
+             notes=due if imp.action == REMIND else None,
+             insight=insight if imp.action == MUSE else None)
+        if imp.action in (REMIND, MUSE):
+            break              # one session hears it, not every open tab
 
 
 def start_ticker(period_s: float = 15.0) -> None:

@@ -102,6 +102,36 @@ KNOBS: list[Knob] = [
          "Even once it has gone quiet, she usually still says nothing. 0 = never check in.",
          min=0.0, max=1.0, step=0.05),
 
+    # ── REFLECTION: she thinks about him when the room is quiet ─────────────────
+    # THINKING IS NOT SPEAKING, and these are the knobs that keep the two apart. She
+    # reflects SILENTLY on an idle clock — reading what she knows and writing down what she
+    # has come to believe. Whether any of it is worth INTERRUPTING him with is a separate,
+    # much higher bar (reflect.speak_bits), because an unprompted "I've been thinking about
+    # you" that lands on something obvious is worse than silence: it teaches him to ignore
+    # her, and then the good one never gets heard either.
+    Knob("reflect.enabled", "Reflection — thinking between turns", "Enabled", "bool", True,
+         "Off = she only ever reflects when you press the button. On = she thinks about "
+         "you when the room has gone quiet, and writes down what she concludes."),
+    Knob("reflect.idle_s", "Reflection — thinking between turns", "Quiet before she thinks",
+         "float", 600.0,
+         "How long the room must be still before she starts turning things over. Reflection "
+         "is a whole model turn, so it must never race him for the GPU while he is typing.",
+         min=60.0, max=7200.0, step=30.0),
+    Knob("reflect.cooldown_s", "Reflection — thinking between turns", "Between reflections",
+         "float", 1800.0,
+         "At most one reflection per this many seconds. She also refuses to reflect at all "
+         "if NO NEW EVIDENCE has arrived since the last one — re-thinking the same facts "
+         "just re-derives the same conclusion and calls it a discovery.",
+         min=60.0, max=86400.0, step=60.0),
+    Knob("reflect.speak_bits", "Reflection — thinking between turns",
+         "Bits before she says it", "float", 3.0,
+         "How SURPRISING a conclusion must be before she brings it up unprompted. "
+         "Information is -log2(p): 1 bit = a coin-flip, 3 bits ~ 1-in-8, 8 bits ~ 1-in-256. "
+         "Below this she keeps it to herself and simply knows it.",
+         min=0.0, max=8.0, step=0.5,
+         provenance="chosen",
+         receipt="Not yet measured against a live conversation — it wants a week of real use."),
+
     # ── DECODE: the knobs that bit us ─────────────────────────────────────────────
     Knob("decode.eot_bias", "Decode", "End-of-turn bias", "float", 4.0,
          "A nudge on the stop token so she actually ends her turn instead of running on. "

@@ -87,6 +87,18 @@ def _agent_text(body: Dict[str, Any]) -> str:
     # a hook wired into one of two paths has been the single most reliable bug in this
     # system, four times over in one day.
     _human = _arm_turn(msgs)     # what he TYPED — taken before the tool loop touches msgs
+    # HE SPOKE. TELL THE SCHEDULER — on THIS path too.
+    # on_user_turn() was called only in _native_chat_sse, so on the OpenAI path the
+    # scheduler never learned that a human had said anything. Two consequences, both silent:
+    # her CHAIN never reset (so after one unprompted message she was muted for good), and
+    # last_user_at stayed 0, so the room NEVER counted as quiet and reflect_tick could not
+    # fire at all. It is the same bug as kairos, the repeat-guard, roleplay, capture and the
+    # console fork: an event wired into one of two entry points is wired into neither.
+    try:
+        from harness.kairos import scheduler as _ks_u
+        _ks_u.on_user_turn(_session_of(body))
+    except Exception:
+        pass
     _offer = _roleplay_pre_turn(body, msgs)
     if _offer:
         return _offer

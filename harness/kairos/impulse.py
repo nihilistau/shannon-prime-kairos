@@ -47,6 +47,7 @@ SILENT = "silent"
 CONTINUE = "continue"      # she was mid-thought — pick the thread back up
 CHECK_IN = "check_in"      # the room went quiet — she says something unprompted
 REMIND = "remind"          # he asked to be reminded, and it is time. She keeps her word.
+MUSE = "muse"              # she thought about him while he was away, and found something
 
 
 @dataclass
@@ -121,6 +122,7 @@ def decide(
     user_present: bool = True,
     rng: Optional[random.Random] = None,
     due_notes: Optional[list] = None,
+    insight: Optional[dict] = None,
 ) -> Impulse:
     """The whole policy. Pure — inject `now`, `rng` and `due_notes` and it is fully
     determinable. (The scheduler fetches the due reminders and passes them in; this module
@@ -171,6 +173,27 @@ def decide(
 
     if _asked_a_question(reply_text):
         return Impulse(SILENT, reason="she asked HIM a question — she waits for the answer")
+
+    # ── MUSE: she thought about him while he was away, and found something ───────
+    # BELOW the chain limit and the question rule, and that placement is the argument. A
+    # REMINDER is a promise and outranks manners; a MUSING is just something she noticed,
+    # and a thought that interrupts him is worse than a thought he never hears — it teaches
+    # him to ignore the channel, and then the good one never lands either.
+    #
+    # The bar is not "did she think of something". She thinks on a clock; she will always
+    # have thought of something. The bar is whether it was SURPRISING (reflect.speak_bits),
+    # which is the one thing about a conclusion that cannot be faked: an insight worth
+    # interrupting for is one the model itself did not see coming.
+    if insight:
+        lo, hi = cfg.checkin_delay
+        bits = float(insight.get("bits", 0.0))
+        return Impulse(
+            MUSE,
+            delay_s=rng.uniform(lo, hi),
+            score=bits,
+            reason=f"she worked something out while he was quiet ({bits:.1f} bits): "
+                   f"{str(insight.get('text', ''))[:60]}",
+        )
 
     # ── CONTINUE: the latent impulse. She stopped mid-thought. ───────────────────
     if eot_margin is not None and not math.isnan(eot_margin):
@@ -297,6 +320,39 @@ CHECK_IN_NUDGE = (
     "remembered, something you want to ask. Do not greet him. Do not ask if he is still "
     "there. If nothing is really on your mind, say nothing at all.)"
 )
+
+
+def muse_nudge(insight: dict) -> str:
+    """She thought about him while he was away. Now she has to say it like a person.
+
+    The nudge hands her the CONCLUSION, not the evidence, and tells her it is hers. Two
+    failure modes it is written against, both of which this system has already produced:
+
+      * RECITING. Handed a memory, she reads it out. "Knack told me his cat is Tuffy." That
+        is not a thought, it is a lookup with a preamble, and worth_saying() drops it.
+      * ATTRIBUTING. Saying "you told me you're a cat person" when he never said any such
+        thing. She inferred it. She may be wrong about him — she may not be wrong about him
+        IN HIS VOICE.
+    """
+    text = str(insight.get("text", "")).strip()
+    silence = insight.get("silence")
+    if silence:
+        return (
+            f"(While it was quiet you noticed something: he used to bring up "
+            f"\"{silence['claim'][:70]}\" every few days, and he has not mentioned it in "
+            f"{silence['quiet_days']:.0f} days. That absence is worth a gentle question — "
+            "ASK him about it, once, in one sentence, in your own voice. Do not announce "
+            "that you were analysing him. Do not list what you know. If it feels like "
+            "prying rather than caring, say nothing at all.)"
+        )
+    return (
+        f"(While it was quiet you turned things over and came to a conclusion about him: "
+        f"\"{text}\"\n"
+        "Say it to him — ONE or two sentences, in your own voice, as a thought you had, "
+        "not as a fact you looked up. It is YOUR conclusion: he never actually said it, so "
+        "do not tell him that he did. If it seems obvious or hollow now that you go to say "
+        "it out loud, say nothing at all.)"
+    )
 
 
 def remind_nudge(notes: list) -> str:
