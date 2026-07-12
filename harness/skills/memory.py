@@ -94,6 +94,19 @@ def remember(fact: str, source: str = "") -> str:
     ok, why = lc.is_memorable(fact)
     if not ok:
         return f"not stored — {why}"
+    # ── THE IDENTITY FIREWALL (2026-07-12) ──────────────────────────────────────
+    # She answered "what is your name?" with "My name is Shannon." — correctly — and then
+    # stored that sentence HERE, in the USER store. It was stamped speaker=user, classed
+    # identity, and superseded all three rows that said the user is Knack. The store came
+    # out of it asserting that KNACK IS CALLED SHANNON.
+    #
+    # Which door she writes to is the ONLY signal for whose fact it is, and she picked the
+    # wrong one. The prompt already tells her; a prompt is advice, and the price of one
+    # slip is the user's identity. So the door refuses it, and names the right door.
+    if _AUTHOR != lc.SPEAKER_SELF:
+        ok, why = lc.admit_to_user_store(fact, _self_names())
+        if not ok:
+            return f"not stored — {why}"
     existing = _load()
     # Idempotent EXACT: never store a fact already in memory verbatim (prevents the agency
     # loop from accumulating duplicates when it re-asserts an existing fact).
@@ -188,6 +201,27 @@ _AUTHOR = "user"
 def set_author(who: str) -> None:
     global _AUTHOR
     _AUTHOR = "self" if who == "self" else "user"
+
+
+def _self_names() -> set:
+    """HER names — the ones that may never be filed as the user's identity. Read from the
+    live persona so a rename renames the firewall too; the literals are the floor, not the
+    source of truth."""
+    names = {"shannon", "shannon-prime"}
+    try:
+        from harness.personality.persona_file import parse_persona
+        path = os.environ.get("SP_PERSONA_FILE") or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "persona.md")
+        with open(path, encoding="utf-8") as f:
+            _, state = parse_persona(f.read())
+        for k in ("name", "self_name"):
+            v = (state or {}).get(k)
+            if isinstance(v, str) and v.strip():
+                names.add(v.strip().lower())
+    except Exception:
+        pass
+    return names
 
 
 def remember_about_self(fact: str) -> str:

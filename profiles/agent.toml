@@ -45,7 +45,20 @@ attr_gate = true
 attr_tau = 0.5
 qonly = true
 delivery = 'plain'       # Hodor binding: never systemecho globally
-growth = true            # SP_B4_NIGHTSHIFT
+# ONE MEMORY AUTHORITY (2026-07-12). growth=true made the DAEMON store `raw_user` — the
+# whole user turn, verbatim, as one episode — whenever it passed a word count and mentioned
+# a person. Every conversational sentence mentions a person, so one real conversation put
+# 17 rows in ("yes, we lose lips, sink ships.", "you are cool af! I really like you!") and
+# buried the genuine facts inside turns that were mostly banter. It could not do better:
+# given a turn, it kept all of it or none of it.
+#
+# Capture now lives in the gateway (_capture_after_turn), which SPLITS the turn and keeps
+# only the durable sentences, through the same remember() that has the dedupe, the
+# supersede and the identity firewall. Two authorities deciding what a memory is — the
+# daemon's word-count-and-a-pronoun and the harness's lifecycle rules — is the same shape
+# as the two-recall-authorities bug serve.py already refuses. So: the daemon no longer
+# writes memories. Recall, the store verb, and classification are untouched.
+growth = false           # SP_B4_NIGHTSHIFT — capture moved to the gateway (one authority)
 persist_growth = true    # SP_NIGHTSHIFT_PERSIST
 store_verb = true        # SP_MEM_STORE
 classify = true          # SP_MEM_CLASSIFY

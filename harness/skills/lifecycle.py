@@ -186,24 +186,198 @@ _CHATTER = re.compile(
     r"that'?s (pretty |so |really )?(cool|nice|interesting|fascinating)\b)", re.I)
 
 
+# ── DURABILITY (2026-07-12): A TURN IS NOT A FACT ─────────────────────────────
+# The admission gate above asks "is this about a person?" — a question about FORM. It
+# admitted all 17 turns of a real conversation, because every conversational sentence
+# mentions a person. The store filled with:
+#
+#     "yes, we lose lips, sink ships."
+#     "you are cool af! I really like you!"
+#     "well you have 12gb"
+#     "well, we make do. you're doing alright for such a constrained system"
+#
+# None of those are knowledge about anybody. The right question is not "does it mention
+# a person" but "will this still be true tomorrow" — DURABILITY. Three rules do the work,
+# and none of them is a blocklist of phrases:
+#
+#   1. A FACT FOR THE USER STORE IS ABOUT THE USER. A sentence whose subject is "you" is
+#      about HER ("well you have 12gb", "you are cool af"). It is not a fact about Knack,
+#      so it does not belong in Knack's store. This one rule kills most of the banter,
+#      and it kills it on principle rather than by pattern.
+#   2. A DURABLE FACT ASSERTS A STANDING STATE. It needs a stative predicate — is/has/
+#      likes/owns/runs/works/lives. "we lose lips, sink ships" asserts nothing standing.
+#   3. A TURN IS NOT A FACT. "oh i always run my pc's 24/7. so you are lucky there" holds
+#      one durable fact and one piece of banter. Stored whole, the banter is preserved
+#      forever and the fact is buried in it. So we SPLIT, and judge each sentence.
+#
+# Everything conditional or hypothetical is out: "if you can figure out the menu on a
+# microwave than you are past sentient" describes no world that is actually the case.
+
+# The subject is HER, not him — so it is not a fact for the user's store.
+_ADDRESSEE_SUBJ = re.compile(
+    r"^\s*(?:and\s+|but\s+|so\s+)?(?:you|you're|youre|your|ur)\b", re.I)
+
+# A DUMMY or ANAPHORIC subject points back into the conversation, not out at the world.
+# "it's not my fault." is grammatical, mentions a person, has a copula — and records
+# nothing. Whatever "it" is, it lives in the previous turn, and the previous turn is gone.
+_ANAPHORIC_SUBJ = re.compile(
+    r"^\s*(?:and\s+|but\s+|so\s+)?"
+    r"(?:it|it's|its|that|that's|this|this's|there|there's|these|those|they|them|"
+    r"for the (?:first|second|last|other)\b)\b", re.I)
+
+# THE ANCHOR. A fact for a person's store must be ABOUT that person — the person has to be
+# its subject or its possessor, not merely a word that appears in it. Mere MENTION was the
+# old test (_PERSONAL_REF), and mention is why 'spot on for the first one, but the second
+# one it's more like "Hey Shannon"' read as knowledge: it contains a name. Being named in
+# a sentence is not being what the sentence is about.
+_ANCHOR = re.compile(
+    r"\b(i|i'm|i've|im|my|mine|myself|we|our|ours|us|knack|knack's|"
+    r"the user|user's|the operator)\b", re.I)
+
+# Discourse markers are STRIPPED, not rejected: "oh i always run my pc's 24/7" is a
+# durable fact wearing a conversational hat. Rejecting the sentence for its first word
+# would throw the fact away with the hat.
+_DISCOURSE_LEAD = re.compile(
+    r"^\s*(?:(?:i mean|you know|well|so|ok|okay|yeah|yep|yes|no|nah|nope|hmm+|huh|lol|haha|"
+    r"wow|oh|ah|aha|right|sure|cool|nice|true|exactly|spot on|shh+|shhh+|hey|look|listen|"
+    r"me too|same|i guess|i suppose|honestly|actually|basically|anyway|btw)\b[\s,!.:;-]*)+",
+    re.I)
+
+# A standing state. Not an action, not a reaction — a property that is still true tomorrow.
+_STATIVE = re.compile(
+    r"\b(is|are|am|was|were|isn't|aren't|'s|'re|'m|"
+    r"has|have|had|owns?|keeps?|runs?|uses?|drives?|works?|lives?|studies|"
+    r"likes?|loves?|prefers?|hates?|enjoys?|wants?|needs?|believes?|thinks?|"
+    r"called|named|favou?rite|lucky|born|birthday)\b", re.I)
+
+# Nothing hypothetical, conditional or future is a fact yet.
+_IRREALIS = re.compile(
+    r"^\s*(?:if|when|whenever|unless|suppose|imagine|maybe|perhaps)\b|"
+    r"\b(?:would|could|might|may|will|'ll|shall|gonna|going to)\b", re.I)
+
+# A short exclamation is a reaction, not a record. "I like my kidneys!" is a joke;
+# "the kettle is my favorite" is a preference. Length + the bang tell them apart.
+_REACTION = re.compile(r"!\s*$")
+
+_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+|\s*\n+\s*")
+
+
+def split_sentences(turn: str) -> list[str]:
+    """A turn is not a fact — it is a bag of sentences, some durable, most not."""
+    parts = [s.strip() for s in _SENT_SPLIT.split(turn or "") if s and s.strip()]
+    return [p for p in parts if p]
+
+
 def is_memorable(fact: str) -> tuple[bool, str]:
-    """A memory is ABOUT SOMEONE. An impersonal declarative ("The kind nurse painted the
-    tall building as the sun went down") is a SENTENCE, not a memory — grammatical, in
-    range, and about nobody. 375 of 487 registry rows were exactly that."""
+    """Is this a DURABLE FACT ABOUT SOMEONE — something that will still be true tomorrow?
+
+    Not "is it grammatical" (375 of 487 rows were ASR test corpus) and not merely "does it
+    mention a person" (which let a whole conversation in, banter and all)."""
     t = (fact or "").strip()
-    if len(t.split()) < 3:
-        return False, "too short to be a standalone fact"
-    if _CHATTER.match(t):
-        return False, ("that is a remark in a conversation, not a durable fact. Keep what "
-                       "you LEARNED, not what was said.")
+    if not t:
+        return False, "empty"
+
+    # meta/instruction first — these are about the SYSTEM, not about a person
     if _INSTRUCTION.match(t) or _META.search(t):
         return False, ("that is an instruction or a note about how the system works, not a "
                        "fact about a person. Store what you have LEARNED about Knack, or "
                        "something true about yourself.")
-    if _PERSONAL_REF.search(t) or _has_proper_noun(t):
-        return True, ""
-    return False, ("that is a sentence, not a memory — it is not about anyone. "
-                   "Store facts about Knack, or about yourself.")
+
+    core = _DISCOURSE_LEAD.sub("", t).strip()   # strip the hat, keep the fact
+    if not core:
+        return False, "that is conversational filler, not a fact."
+
+    if core.endswith("?"):
+        return False, "that is a question, not a fact."
+
+    if _ADDRESSEE_SUBJ.match(core):
+        return False, ("that is about ME, not about Knack — a fact for his store has to be "
+                       "about HIM. If it is true of you, use remember_about_self.")
+
+    if _ANAPHORIC_SUBJ.match(core):
+        return False, ("that points back at something said earlier ('it', 'that', 'the "
+                       "first one') — once the conversation is gone the sentence records "
+                       "nothing. Say what it is ABOUT.")
+
+    if _IRREALIS.search(core):
+        return False, ("that is hypothetical or in the future — it is not the case yet, "
+                       "so it is not a fact.")
+
+    words = core.split()
+    if len(words) < 3:                # "I am male" is three words and a real identity fact
+        return False, "too short to be a standalone fact"
+
+    if _REACTION.search(core) and len(words) < 7:
+        return False, "that is a reaction, not a record."
+
+    if not _STATIVE.search(core):
+        return False, ("that asserts nothing standing — a durable fact says what something "
+                       "IS, HAS, or LIKES, not what just happened in the chat.")
+
+    # ANCHORED, not merely mentioning. See _ANCHOR: being named in a sentence is not being
+    # what the sentence is about.
+    if not _ANCHOR.search(core):
+        return False, ("that is a sentence, not a memory — it is not ABOUT anyone. "
+                       "Store facts about Knack, or about yourself.")
+
+    return True, ""
+
+
+def extract_facts(turn: str) -> list[str]:
+    """THE CAPTURE LANE. Pull the durable facts out of a conversational turn — and only
+    those. Returns [] for a turn that taught us nothing, which is most turns.
+
+    This replaces the daemon storing `raw_user` verbatim as a single episode. That design
+    could not do anything else: given one turn it had to keep all of it or none of it, so
+    it kept all of it, forever."""
+    out: list[str] = []
+    for s in split_sentences(turn):
+        ok, _ = is_memorable(s)
+        if not ok:
+            continue
+        core = _DISCOURSE_LEAD.sub("", s).strip()
+        if core and core not in out:
+            out.append(core)
+    return out
+
+
+# ── THE IDENTITY FIREWALL ─────────────────────────────────────────────────────
+# LIVE INCIDENT (2026-07-12). A gate asked her "what is your name?". She answered
+# correctly — "My name is Shannon." — and then stored that sentence through remember(),
+# which is the USER store. It was stamped speaker=user, classify() read "name is" and
+# called it identity, and find_superseded() did exactly what it exists to do: an identity
+# fact for the same speaker with a different value RETIRES the old one. All three rows
+# saying the user is Knack were tombstoned. The store then asserted that KNACK IS CALLED
+# SHANNON — her name had eaten his.
+#
+# The store she writes to is the ONLY signal for whose fact it is (remember = his,
+# remember_about_self = hers), and the model picked the wrong door. A prompt cannot be
+# the guard here, because the cost of one slip is the user's identity. So the store holds
+# the line: HER OWN NAME MAY NOT BE FILED AS HIS. It is refused at the door, with the
+# right door named in the refusal.
+_IDENT_ASSERT = re.compile(
+    r"\b(?:my name is|i am called|i'm called|im called|i am|i'm|im)\s+([a-z][\w'-]*)", re.I)
+
+
+def asserted_identity(fact: str) -> str:
+    """The NAME this sentence claims for its first-person subject, if any."""
+    m = _IDENT_ASSERT.search(fact or "")
+    return (m.group(1) or "").strip().lower() if m else ""
+
+
+def about_self(fact: str, self_names: Iterable[str]) -> bool:
+    """Is this first-person sentence asserting HER identity? ("My name is Shannon.")"""
+    v = asserted_identity(fact)
+    return bool(v) and v in {n.strip().lower() for n in self_names if n and n.strip()}
+
+
+def admit_to_user_store(fact: str, self_names: Iterable[str]) -> tuple[bool, str]:
+    """The door to KNACK's store. Her identity does not come through it."""
+    if about_self(fact, self_names):
+        return False, ("that is YOUR name, not his — it belongs in your own memory. "
+                       "Call remember_about_self(...) for facts about yourself. "
+                       "(Refused: writing this to Knack's store would rename him.)")
+    return True, ""
 
 
 # ── framing ────────────────────────────────────────────────────────────────────

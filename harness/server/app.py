@@ -81,6 +81,7 @@ def _agent_text(body: Dict[str, Any]) -> str:
         _arm_self_repeat_ban(_cfg, msgs)
         text = get_client().chat(messages=msgs, config=_cfg).text
         text = _repeat_guard(body, msgs, text, _cfg)
+        _capture_after_turn(msgs)
         _kairos_after_turn(body, text)
         return text
     from harness.agent import agent_chat
@@ -92,8 +93,53 @@ def _agent_text(body: Dict[str, Any]) -> str:
     )
     text = agent_chat(msgs, config=cfg)
     text = _repeat_guard(body, msgs, text, cfg)
+    _capture_after_turn(msgs)
     _kairos_after_turn(body, text)
     return text
+
+
+def _capture_after_turn(msgs: list) -> None:
+    """THE CAPTURE LANE (2026-07-12). Pull the durable facts out of the user's turn — and
+    only those.
+
+    WHAT THIS REPLACES. The daemon (routes.rs, SP_B4_NIGHTSHIFT) stored `raw_user` — the
+    WHOLE user turn, verbatim, as one episode — if it passed a word count and mentioned a
+    person. Given a turn it had to keep all of it or none of it, so it kept all of it. One
+    real conversation put 17 rows in, including:
+
+        "yes, we lose lips, sink ships."
+        "you are cool af! I really like you!"
+        "well, we make do. you're doing alright for such a constrained system"
+
+    and buried the actual facts (the esp32 sensors, the 2060 and the NUC, the PCs running
+    24/7) inside turns that were mostly banter.
+
+    Two authorities decided what a memory was: the daemon's word-count-and-a-pronoun, and
+    the harness's lifecycle rules — which had the dedupe, the supersede, the two stores and
+    the durability test. The daemon won every time, because it wrote first. An invariant
+    guarded in one of two paths is not guarded; this codebase has now learned that three
+    times. So the daemon stops writing (profiles: memory.growth = false) and capture happens
+    HERE, once, through the same door as everything else: split the turn into sentences,
+    keep the durable ones, and put each through remember() — which dedupes, supersedes, and
+    respects the identity firewall."""
+    try:
+        last_user = next((m.get("content", "") for m in reversed(msgs or [])
+                          if m.get("role") == "user"), "")
+        if not last_user.strip():
+            return
+        from harness.skills import lifecycle as lc
+        from harness.skills import memory as M
+        facts = lc.extract_facts(last_user)
+        if not facts:
+            return
+        M.set_author("user")
+        for f in facts[:4]:                       # a turn that yields 5+ facts is a paste
+            try:
+                M.remember(f, source="user turn")
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 def _repeat_guard(body: Dict[str, Any], msgs: list, text: str, cfg) -> str:
@@ -739,6 +785,10 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
         if not typed and "delta" not in ev:
             continue
         yield ("data: " + json.dumps(ev) + "\n\n").encode()
+    # CAPTURE: the console path writes memories too. Wiring a hook into one of the two
+    # entry points and calling it done is the single most repeated bug in this system —
+    # kairos, the repeat-guard and roleplay each shipped half-wired first. Not this one.
+    _capture_after_turn(msgs)
     # ── KAIROS: the turn is over. Does she have more to say? ───────────────────────
     # Almost always: no. The policy (harness/kairos/impulse.py) is SILENT by default and
     # every bound is checked before the impulse is even consulted — she cannot chain, she
