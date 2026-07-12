@@ -439,7 +439,18 @@ def _memory_json() -> Dict[str, Any]:
                 "lifecycle": e.get("lifecycle", 0),
                 "src": e.get("src", ""),
                 "ts": e.get("ts", ""),
+                # SALIENCE, ON THE PANEL. What she thinks matters, and WHY — how many times
+                # he said it, how long ago, how often she has reached for it. A ranking you
+                # cannot see is a ranking you cannot argue with, and the first thing this
+                # one showed us when it was switched on is that the store's idea of what
+                # matters was wrong (chatter outranking his GPU). That is the panel doing
+                # its job: it made a bad ranking visible instead of quietly acting on it.
+                "mentions": e.get("mentions", 1),
+                "recalled": e.get("recalled", 0),
+                "last_seen": e.get("last_seen", e.get("ts", "")),
+                "salience": lc.salience(e),
             })
+        rows.sort(key=lambda r: -r["salience"])
         return {"count": len(rows), "facts": rows, "health": verify_registry()}
     except Exception as exc:
         return {"error": str(exc), "count": 0, "facts": []}

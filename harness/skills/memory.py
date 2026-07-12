@@ -52,6 +52,19 @@ def _load() -> List[dict]:
     return eps
 
 
+def _save_all(rows: List[dict]) -> None:
+    """Rewrite the registry. Atomic via os.replace — a half-written memory file is worse
+    than a stale one, and this is now called on the hot path (every reinforcement)."""
+    p = _reg_path()
+    if not p:
+        return
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    os.replace(tmp, p)
+
+
 def _text(e: dict) -> str:
     return e.get("text") or e.get("topic") or ""
 
@@ -112,23 +125,48 @@ def remember(fact: str, source: str = "") -> str:
         if not ok:
             return f"not stored — {why}"
     existing = _load()
-    # Idempotent EXACT: never store a fact already in memory verbatim (prevents the agency
-    # loop from accumulating duplicates when it re-asserts an existing fact).
-    if any(_text(e).strip() == fact.strip() for e in existing):
-        return f"already in memory: {fact}"
-    # MEM-OKF v2 §M2 near-dup guard: a fact whose tokens are ~fully covered by an existing
-    # fact (overlap >= 0.9 both ways) is a paraphrase, not new knowledge — skip it so the
-    # extraction pass doesn't bloat the registry with restatements. (The DECIDE/MERGE layer
-    # in the daemon still handles genuine supersede/consolidate on conflicting facts.)
+
+    # ── A REPEAT IS NOT A DUPLICATE. IT IS A SECOND DATA POINT. (2026-07-13) ────────
+    #
+    # These two guards used to read:
+    #     if <exact match>:      return f"already in memory: {fact}"
+    #     if <paraphrase>:       return f"already in memory (paraphrase of): {...}"
+    #
+    # and that was the end of it. Every time he told her something AGAIN, the store said
+    # "I know" and threw the event away. It was proud of not duplicating a row.
+    #
+    # But the repetition IS THE SIGNAL. A thing a person tells you five times is not the
+    # same thing as a thing they told you once, and we were recording them identically.
+    # She said it herself, unprompted, on a kairos check-in: "memory has context — WHO told
+    # you what, WHEN, maybe even HOW MANY TIMES." She had who. She had when. The third one
+    # was arriving on every restatement and being deleted at the door.
+    #
+    # So a repeat REINFORCES: mentions += 1, last_seen = now, first_seen preserved. Still
+    # exactly one row — the dedupe was right about the STORAGE and wrong about the EVENT.
+    def _reinforce(e: dict, why: str) -> str:
+        lc.reinforce(e)
+        _save_all(existing)
+        n = e.get("mentions", 2)
+        return (f"reinforced ({n}x): {_text(e)}"
+                + (f"  [{why}]" if why else ""))
+
+    for e in existing:
+        if e.get("lifecycle"):
+            continue                       # a tombstone is not reinforced back to life
+        if _text(e).strip() == fact.strip():
+            return _reinforce(e, "")
+
     ft = _toks(fact)
     if ft:
         for e in existing:
+            if e.get("lifecycle"):
+                continue
             et = _toks(_text(e))
             if not et:
                 continue
             inter = len(ft & et)
             if inter / len(ft) >= 0.9 and inter / len(et) >= 0.9:
-                return f"already in memory (paraphrase of): {_text(e)}"
+                return _reinforce(e, "said again, in different words")
     # Mint the episode (ep.k/ep.v/ep.mf) via the daemon so the fact is RECALL-able,
     # not just listed. Degrades gracefully: if the daemon is unreachable the fact is
     # still recorded for introspection/curation.
@@ -406,7 +444,28 @@ def recall(query: str) -> str:
     if not hits:
         return f"(nothing in memory about '{query}')"
     hits = _target_and_rank(query, hits)
-    return "\n".join(f"{i + 1}. {lc.render(e)}" for i, (s, e) in enumerate(hits[:5]))
+    top = hits[:5]
+
+    # SHE USED THESE. Counted — but into `recalled`, NEVER into `mentions`. `mentions` is
+    # evidence about what matters TO HIM; her own lookups say nothing about that. She
+    # recalls his name constantly, and that is not a fact about how much his name matters.
+    # Letting a lookup feed the significance score would be a system marking its own
+    # homework, and the loop is vicious: recalled -> more salient -> recalled more.
+    try:
+        rows = _load()
+        by_name = {r.get("name"): r for r in rows}
+        touched = False
+        for _s, e in top:
+            r = by_name.get(e.get("name"))
+            if r is not None:
+                lc.note_recalled(r)
+                touched = True
+        if touched:
+            _save_all(rows)
+    except Exception:
+        pass
+
+    return "\n".join(f"{i + 1}. {lc.render(e)}" for i, (s, e) in enumerate(top))
 
 
 # ── WHO IS THE QUESTION ABOUT? (2026-07-12) ───────────────────────────────────
@@ -490,7 +549,24 @@ def _target_and_rank(query: str, hits):
         # an identity question wants the identity row, not everything containing "name"
         if "name" in qt and e.get("mem_class") == "identity":
             s += 0.30
-        return s
+
+        # ── SALIENCE: THE PRIOR (2026-07-13) ────────────────────────────────────
+        # What the match score CANNOT know: that he has told her this five times, or that
+        # he mentioned it once in March and never again. Two facts can match a question
+        # equally well and not deserve the same answer.
+        #
+        # It is a PRIOR, so it is small and it breaks ties — it does not overrule what the
+        # question actually matched. A frequently-repeated fact about his cat still loses
+        # to a one-off fact about his GPU when he asks about his GPU. That ordering matters:
+        # salience decides which of the RELEVANT memories to surface, never which memories
+        # are relevant. Let it dominate and she answers every question with her favourite
+        # fact.
+        #
+        # The old tie-breakers above (the relationship penalty, the identity boost) are what
+        # you write when you have no prior and two rows both score 1.00. This is the
+        # principled version of the same instinct, and it is derived from what he actually
+        # did rather than from what I guessed he meant.
+        return s + 0.22 * lc.salience(e)
 
     return sorted(((adjust(s, e), e) for s, e in hits), key=lambda x: -x[0])
 

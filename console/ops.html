@@ -52,6 +52,11 @@
        border:1px solid var(--line);color:var(--dim);white-space:nowrap;flex:0 0 auto}
   .tag.self{color:var(--self);border-color:#5b3a8e}
   .tag.dead{opacity:.5}
+  /* SALIENCE: how much this memory wants to be recalled. Hover for why. */
+  .tag.hot{color:#0c0d10;background:var(--warn);border-color:var(--warn);font-weight:700;cursor:help}
+  .sal{flex:0 0 34px;height:4px;border-radius:2px;background:#232833;margin-top:6px;
+       overflow:hidden;cursor:help}
+  .sal span{display:block;height:100%;background:linear-gradient(90deg,#2b6a7a,var(--accent))}
   .dead .t{opacity:.45;text-decoration:line-through}
 
   /* ── TUNING ── */
@@ -245,12 +250,23 @@ function draw() {
   const rows = visible();
   document.getElementById('mem').innerHTML = rows.map(r => {
     const dead = !!r.lifecycle, self = r.speaker === 'self', on = SEL.has(r.name);
+    // SALIENCE, VISIBLE. The bar is how much this memory wants to be recalled; the tooltip
+    // is WHY. She said herself that memory needs "who, when, and how many times" — this is
+    // the how-many-times, and it is on the page so a wrong ranking can be seen and argued
+    // with rather than quietly obeyed.
+    const sal = Number(r.salience || 0);
+    const pct = Math.max(4, Math.min(100, Math.round(sal / 3.2 * 100)));
+    const why = `salience ${sal.toFixed(2)} — he said it ${r.mentions || 1}x` +
+                `, last ${(r.last_seen || r.ts || '?').slice(0, 10)}` +
+                `, she has used it ${r.recalled || 0}x`;
     return `<div class="m${dead ? ' dead' : ''}${on ? ' sel' : ''}">
       <input type="checkbox" ${on ? 'checked' : ''} ${dead ? 'disabled' : ''}
              onchange="pick('${esc(r.name)}',this.checked)">
+      <span class="sal" title="${esc(why)}"><span style="width:${pct}%"></span></span>
       <span class="tag${self ? ' self' : ''}${dead ? ' dead' : ''}">${self ? 'SELF' : 'user'}</span>
       <span class="tag${dead ? ' dead' : ''}">${esc(r.mem_class || '—')}</span>
       <span class="t" onclick="pick('${esc(r.name)}',!${on})">${esc(r.text)}</span>
+      ${(r.mentions || 1) > 1 ? `<span class="tag hot" title="${esc(why)}">${r.mentions}×</span>` : ''}
       ${dead ? '<span class="tag dead">retired</span>' : ''}
     </div>`;
   }).join('') || '<div class="note" style="padding:10px">(nothing matches)</div>';

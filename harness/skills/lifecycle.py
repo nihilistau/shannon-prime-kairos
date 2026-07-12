@@ -27,6 +27,7 @@ Nothing is ever destroyed. Superseded rows stay on disk with a pointer forward, 
 """
 from __future__ import annotations
 
+import math
 import re
 import time
 from typing import Iterable, Optional
@@ -458,6 +459,90 @@ def render(row: dict) -> str:
     return f"Knack told me: {t}"
 
 
+# ── SALIENCE: HOW MANY TIMES, AND HOW RECENTLY (2026-07-13) ───────────────────
+#
+# HER IDEA, UNPROMPTED, ON THE KAIROS CHECK-IN:
+#     "the difference between memory and knowledge is that memory has context — it
+#      remembers WHO told you what, WHEN they did, maybe even HOW MANY TIMES."
+#
+# She had two of the three. `speaker` is who. `ts` is when. There was no how-many-times,
+# and there could not be — because remember() DELETED the evidence:
+#
+#     if any(_text(e).strip() == fact.strip() for e in existing):
+#         return f"already in memory: {fact}"        # <- a measurement, thrown away
+#
+# Every time he said something again, the store said "I know" and discarded it. The
+# repetition is not noise to be deduplicated; IT IS THE SIGNAL. A thing a person tells you
+# five times is not the same thing as a thing they told you once, and we were recording
+# them identically and then congratulating ourselves on not duplicating a row.
+#
+# TWO COUNTERS, AND THEY ARE NOT THE SAME:
+#   mentions — HE said it again. Evidence about what matters TO HIM.
+#   recalled — SHE looked it up. Evidence about what is USEFUL to answering him.
+# Conflating them would let her own lookups inflate his significance signal: she recalls
+# his name constantly, which says nothing about how much his name matters to him.
+#
+# AND THE ORDER WE BUILT THIS IN IS LOad-BEARING. Frequency is not importance on its own —
+# chatter is the most frequent thing there is, and "you are cool af!" said ten times would
+# dominate a store ranked on frequency alone. It only works because the DURABILITY GATE
+# already decides what is eligible to be counted. The gate says what is a fact; salience
+# says which facts matter. Built in the other order, frequency would have amplified the
+# firehose instead of ranking the store.
+_HALF_LIFE_DAYS = 45.0        # a fact unmentioned for 45 days is worth half as much at recall
+
+
+def _age_days(iso: str, now: Optional[float] = None) -> float:
+    if not iso:
+        return 0.0
+    try:
+        t = time.mktime(time.strptime(iso, "%Y-%m-%dT%H:%M:%SZ"))
+    except Exception:
+        return 0.0
+    now = now if now is not None else time.time()
+    return max(0.0, (now - t) / 86400.0)
+
+
+def salience(row: dict, now: Optional[float] = None) -> float:
+    """How much this memory should WANT to be recalled, before anything is asked.
+
+    A prior, not an answer — recall still ranks on what the question actually matches. This
+    only breaks ties, and ties are where the old ranking was guessing: "My cat's name is
+    Tuffy" and "The user's name is Knack" both scored 1.00 for "what is my name?", and it
+    took a hand-written relationship penalty to separate them. Salience is the principled
+    version of that: of two facts that match equally, prefer the one he has told you more
+    than once, and more recently.
+
+    DECAY IS NOT DELETION. Nothing here removes a row. A fact stated once, ten weeks ago,
+    never repeated, simply stops elbowing its way into answers — it is still on disk, still
+    listed, still findable by name. That is what forgetting should mean in a system whose
+    whole rule is that nothing is destroyed."""
+    m = max(1, int(row.get("mentions", 1) or 1))
+    # log, not linear: the jump from 1 to 2 mentions is the big one (he bothered to say it
+    # twice); 9 to 10 is noise. Linear frequency would let one obsession bury everything.
+    freq = math.log1p(m)                                    # 1x -> 0.69, 3x -> 1.39, 10x -> 2.40
+    age = _age_days(row.get("last_seen") or row.get("ts") or "", now)
+    recency = 0.5 ** (age / _HALF_LIFE_DAYS)                # 1.0 today, 0.5 at 45 days
+    # identity and preference are what he IS; an off-hand fact is what he mentioned once.
+    weight = {"identity": 1.6, "preference": 1.3, "relationship": 1.3,
+              "persona": 1.2, "private-secret": 1.2}.get(row.get("mem_class", ""), 1.0)
+    return round(weight * (1.0 + freq) * (0.35 + 0.65 * recency), 4)
+
+
+def reinforce(row: dict, now_iso: Optional[str] = None) -> dict:
+    """He said it AGAIN. That is not a duplicate — it is a second data point."""
+    row["mentions"] = int(row.get("mentions", 1) or 1) + 1
+    row["last_seen"] = now_iso or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    row.setdefault("first_seen", row.get("ts") or row["last_seen"])
+    return row
+
+
+def note_recalled(row: dict) -> dict:
+    """SHE used it. Useful — but this is NOT evidence about what matters to him, so it is
+    counted separately and never feeds `mentions`."""
+    row["recalled"] = int(row.get("recalled", 0) or 0) + 1
+    return row
+
+
 def stamp(row: dict, fact: str, speaker: str, src: str,
           supersedes: Optional[list[str]] = None) -> dict:
     """Attach the full v2 lifecycle lane to a registry row."""
@@ -472,6 +557,12 @@ def stamp(row: dict, fact: str, speaker: str, src: str,
     row["src"] = src or ("self" if speaker == SPEAKER_SELF else "user turn")
     row["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     row["verified"] = False
+    # SALIENCE, from the first breath. A new fact has been said ONCE — which is a real
+    # measurement, not an absence of one, and it wants a place to be counted from.
+    row.setdefault("mentions", 1)
+    row.setdefault("first_seen", row["ts"])
+    row.setdefault("last_seen", row["ts"])
+    row.setdefault("recalled", 0)
     if supersedes:
         row["supersedes"] = supersedes
     return row
