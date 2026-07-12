@@ -59,6 +59,23 @@ def infer_speaker(fact: str, author: str) -> str:
 # fact about a RELATIONSHIP (the cat), while "My name is Knack" is IDENTITY. Both match
 # "name is", so the presence of a relationship noun is what decides — identity only wins
 # when the sentence is about the speaker themselves.
+# "LIKE" IS NOT ALWAYS A PREFERENCE (2026-07-13). The old rule matched the WORD `like`
+# anywhere, so the store filled with comparators wearing a preference's clothes:
+#
+#     preference   then we can remember our idea's LIKE THIS!      <- a comparator
+#     preference   MORE LIKE, hey have fun, but I have the masterkey.  <- a comparator
+#     preference   I LIKE fun                                      <- an actual preference
+#
+# ...and because `preference` carries a salience weight, two pieces of chatter were
+# out-ranking his GPU. That was never a salience bug; salience only made a classification
+# bug VISIBLE by acting on it. "like this", "more like", "sounds like", "such as" are
+# comparisons. A preference needs the verb to have a PERSON DOING IT.
+_PREF_VERB = re.compile(
+    r"\b(?:i|we|he|she|knack|the user)\s+(?:really\s+|genuinely\s+|absolutely\s+|"
+    r"don'?t\s+|do\s+not\s+)*"
+    r"(?:like|love|hate|enjoy|prefer|adore|can'?t stand)\b", re.I)
+_PREF_NOUN = re.compile(r"\b(favou?rite|lucky number|preference)\b", re.I)
+
 _CLASS_RULES = (
     ("relationship", re.compile(r"\b(wife|husband|partner|girlfriend|boyfriend|brother|sister|"
                                 r"mother|father|mum|mom|dad|son|daughter|friend|cat|dog|pet)\b", re.I)),
@@ -66,7 +83,6 @@ _CLASS_RULES = (
                             r"pronouns?|gender|birthday|born (?:in|on))\b", re.I)),
     ("event", re.compile(r"\b(yesterday|today|tomorrow|last (?:week|night|year)|"
                          r"flight|appointment|meeting|at \d|on (?:mon|tue|wed|thu|fri|sat|sun))\b", re.I)),
-    ("preference", re.compile(r"\b(favou?rite|prefer|like|love|hate|enjoy|can't stand|lucky)\b", re.I)),
 )
 
 
@@ -74,7 +90,45 @@ def classify(fact: str) -> str:
     for name, rx in _CLASS_RULES:
         if rx.search(fact):
             return name
+    if _PREF_VERB.search(fact) or _PREF_NOUN.search(fact):
+        return "preference"
     return "fact"
+
+
+# ── HOW LONG A KIND OF FACT STAYS TRUE (2026-07-13) ───────────────────────────
+#
+# THE OPERATOR, ON BEING TOLD "I like fun" HAD BEEN FILED AS JUNK:
+#     "there is subtlety to what you are trying to throw away. I DO indeed like fun, and
+#      one could say that is an important thing to remember."
+#
+# He is right and I was wrong. "I like fun" is not chatter — it is a DISPOSITION, and a
+# disposition is arguably worth more than his GPU: hardware changes, dispositions are what
+# he IS. The bug was never that it was kept. It was that everything decays at the same rate.
+#
+#     "I like fun"                      <- true in ten years. Should never fade.
+#     "my flight is at 9am on Friday"   <- worthless at 9:01 on Friday.
+#
+# One 45-day half-life for both is simply wrong, and it is wrong in the direction that
+# hurts: the flight keeps competing for recall long after it has happened, and the
+# disposition quietly sinks. So the half-life belongs to the KIND of fact.
+#
+# (This is the shape the literature converged on too — Generative Agents scores recency +
+# IMPORTANCE + relevance, and the 2026 multi-factor work finds recency-alone retains 0.368
+# of gold evidence against 0.770 for a value model. We have recency and frequency; per-class
+# durability is the cheapest honest step toward the missing term, and unlike an LLM-assigned
+# importance score it cannot hallucinate.)
+_NEVER = 1.0e9        # dispositions and identity do not fade. They are what he IS.
+_HALF_LIFE_BY_CLASS = {
+    "identity":       _NEVER,     # his name, his gender
+    "preference":     _NEVER,     # "I like fun" — a disposition, not a mood
+    "relationship":   _NEVER,     # his cat is his cat
+    "persona":        3650.0,     # ten years
+    "private-secret": 3650.0,
+    "fact":            365.0,     # possessions, hardware, work — slow, but they do change
+    "event":             3.0,     # an appointment is worthless the day after
+    "episodic-event":    3.0,
+}
+_HALF_LIFE_DAYS = 45.0            # the default for anything unclassified
 
 
 # ── SUPERSEDE ──────────────────────────────────────────────────────────────────
@@ -516,15 +570,23 @@ def salience(row: dict, now: Optional[float] = None) -> float:
     never repeated, simply stops elbowing its way into answers — it is still on disk, still
     listed, still findable by name. That is what forgetting should mean in a system whose
     whole rule is that nothing is destroyed."""
+    cls = row.get("mem_class", "") or "fact"
     m = max(1, int(row.get("mentions", 1) or 1))
     # log, not linear: the jump from 1 to 2 mentions is the big one (he bothered to say it
     # twice); 9 to 10 is noise. Linear frequency would let one obsession bury everything.
     freq = math.log1p(m)                                    # 1x -> 0.69, 3x -> 1.39, 10x -> 2.40
+
+    # DECAY IS PER KIND OF FACT. A disposition does not fade; an appointment is worthless
+    # the day after. One half-life for both is wrong in the direction that hurts — the
+    # flight keeps competing for recall long after it happened, and "I like fun" quietly
+    # sinks. See _HALF_LIFE_BY_CLASS.
+    half = _HALF_LIFE_BY_CLASS.get(cls, _HALF_LIFE_DAYS)
     age = _age_days(row.get("last_seen") or row.get("ts") or "", now)
-    recency = 0.5 ** (age / _HALF_LIFE_DAYS)                # 1.0 today, 0.5 at 45 days
+    recency = 0.5 ** (age / half)                           # 1.0 for anything that does not fade
+
     # identity and preference are what he IS; an off-hand fact is what he mentioned once.
     weight = {"identity": 1.6, "preference": 1.3, "relationship": 1.3,
-              "persona": 1.2, "private-secret": 1.2}.get(row.get("mem_class", ""), 1.0)
+              "persona": 1.2, "private-secret": 1.2}.get(cls, 1.0)
     return round(weight * (1.0 + freq) * (0.35 + 0.65 * recency), 4)
 
 

@@ -157,6 +157,40 @@ def main() -> int:
           find("cool af") is None,
           "the durability gate decides what may be counted; salience only ranks what is")
 
+    # ── 7. "LIKE" IS NOT ALWAYS A PREFERENCE ───────────────────────────────────
+    # THE OPERATOR: "there is subtlety to what you are trying to throw away. I DO indeed
+    # like fun, and one could say that is an important thing to remember."
+    # He was right. "I like fun" is a DISPOSITION and it belongs in the store. What did NOT
+    # belong was the chatter sitting next to it, filed as `preference` because the word
+    # "like" appeared in it as a COMPARATOR:
+    check("'I like fun' is a preference — a disposition, and it stays",
+          lc.classify("I like fun") == "preference", lc.classify("I like fun"))
+    check("...but 'like this' is a COMPARATOR, not a preference",
+          lc.classify("then we can remember our idea's like this!") != "preference",
+          lc.classify("then we can remember our idea's like this!"))
+    check("...and so is 'more like'",
+          lc.classify("more like, hey have fun, but I have the masterkey.") != "preference",
+          lc.classify("more like, hey have fun, but I have the masterkey."))
+    check("...while a real favourite is still a preference",
+          lc.classify("my favorite tea is Oolong") == "preference")
+
+    # ── 8. A DISPOSITION DOES NOT FADE. AN APPOINTMENT DOES. ───────────────────
+    # "I like fun" is true in ten years. "my flight is at 9am on Friday" is worthless at
+    # 9:01 on Friday. One 45-day half-life for both is wrong in the direction that hurts.
+    old = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 200 * 86400))
+    disposition = {"text": "I like fun", "mem_class": "preference",
+                   "mentions": 1, "last_seen": old}
+    appointment = {"text": "my flight is at 9am on Friday", "mem_class": "event",
+                   "mentions": 1, "last_seen": old}
+    check("a disposition 200 days old has NOT faded",
+          lc.salience(disposition) > 2.0, f"{lc.salience(disposition)}")
+    check("...while a 200-day-old appointment has all but vanished",
+          lc.salience(appointment) < 0.7, f"{lc.salience(appointment)}")
+    check("...and the disposition now outranks the stale appointment by a mile",
+          lc.salience(disposition) > 3 * lc.salience(appointment))
+    check("...but the appointment is still THERE — decay is rank, not deletion",
+          lc.salience(appointment) > 0.0)
+
     total = len(PASS) + len(FAIL)
     print(f"\nG-SALIENCE: {'PASS' if not FAIL else 'FAIL'} ({len(PASS)}/{total})")
     return 0 if not FAIL else 1
