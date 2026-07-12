@@ -199,7 +199,7 @@ def agent_chat(
     # garbage logits for the served chat (verified 2026-06-26). It's also what makes the prefill
     # slow (~233ms/tok exact-integer attention); fixing the float path is the real speed unlock.
     cfg = config or InferenceConfig(temperature=0.6, repetition_penalty=1.3,
-                                    eot_bias=4.0, max_tokens=384, auto_recall=False)  # Q4B is wordier than Q8; 192 truncated it mid-word
+                                    eot_bias=4.0, max_tokens=768, auto_recall=False)  # doubled again (operator): 192 -> 384 -> 768
     _arm_self_repeat_ban(cfg, messages)
     # OKFS-tiered tools: core up front + the rest as a load-on-demand index (small system prompt).
     return run_with_tools(
@@ -269,7 +269,7 @@ def agent_chat_stream(
     # garbage logits for the served chat (verified 2026-06-26). It's also what makes the prefill
     # slow (~233ms/tok exact-integer attention); fixing the float path is the real speed unlock.
     cfg = config or InferenceConfig(temperature=0.6, repetition_penalty=1.3,
-                                    eot_bias=4.0, max_tokens=384, auto_recall=False)  # Q4B is wordier than Q8; 192 truncated it mid-word
+                                    eot_bias=4.0, max_tokens=768, auto_recall=False)  # doubled again (operator): 192 -> 384 -> 768
     _arm_self_repeat_ban(cfg, messages)
     # OKFS-tiered tools: a few core up front, the rest as a load-on-demand index -- keeps the system
     # prompt small (the 1189-token inline preamble is what stalled the gateway).
@@ -379,4 +379,5 @@ def agent_chat_stream(
                       "\n```\nAnswer using the tool_output. Copy numbers, dates, and codes "
                       "EXACTLY as printed — do not rephrase or reformat them."})
     yield "(tool loop exhausted)"
+
 

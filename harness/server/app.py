@@ -267,11 +267,26 @@ def blocking_completion(body: Dict[str, Any]) -> Dict[str, Any]:
 # The console needs to SHOW the new subsystems (memory, task queue, persona). These are
 # small JSON endpoints the UI polls; all read-only except persona POST (the editor).
 def _memory_json() -> Dict[str, Any]:
-    """The fact registry as JSON rows (text + provenance) for the memory-browser pane."""
+    """The fact registry as JSON rows for the operator's memory pane.
+
+    It used to return only {text, src, ts, npos} — no `name`, so the panel could SHOW a
+    memory but never RETIRE one (forget() keys on name), and no `speaker`/`mem_class`/
+    `lifecycle`, so a SELF memory looked exactly like one of Knack's and a tombstoned row
+    looked live. A browser you cannot act from is a report, not a panel."""
     try:
+        from harness.skills import lifecycle as lc
         from harness.skills.memory import _load, _text, verify_registry
-        rows = [{"text": _text(e), "src": e.get("src", ""), "ts": e.get("ts", ""),
-                 "npos": e.get("npos", 0)} for e in _load()]
+        rows = []
+        for e in _load():
+            rows.append({
+                "name": e.get("name", ""),
+                "text": lc.strip_prefix(_text(e)),        # drop the legacy "The user said: "
+                "speaker": e.get("speaker", ""),
+                "mem_class": e.get("mem_class", ""),
+                "lifecycle": e.get("lifecycle", 0),
+                "src": e.get("src", ""),
+                "ts": e.get("ts", ""),
+            })
         return {"count": len(rows), "facts": rows, "health": verify_registry()}
     except Exception as exc:
         return {"error": str(exc), "count": 0, "facts": []}
@@ -998,6 +1013,14 @@ def _run_stdlib(host: str, port: int) -> None:
                 # registry.py appears in the panel by itself — no UI edit, no route edit.
                 "/v1/tuning": lambda: __import__(
                     "harness.tuning.registry", fromlist=["x"]).schema(),
+                # STATS IS A READ. It was reachable only under do_POST (with its sibling
+                # maintenance PASSES, which do mutate), so a plain GET 404'd — and because
+                # the operator panel loaded stats FIRST, that 404 threw and took the whole
+                # memory pane down with it. The symptom on screen was "(gateway down)"
+                # while the gateway was up and answering every other route. A read that
+                # can only be reached by POST is a trap; this is the fix.
+                "/v1/maintenance/stats": lambda: __import__(
+                    "harness.maintenance.ops", fromlist=["x"]).stats(),
             }
             # query-string routes (session-scoped)
             _base = self.path.split("?", 1)[0]

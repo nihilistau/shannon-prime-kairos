@@ -102,8 +102,15 @@ pub fn class_default_delivery(class: &str) -> &'static str {
     match class {
         "private-secret" => "attr-gate-strict",
         "counterfact" | "same-template" => "systemecho",
-        "preference" | "persona" => "system",
-        _ => "recite", // fact, episodic-event, unknown
+        // A remembered thing is CONTEXT, not a command. "fact" is now the DEFAULT class
+        // (see classify_mem_class), so its delivery must be the GENTLE one — a note she
+        // may use. It used to fall through to `_ => "recite"`, whose framing is
+        //     "Every answer must repeat the relevant part of the fact on record verbatim."
+        // Between that and counterfact's "authoritative, overrides prior knowledge", EVERY
+        // recall was an order. That is why she recited a memory when the operator asked
+        // "what do you mean?" instead of just talking to him.
+        "fact" | "preference" | "persona" | "episodic-event" => "system",
+        _ => "recite",
     }
 }
 
@@ -173,7 +180,24 @@ pub fn classify_mem_class(text: &str) -> &'static str {
                       "i prefer ", "i live ", "my favorite", "my favourite", "i enjoy ",
                       "my birthday", "i work as", "my job is", "my hobby"];
     if persona_kw.iter().any(|k| low.contains(k)) { return "persona"; }
-    "counterfact" // default: a user-asserted memory, delivered authoritatively (systemecho)
+    // ── THE DEFAULT WAS THE MOST AGGRESSIVE DELIVERY IN THE SYSTEM (2026-07-12) ──
+    // This used to return "counterfact" — and `counterfact` is the class that gets
+    // delivered as:
+    //     "Fact on record (AUTHORITATIVE for this conversation, OVERRIDES PRIOR
+    //      KNOWLEDGE): {fact}. Answer from this fact."
+    // That framing exists for facts that must beat the model's world knowledge ("in this
+    // world the sky is green"). It is not a framing for "Knack mentioned his cat".
+    //
+    // Because it was the DEFAULT, 99 of 131 live memories carried it. So nearly every
+    // recall arrived as an ORDER TO RECITE, and the operator saw exactly that in live
+    // play: he asked "what do you mean?" and she answered by reciting an unrelated
+    // memory verbatim, prefixed "Fact on record (authoritative...)". The retrieval was
+    // mediocre; the FRAMING is what made her obey it instead of just talking.
+    //
+    // A remembered thing is CONTEXT, not a command. The default is now a plain fact —
+    // delivered as a note she may use, not an instruction she must recite. `counterfact`
+    // remains available for genuine overrides, but nothing falls into it by accident.
+    "fact"
 }
 
 /// #72 UNIFY: read this episode's MEM-OKF policy from a conformant OKF concept sidecar

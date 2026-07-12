@@ -5,69 +5,118 @@
   :root{--bg:#0c0d10;--panel:#14161b;--line:#232833;--txt:#dfe3ea;--dim:#8b93a3;
         --accent:#7dd3fc;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--self:#c084fc;}
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);padding:26px;
+  body{margin:0;background:var(--bg);color:var(--txt);padding:26px 26px 60px;
        font:14px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
   h1{font-size:19px;margin:0 0 4px;font-weight:600}
-  .sub{color:var(--dim);font-size:12.5px;margin-bottom:22px}
+  .sub{color:var(--dim);font-size:12.5px;margin-bottom:22px;max-width:900px}
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
-  .card h2{font-size:13.5px;margin:0 0 12px;color:var(--accent);font-weight:600}
-  .row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+  .card h2{font-size:13.5px;margin:0 0 4px;color:var(--accent);font-weight:600;
+           display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+  .card h2 .hint{color:var(--dim);font-weight:400;font-size:11.5px}
+  .row{display:flex;gap:8px;align-items:center;margin:10px 0;flex-wrap:wrap}
   input,select{background:#0a0b0e;color:var(--txt);border:1px solid var(--line);
                border-radius:6px;padding:7px 9px;font:inherit;flex:1;min-width:0}
-  
+  input[type=checkbox]{flex:0 0 auto;accent-color:var(--accent);cursor:pointer;
+                       width:14px;height:14px;margin:0}
   .btn{background:#1e2530;color:var(--txt);border:1px solid var(--line);border-radius:6px;
        padding:7px 13px;font:600 12.5px inherit;cursor:pointer;white-space:nowrap}
   .btn:hover{border-color:var(--accent)}
   .btn.go{background:var(--accent);color:#06121a;border-color:var(--accent)}
   .btn.danger:hover{border-color:var(--bad);color:var(--bad)}
-  .stat{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:12px;font-size:12.5px}
+  .btn:disabled{opacity:.4;cursor:default;border-color:var(--line)}
+  .btn.sm{padding:4px 9px;font-size:11.5px}
+
+  /* ── SELECTIONS: traits and moods are chips you click, not strings you retype ── */
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+  .chip{border:1px solid var(--line);background:#0a0b0e;color:var(--txt);border-radius:999px;
+        padding:4px 10px;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px;
+        user-select:none}
+  .chip:hover{border-color:var(--accent)}
+  .chip.on{background:var(--accent);color:#06121a;border-color:var(--accent);font-weight:600}
+  .chip.trait{cursor:default;border-color:#3b3350;color:#e9d8ff}
+  .chip.trait .x{cursor:pointer;color:var(--dim);font-weight:700;line-height:1}
+  .chip.trait .x:hover{color:var(--bad)}
+  .lbl{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.6px;
+       margin:12px 0 2px}
+
+  .stat{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px}
   .stat b{color:var(--accent);font-variant-numeric:tabular-nums}
-  .mem{max-height:340px;overflow:auto;border-top:1px solid var(--line);margin-top:8px}
-  .m{display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--line);
-     font-size:12.5px}
-  .m .t{flex:1}
+  .mem{max-height:400px;overflow:auto;border-top:1px solid var(--line);margin-top:8px}
+  .m{display:flex;gap:8px;align-items:flex-start;padding:7px 2px;
+     border-bottom:1px solid var(--line);font-size:12.5px}
+  .m:hover{background:#181b21}
+  .m .t{flex:1;cursor:pointer}
+  .m.sel{background:#132029}
   .tag{font-size:9.5px;padding:1px 5px;border-radius:3px;font-weight:700;letter-spacing:.3px;
-       border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+       border:1px solid var(--line);color:var(--dim);white-space:nowrap;flex:0 0 auto}
   .tag.self{color:var(--self);border-color:#5b3a8e}
-  .tag.dead{color:var(--dim);opacity:.6}
-  .x{cursor:pointer;color:var(--dim);font-weight:700;padding:0 4px}
-  .x:hover{color:var(--bad)}
+  .tag.dead{opacity:.5}
+  .dead .t{opacity:.45;text-decoration:line-through}
+
+  /* ── TUNING ── */
+  .knob{border-bottom:1px solid var(--line);padding:9px 0}
+  .knob:last-child{border-bottom:0}
+  .knob .k1{display:flex;gap:10px;align-items:center}
+  .knob .name{flex:1;min-width:0;font-size:12.5px}
+  .knob .help,.knob .why{overflow-wrap:anywhere}
+  .knob .name .key{color:var(--dim);font-size:10.5px;font-family:ui-monospace,Consolas,monospace}
+  .knob input[type=number],.knob select{flex:0 0 110px;padding:5px 7px;font-size:12.5px}
+  .knob .help{color:var(--dim);font-size:11.5px;margin-top:3px}
+  .knob .why{font-size:10.5px;margin-top:3px}
+  .why .measured{color:var(--ok)}
+  .why .chosen{color:var(--warn)}
+  .why .danger{color:var(--bad)}
+  .grp{color:var(--accent);font-size:11px;text-transform:uppercase;letter-spacing:.6px;
+       margin:14px 0 2px;font-weight:700}
+  .grp:first-child{margin-top:2px}
+  .dirty{color:var(--warn);font-size:11.5px}
+
   pre{background:#0a0b0e;border:1px solid var(--line);border-radius:7px;padding:10px;
-      font-size:11.5px;color:var(--dim);max-height:190px;overflow:auto;margin:10px 0 0;
+      font-size:11.5px;color:var(--dim);max-height:170px;overflow:auto;margin:10px 0 0;
       white-space:pre-wrap}
   .note{color:var(--dim);font-size:11.5px;margin-top:6px}
+  .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+       border-top:1px solid var(--line);padding-top:10px;margin-top:10px}
+  .spacer{flex:1}
 </style>
 
 <h1>Operator</h1>
-<div class="sub">Moods, memory, maintenance. Nothing here deletes —
-  cleanup <b>quarantines</b> (restorable), compaction <b>tombstones</b> (superseded, kept for
-  provenance). Every button returns a receipt of what it actually did.</div>
+<div class="sub">Moods, traits, memory, tuning, maintenance — one panel. Nothing here deletes:
+  retiring a memory <b>tombstones</b> it (lifecycle=1, kept for provenance, excluded from recall),
+  cleanup <b>quarantines</b> (restorable). Every button returns a receipt of what it actually did.</div>
 
 <div class="grid">
+
+  <!-- ── PERSONA ─────────────────────────────────────────────────────────── -->
   <div class="card">
-    <h2>Mood &amp; traits</h2>
+    <h2>Mood &amp; traits <span class="hint">persists to persona.md — survives restart</span></h2>
+
+    <div class="lbl">mood — click to set</div>
+    <div class="chips" id="moods"></div>
+
+    <div class="lbl">traits — click × to drop</div>
+    <div class="chips" id="traits"><span class="note">—</span></div>
     <div class="row">
-      <input id="mood" placeholder="mood — e.g. calm, flirty, focused">
-      <button class="btn go" onclick="setMood()">set mood</button>
+      <input id="trait" placeholder="add a trait — e.g. sardonic"
+             onkeydown="if(event.key==='Enter')addTrait()">
+      <button class="btn" onclick="addTrait()">add</button>
     </div>
-    <div class="row">
-      <input id="trait" placeholder="trait — e.g. sardonic">
-      <button class="btn" onclick="setTrait('add')">add</button>
-      <button class="btn danger" onclick="setTrait('remove')">remove</button>
-    </div>
-    <div class="note">Persists to persona.md — survives a restart. She can also change these
-      herself mid-conversation.</div>
-    <pre id="persona">—</pre>
+    <div class="note">She can change these herself mid-conversation
+      (<code>set_trait</code> / <code>adjust_mood</code>) — this is the same lever, not a
+      parallel one.</div>
+    <div class="note" id="voice" style="margin-top:8px"></div>
   </div>
 
+  <!-- ── MAINTENANCE ─────────────────────────────────────────────────────── -->
   <div class="card">
-    <h2>Maintenance</h2>
+    <h2>Maintenance <span class="hint">receipts, not promises</span></h2>
     <div class="row">
       <button class="btn" onclick="run('compact')">compaction</button>
       <button class="btn" onclick="run('cleanup')">cleanup</button>
       <button class="btn" onclick="run('nightshift')">nightshift</button>
-      <button class="btn" onclick="refresh()">refresh</button>
+      <div class="spacer"></div>
+      <button class="btn sm" onclick="refresh()">refresh</button>
     </div>
     <div class="note">
       <b>compaction</b> — fold duplicates, retire paraphrases, supersede conflicting facts.<br>
@@ -77,16 +126,53 @@
     <pre id="out">—</pre>
   </div>
 
+  <!-- ── TUNING ──────────────────────────────────────────────────────────── -->
   <div class="card" style="grid-column:1/-1">
-    <h2>Memory</h2>
+    <h2>Tuning
+      <span class="hint">green = measured against a gate · amber = chosen, and it says so</span>
+    </h2>
+    <div id="knobs"><span class="note">loading…</span></div>
+    <div class="bar">
+      <button class="btn go" id="save" onclick="saveTuning()" disabled>save</button>
+      <button class="btn" onclick="loadTuning()">revert</button>
+      <button class="btn danger" onclick="resetTuning()">reset all to default</button>
+      <span class="dirty" id="dirty"></span>
+      <div class="spacer"></div>
+      <span class="note">takes effect on the next turn — no restart</span>
+    </div>
+  </div>
+
+  <!-- ── MEMORY ──────────────────────────────────────────────────────────── -->
+  <div class="card" style="grid-column:1/-1">
+    <h2>Memory
+      <span class="hint">click a row to select · retire is a tombstone, not a delete</span>
+    </h2>
     <div class="stat" id="stat">—</div>
+
     <div class="row">
-      <input id="fact" placeholder='a fact — "Knack&apos;s cat is called Tuffy"'>
-      <select id="who" style="flex:0 0 130px">
+      <input id="fact" placeholder='a fact — "Knack&apos;s cat is called Tuffy"'
+             onkeydown="if(event.key==='Enter')addFact()">
+      <select id="who" style="flex:0 0 140px">
         <option value="user">about Knack</option>
         <option value="self">about herself</option>
       </select>
       <button class="btn go" onclick="addFact()">remember</button>
+    </div>
+
+    <div class="bar" style="border:0;padding:0;margin:4px 0 0">
+      <input type="checkbox" id="all" onchange="toggleAll(this.checked)">
+      <label for="all" class="note" style="margin:0;cursor:pointer">select all shown</label>
+      <span class="note" id="nsel">0 selected</span>
+      <button class="btn danger sm" id="retire" onclick="retireSelected()" disabled>retire selected</button>
+      <div class="spacer"></div>
+      <select id="filter" style="flex:0 0 170px" onchange="draw()">
+        <option value="live">live only</option>
+        <option value="user">about Knack</option>
+        <option value="self">about her</option>
+        <option value="dead">retired</option>
+        <option value="all">everything</option>
+      </select>
+      <input id="q" placeholder="filter…" style="flex:0 0 180px" oninput="draw()">
     </div>
     <div class="mem" id="mem"></div>
   </div>
@@ -97,77 +183,201 @@ const GW = 'http://127.0.0.1:8800';
 const j = async (p, b) => (await fetch(GW + p, b ? {
   method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b)
 } : undefined)).json();
+const esc = s => String(s == null ? '' : s).replace(/[<>&"']/g, c => (
+  {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+const show = o => document.getElementById('out').textContent =
+  typeof o === 'string' ? o : JSON.stringify(o, null, 2);
 
-const esc = s => (s || '').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
-const show = o => document.getElementById('out').textContent = JSON.stringify(o, null, 2);
+const MOODS = ['flirty','playful','curious','warm','calm','focused','sardonic','tired'];
 
-async function run(op) {
-  document.getElementById('out').textContent = op + '…';
-  show(await j('/v1/maintenance/' + op, {}));
+let MEM = [];              // full row set from /v1/memory
+let SEL = new Set();       // selected memory names
+let KNOBS = [], PENDING = {};
+
+/* ── PERSONA: chips, not text boxes ──────────────────────────────────────── */
+async function loadPersona() {
+  let st;
+  try {
+    const r = await j('/v1/persona/state');
+    st = r.state || r;                       // endpoint wraps: {ok, state:{…}}
+  } catch { document.getElementById('traits').innerHTML =
+    '<span class="note">(gateway down)</span>'; return; }
+
+  const mood = (st.mood || '').trim();
+  document.getElementById('moods').innerHTML = MOODS.map(m =>
+    `<span class="chip${m === mood ? ' on' : ''}" onclick="setMood('${m}')">${m}</span>`
+  ).join('') + (mood && !MOODS.includes(mood)
+    ? `<span class="chip on">${esc(mood)}</span>` : '');
+
+  const traits = (st.traits || '').split(',').map(s => s.trim()).filter(Boolean);
+  document.getElementById('traits').innerHTML = traits.length
+    ? traits.map(t => `<span class="chip trait">${esc(t)}<span class="x"
+        title="drop this trait" onclick="dropTrait('${esc(t)}')">×</span></span>`).join('')
+    : '<span class="note">(none)</span>';
+
+  document.getElementById('voice').textContent =
+    `voice: ${st.voice || '—'}   ·   gender: ${st.gender || '—'}`;
+}
+async function setMood(m)   { show(await j('/v1/persona/set/mood',  {mood: m})); loadPersona(); }
+async function dropTrait(t) { show(await j('/v1/persona/set/trait', {trait: t, action: 'remove'})); loadPersona(); }
+async function addTrait() {
+  const el = document.getElementById('trait'), t = el.value.trim();
+  if (!t) return;
+  show(await j('/v1/persona/set/trait', {trait: t, action: 'add'}));
+  el.value = ''; loadPersona();
+}
+
+/* ── MEMORY: selectable rows ─────────────────────────────────────────────── */
+function visible() {
+  const f = document.getElementById('filter').value;
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  return MEM.filter(r => {
+    const dead = !!r.lifecycle;
+    if (f === 'live' && dead) return false;
+    if (f === 'dead' && !dead) return false;
+    if (f === 'self' && r.speaker !== 'self') return false;
+    if (f === 'user' && r.speaker === 'self') return false;
+    if (q && !(r.text || '').toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+function draw() {
+  const rows = visible();
+  document.getElementById('mem').innerHTML = rows.map(r => {
+    const dead = !!r.lifecycle, self = r.speaker === 'self', on = SEL.has(r.name);
+    return `<div class="m${dead ? ' dead' : ''}${on ? ' sel' : ''}">
+      <input type="checkbox" ${on ? 'checked' : ''} ${dead ? 'disabled' : ''}
+             onchange="pick('${esc(r.name)}',this.checked)">
+      <span class="tag${self ? ' self' : ''}${dead ? ' dead' : ''}">${self ? 'SELF' : 'user'}</span>
+      <span class="tag${dead ? ' dead' : ''}">${esc(r.mem_class || '—')}</span>
+      <span class="t" onclick="pick('${esc(r.name)}',!${on})">${esc(r.text)}</span>
+      ${dead ? '<span class="tag dead">retired</span>' : ''}
+    </div>`;
+  }).join('') || '<div class="note" style="padding:10px">(nothing matches)</div>';
+
+  const n = SEL.size;
+  document.getElementById('nsel').textContent = `${n} selected`;
+  document.getElementById('retire').disabled = !n;
+  const live = rows.filter(r => !r.lifecycle);
+  document.getElementById('all').checked = live.length > 0 && live.every(r => SEL.has(r.name));
+}
+function pick(name, on) { on ? SEL.add(name) : SEL.delete(name); draw(); }
+function toggleAll(on) {
+  visible().filter(r => !r.lifecycle).forEach(r => on ? SEL.add(r.name) : SEL.delete(r.name));
+  draw();
+}
+async function retireSelected() {
+  const names = [...SEL];
+  if (!names.length || !confirm(
+      `Retire ${names.length} ${names.length === 1 ? 'memory' : 'memories'}?\n\n` +
+      `Tombstoned (lifecycle=1) — kept on disk for provenance, excluded from recall.`)) return;
+  const res = [];
+  for (const n of names) res.push(await j('/v1/memory/forget', {name: n}));
+  SEL.clear();
+  show({retired: names.length, results: res});
   refresh();
 }
-
-async function setMood() {
-  const m = document.getElementById('mood').value.trim();
-  if (!m) return;
-  show(await j('/v1/persona/set/mood', {mood: m}));
-  loadPersona();
-}
-async function setTrait(action) {
-  const t = document.getElementById('trait').value.trim();
-  if (!t) return;
-  show(await j('/v1/persona/set/trait', {trait: t, action}));
-  loadPersona();
-}
 async function addFact() {
-  const f = document.getElementById('fact').value.trim();
+  const el = document.getElementById('fact'), f = el.value.trim();
   if (!f) return;
   const r = await j('/v1/memory/add', {fact: f, speaker: document.getElementById('who').value});
   show(r);
-  if (r.ok) document.getElementById('fact').value = '';
-  refresh();
-}
-async function forget(name) {
-  show(await j('/v1/memory/forget', {name}));
+  if (r.ok) el.value = '';
   refresh();
 }
 
-async function loadPersona() {
-  try {
-    const s = await j('/v1/persona/state');
-    document.getElementById('persona').textContent =
-      Object.entries(s).map(([k, v]) => `${k}: ${v}`).join('\n') || '—';
-  } catch { document.getElementById('persona').textContent = '(gateway down)'; }
+/* ── TUNING ──────────────────────────────────────────────────────────────── */
+async function loadTuning() {
+  let s;
+  try { s = await j('/v1/tuning'); }
+  catch { document.getElementById('knobs').innerHTML =
+    '<span class="note">(gateway down)</span>'; return; }
+  KNOBS = s.knobs || []; PENDING = {};
+  const html = (s.groups || []).map(g => {
+    const ks = KNOBS.filter(k => k.group === g);
+    if (!ks.length) return '';
+    return `<div class="grp">${esc(g)}</div>` + ks.map(k => {
+      const id = 'k_' + k.key.replace(/\W/g, '_');
+      let ctl;
+      if (k.type === 'bool') {
+        ctl = `<input type="checkbox" id="${id}" ${k.value ? 'checked' : ''}
+                 onchange="edit('${k.key}',this.checked)">`;
+      } else if ((k.choices || []).length) {
+        ctl = `<select id="${id}" onchange="edit('${k.key}',this.value)">` +
+          k.choices.map(c => `<option ${String(k.value) === String(c) ? 'selected' : ''}
+            >${esc(c)}</option>`).join('') + '</select>';
+      } else {
+        ctl = `<input type="number" id="${id}" value="${esc(k.value)}"
+                 ${k.min != null ? `min="${k.min}"` : ''} ${k.max != null ? `max="${k.max}"` : ''}
+                 step="${k.step != null ? k.step : (k.type === 'int' ? 1 : 'any')}"
+                 oninput="edit('${k.key}',this.value)">`;
+      }
+      const why = [];
+      if (k.receipt) why.push(`<span class="${k.provenance === 'measured' ? 'measured' : 'chosen'}"
+        >${k.provenance === 'measured' ? '✓ measured' : '· chosen'} — ${esc(k.receipt)}</span>`);
+      if (k.danger) why.push(`<span class="danger">⚠ ${esc(k.danger)}</span>`);
+      return `<div class="knob">
+        <div class="k1">
+          <span class="name">${esc(k.label)}
+            ${k.overridden ? '<span class="dirty">·overridden</span>' : ''}
+            <br><span class="key">${esc(k.key)} &nbsp;default ${esc(k.default)}</span></span>
+          ${ctl}
+          <button class="btn sm" title="back to default"
+                  onclick="resetKnob('${k.key}')">↺</button>
+        </div>
+        <div class="help">${esc(k.help)}</div>
+        ${why.length ? `<div class="why">${why.join('<br>')}</div>` : ''}
+      </div>`;
+    }).join('');
+  }).join('');
+  document.getElementById('knobs').innerHTML = html || '<span class="note">(no knobs)</span>';
+  markDirty();
+}
+function edit(key, v) {
+  const k = KNOBS.find(x => x.key === key);
+  if (k.type === 'int')        v = parseInt(v, 10);
+  else if (k.type === 'float') v = parseFloat(v);
+  if (typeof v === 'number' && Number.isNaN(v)) return;
+  (String(v) === String(k.value)) ? delete PENDING[key] : PENDING[key] = v;
+  markDirty();
+}
+function markDirty() {
+  const n = Object.keys(PENDING).length;
+  document.getElementById('save').disabled = !n;
+  document.getElementById('dirty').textContent = n ? `${n} unsaved` : '';
+}
+async function saveTuning() {
+  show(await j('/v1/tuning', {values: PENDING}));
+  loadTuning();
+}
+async function resetKnob(key) { show(await j('/v1/tuning/reset', {key})); loadTuning(); }
+async function resetTuning() {
+  if (confirm('Reset every knob to its default?')) {
+    show(await j('/v1/tuning/reset', {key: ''})); loadTuning();
+  }
 }
 
+/* ── REFRESH ─────────────────────────────────────────────────────────────── */
 async function refresh() {
-  loadPersona();
+  loadPersona(); loadTuning();
   try {
     const s = await j('/v1/maintenance/stats');
     document.getElementById('stat').innerHTML =
       `<span>live <b>${s.live}</b></span>
-       <span>superseded <b>${s.superseded}</b></span>
+       <span>retired <b>${s.superseded}</b></span>
        <span>about her <b>${s.self}</b></span>
        <span>about you <b>${s.user}</b></span>
        <span>legacy (no speaker) <b>${s.legacy_no_speaker}</b></span>`;
     const m = await j('/v1/memory');
-    const rows = (m.memories || m.facts || m.rows || []);
-    document.getElementById('mem').innerHTML = rows.slice(0, 200).map(r => {
-      const dead = r.lifecycle ? ' dead' : '';
-      const self = r.speaker === 'self';
-      const txt = (r.text || r.topic || '').replace(/^The user said:\s*/, '');
-      return `<div class="m">
-        <span class="tag${self ? ' self' : ''}${dead}">${self ? 'SELF' : 'user'}</span>
-        <span class="tag${dead}">${esc(r.mem_class || '—')}</span>
-        <span class="t" style="${r.lifecycle ? 'opacity:.45;text-decoration:line-through' : ''}">${esc(txt)}</span>
-        ${r.lifecycle ? '' : `<span class="x" title="retire (tombstone, not delete)"
-              onclick="forget('${esc(r.name)}')">×</span>`}
-      </div>`;
-    }).join('') || '<div class="note" style="padding:10px">(empty)</div>';
+    MEM = (m.facts || m.memories || m.rows || []);
+    // keep selections only for rows that still exist and are still live
+    const liveNames = new Set(MEM.filter(r => !r.lifecycle).map(r => r.name));
+    SEL = new Set([...SEL].filter(n => liveNames.has(n)));
+    draw();
   } catch (e) {
     document.getElementById('stat').textContent = '(gateway down)';
+    document.getElementById('mem').innerHTML = '';
   }
 }
 refresh();
 </script>
-

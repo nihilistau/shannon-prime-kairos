@@ -734,8 +734,8 @@
       const extra = { session_id: sessionId };
       if (CHAT_FALLBACK) extra.auto_recall = false;
       // 384 (3x the old 128): operator live-play 2026-07-11 — replies cut mid-sentence.
-      let res = await streamChat({ messages: history, max_tokens: 384, ...s, ...extra });
-      if (res && res.retryPrompt) res = await streamChat({ prompt: gemmaPrompt(history), max_tokens: 384, ...s, ...extra });
+      let res = await streamChat({ messages: history, max_tokens: 768, ...s, ...extra });
+      if (res && res.retryPrompt) res = await streamChat({ prompt: gemmaPrompt(history), max_tokens: 768, ...s, ...extra });
       const finalText = (res && res.text || '').trim();
       history.push({ role: 'assistant', content: finalText });
     } catch (err) {
@@ -810,3 +810,4 @@
 </script>
 </body>
 </html>
+

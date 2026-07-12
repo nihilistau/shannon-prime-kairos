@@ -6,7 +6,7 @@
 # Rollback = point this back at the staging exe:
 #   shannon-prime-system-engine/tools/sp_daemon/target-wirecuda/release/sp-daemon.exe
 engine_exe = 'D:/F/shannon-prime-repos/shannon-prime-kairos/engine/tools/sp_daemon/target-wirecuda/release/sp-daemon.exe'
-model      = 'D:/F/shannon-prime-repos/models/gemma4-12b-q4b.sp-model'
+model      = 'D:/F/shannon-prime-repos/models/gemma4-12b-b1-reason.sp-model'
 tokenizer  = 'D:/F/shannon-prime-repos/models/gemma4-12b-b1.sp-tokenizer'
 # P1a follow-up (2026-07-11): production registry MIGRATED to kairos var/memory
 # (388 rows, SHA-verified copy; staging _memory_live stays as the frozen backup).
@@ -85,8 +85,7 @@ mtp = false  # P5: verify machinery proven byte-exact, but prompt-lookup drafts 
 # attended-content probes (persona details + tool-number copying); documented
 # in the gate. Lever stays (explicit byteexact:false per request), default OFF.
 byteexact = true
-eot_bias = 6.0   # RECALIBRATED FOR Q4B. 4.0 was tuned on Q8 and left replies dying mid-word;
-# 6.0 restored G-CONVERSATION to 43/44 (Q8 parity). Re-run the sweep if the model changes.
+eot_bias = 4.0
 # G-VERBATIM (2026-07-12) — ROOT CAUSE OF THE DIGIT/COPY BUG. MUST STAY 0.
 # no_repeat_ngram=N bans any N-token sequence ALREADY IN CONTEXT. Verbatim copying
 # IS that: to echo "4471" the model must re-emit the trigram 4->4->7 it can see in
@@ -98,4 +97,3 @@ no_repeat_ngram = 0
 
 [veto]
 spectest = true
-
