@@ -141,22 +141,75 @@ def compact() -> dict[str, Any]:
 
 
 # ──── CLEANUP — quarantine what is not a memory ───────────────────────────────
-def cleanup() -> dict[str, Any]:
-    """Quarantine rows that are not memories: ASR/voice test corpus, impersonal
-    declaratives, instructions, chatter. REVERSIBLE — everything lands in quarantine.jsonl
-    with a reason, and the registry is backed up first. Nothing is destroyed."""
+def cleanup(dry: bool = False) -> dict[str, Any]:
+    """Quarantine rows that are not memories — and RESCUE the facts trapped inside them.
+
+    REVERSIBLE: everything lands in quarantine.jsonl with a reason, and the registry is
+    backed up first. Nothing is destroyed.
+
+    THE RESCUE PASS (2026-07-12) exists because the old capture stored whole TURNS. A row
+    like
+
+        "look, it's not my fault. I had a 2060 6gb super and i got a new intel nuc"
+
+    fails the durability test as a unit — it opens with a discourse marker and an
+    anaphoric non-fact — so a plain cleanup would quarantine it and take the 2060 and the
+    NUC with it. But the fact is IN there; it is just wearing a conversation. So before a
+    row is quarantined we split it and keep whatever is durable, re-stamped as a proper
+    fact. The junk goes; what the junk was carrying stays.
+
+    LEGACY ROWS (27 of them) carry no speaker at all — they predate the two-store lane, so
+    recall could not tell whose they were. Anything surviving cleanup gets stamped: it came
+    from a user turn, so it is the user's."""
     rows = _rows()
-    bak = _backup()
-    keep, junk = [], []
+    bak = None if dry else _backup()
+    keep, junk, rescued = [], [], []
+    seen = {lc.strip_prefix(r.get("text") or r.get("topic") or "").strip().lower()
+            for r in rows}
+
     for r in rows:
         if r.get("lifecycle"):
             keep.append(r)                                # already retired; leave it
             continue
         txt = lc.strip_prefix(r.get("text") or r.get("topic") or "")
-        ok, why = lc.is_memorable(txt)
-        (keep if ok else junk).append(r if ok else {**r, "quarantine_reason": why})
 
-    if junk:
+        # A ROW IN THE STORE IS ONE FACT, NOT A TURN — the same standard the capture lane
+        # now holds new writes to. The first dry run of this KEPT
+        #
+        #     "well, we make do. you're doing alright for such a constrained system"
+        #
+        # because is_memorable() was asked about the whole multi-sentence turn and the
+        # leading fragment carried it. Judging a turn as a unit is the original sin: it is
+        # what let the firehose in, and it would have let the firehose's leavings stay.
+        # So a multi-sentence row is quarantined and its durable sentences RESCUED — the
+        # row is rebuilt as facts instead of being graded as prose.
+        ok, why = lc.is_memorable(txt)
+        if ok and len(lc.split_sentences(txt)) == 1:
+            # LEGACY: no speaker means recall could not tell whose fact it was.
+            if not r.get("speaker"):
+                r["speaker"] = lc.SPEAKER_USER
+                r["mem_class"] = r.get("mem_class") or lc.classify(txt)
+                r["src"] = (r.get("src") or "") + " | cleanup: stamped speaker=user"
+            keep.append(r)
+            continue
+        if ok:
+            why = "that is a TURN, not a fact — split into the facts it carries"
+
+        # RESCUE before quarantine — the turn is junk, but it may be CARRYING a fact.
+        for f in lc.extract_facts(txt):
+            if f.strip().lower() in seen:
+                continue
+            seen.add(f.strip().lower())
+            row = {"name": f"ep_rescue_{int(time.time() * 1000)}_{len(rescued)}",
+                   "dir": "", "npos": 0, "topic": f[:40], "sig_bits": "0" * 64}
+            lc.stamp(row, f, r.get("speaker") or lc.SPEAKER_USER,
+                     f"rescued from {r.get('name', '?')}")
+            keep.append(row)
+            rescued.append(f)
+
+        junk.append({**r, "quarantine_reason": why})
+
+    if junk and not dry:
         q = os.path.join(os.path.dirname(_reg()), "quarantine.jsonl")
         with open(q, "a", encoding="utf-8") as f:
             for r in junk:
@@ -166,7 +219,10 @@ def cleanup() -> dict[str, Any]:
 
     from collections import Counter
     why = Counter(r.get("quarantine_reason", "?")[:44] for r in junk)
-    return {"ok": True, "backup": bak, "quarantined": len(junk), "kept": len(keep),
+    return {"ok": True, "dry_run": dry, "backup": bak,
+            "quarantined": len(junk), "kept": len(keep) - len(rescued),
+            "rescued": len(rescued), "rescued_facts": rescued[:12],
+            "quarantined_sample": [r.get("text", "")[:60] for r in junk[:12]],
             "reasons": dict(why.most_common(6)), "restorable": True}
 
 

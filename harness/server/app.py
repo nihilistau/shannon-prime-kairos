@@ -67,6 +67,7 @@ def _agent_text(body: Dict[str, Any]) -> str:
     # the scenario OFFER outright. Wired at BOTH entry points (here and _native_chat_sse) —
     # a hook wired into one of two paths has been the single most reliable bug in this
     # system, four times over in one day.
+    _arm_turn(msgs)
     _offer = _roleplay_pre_turn(body, msgs)
     if _offer:
         return _offer
@@ -96,6 +97,25 @@ def _agent_text(body: Dict[str, Any]) -> str:
     _capture_after_turn(msgs)
     _kairos_after_turn(body, text)
     return text
+
+
+def _arm_turn(msgs: list) -> None:
+    """Hand the memory lane HIS ACTUAL WORDS for this turn.
+
+    recall() needs them to resolve ownership. Asked "what is YOUR name?" she calls
+    recall(query="What is my name?") — she rewrites the question into her own first person.
+    Asked "what is MY name?" she calls recall(query="What is my name?"): the identical
+    string. Two opposite questions, one query, so her paraphrase cannot say who is being
+    asked after. His sentence can, and always could — in it, "my" is Knack and "your" is
+    Shannon. Resolve the pronoun where it was uttered."""
+    try:
+        last_user = next((m.get("content", "") for m in reversed(msgs or [])
+                          if m.get("role") == "user"), "")
+        from harness.skills import memory as M
+        M.set_question(last_user)
+        M.set_author("user")
+    except Exception:
+        pass
 
 
 def _capture_after_turn(msgs: list) -> None:
@@ -727,6 +747,7 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
     # ROLEPLAY (console path). Same hook as the OpenAI path — a scenario OFFER short-circuits
     # the model entirely; otherwise the scene's system prompt + this turn's DIRECTOR NOTE
     # are injected into the message list before the agent runs.
+    _arm_turn(msgs)          # the console path resolves pronouns from HIS words too
     try:
         _rp_offer = _roleplay_pre_turn(body, msgs)
         if _rp_offer:

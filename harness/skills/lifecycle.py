@@ -253,11 +253,20 @@ _STATIVE = re.compile(
 # Nothing hypothetical, conditional or future is a fact yet.
 _IRREALIS = re.compile(
     r"^\s*(?:if|when|whenever|unless|suppose|imagine|maybe|perhaps)\b|"
-    r"\b(?:would|could|might|may|will|'ll|shall|gonna|going to)\b", re.I)
+    r"\b(?:would|could|might|may|will|'ll|shall|gonna|going to|"
+    r"hope|hopes|hoping|hopefully|wish|wishes)\b", re.I)
 
-# A short exclamation is a reaction, not a record. "I like my kidneys!" is a joke;
-# "the kettle is my favorite" is a preference. Length + the bang tell them apart.
+# A short exclamation is a reaction, not a record. "I like my kidneys!" is a joke.
+#
+# But the bang alone is not enough to condemn a sentence: "my favorite tea is Oolong too!"
+# is a genuine preference wearing an exclamation mark, and the first cut of this rule
+# quarantined it. LOSING A REAL FACT IS WORSE THAN KEEPING A JOKE — a store that discards
+# what you told it is worse than one carrying a little noise. So an exclamation is only a
+# reaction when it is NOT making an attributive claim (a favourite, a name, a birthday):
+# those name a standing property, and standing properties survive their punctuation.
 _REACTION = re.compile(r"!\s*$")
+_ATTRIBUTIVE = re.compile(
+    r"\b(favou?rite|lucky|name is|is called|am called|born|birthday|prefers?)\b", re.I)
 
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+|\s*\n+\s*")
 
@@ -307,7 +316,7 @@ def is_memorable(fact: str) -> tuple[bool, str]:
     if len(words) < 3:                # "I am male" is three words and a real identity fact
         return False, "too short to be a standalone fact"
 
-    if _REACTION.search(core) and len(words) < 7:
+    if _REACTION.search(core) and len(words) < 7 and not _ATTRIBUTIVE.search(core):
         return False, "that is a reaction, not a record."
 
     if not _STATIVE.search(core):

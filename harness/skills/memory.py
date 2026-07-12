@@ -71,10 +71,14 @@ def _overlap(query: str, target: str) -> float:
 # ──── the tools ────────────────────────────────────────────────────────────
 def list_memories() -> str:
     """List every fact currently stored in long-term memory."""
-    eps = _load()
+    from harness.skills import lifecycle as lc
+    # LIVE (not retired), and FRAMED. It used to dump every row raw — including superseded
+    # ones — so she read back tombstones as current, and read HIS first-person facts ("My
+    # name is Knack") as if they were her own. The owner is stamped on the row; render it.
+    eps = [e for e in _load() if not e.get("lifecycle")]
     if not eps:
         return "(memory is empty)"
-    return "\n".join(f"{i + 1}. {_text(e)}" for i, e in enumerate(eps))
+    return "\n".join(f"{i + 1}. {lc.render(e)}" for i, e in enumerate(eps))
 
 
 def remember(fact: str, source: str = "") -> str:
@@ -362,6 +366,120 @@ def search_memories(query: str) -> str:
     return "\n".join(f"{i+1}. {t}  [match {s:.2f}]" for i, (s, t) in enumerate(hits))
 
 
+def recall(query: str) -> str:
+    """Look up what you KNOW about something — the fast, targeted way to answer a question
+    from memory. Use this for any question about the user or about yourself
+    (recall("what is the user's name") -> Knack told me: The user's name is Knack).
+    Prefer this over list_memories, which dumps everything.
+
+    WHY THIS TOOL EXISTS (2026-07-12). Her whole live toolset for READING memory was
+    list_memories() — a dump of every row. It is expensive and undiscriminating, so she
+    simply did not call it: asked "what is my name?" she skipped memory entirely and
+    answered "I am Shannon-Prime." from her persona. She had no cheap way to LOOK SOMETHING
+    UP, so she guessed. The ranked search had existed the whole time, parked in
+    MEMORY_TOOLS_EXTRA and wired into no live toolset — the same drawer the personality
+    tools were found in.
+
+    And it renders through lifecycle.render(), which is the other half of the identity fix:
+    a row that reads "My name is Knack" — first person, because HE said it — comes back
+    from an unframed search looking like something SHE said. Framing the owner at READ time
+    ("Knack told me: ..." / "About myself: ...") is what stops his facts arriving in her
+    voice. Retired rows are excluded: superseded is superseded."""
+    from harness.skills import lifecycle as lc
+    hits = [(s, e) for s, e in search_memories_ranked_rows(query, k=12, min_overlap=0.25)
+            if not e.get("lifecycle")]
+    if not hits:
+        return f"(nothing in memory about '{query}')"
+    hits = _target_and_rank(query, hits)
+    return "\n".join(f"{i + 1}. {lc.render(e)}" for i, (s, e) in enumerate(hits[:5]))
+
+
+# ── WHO IS THE QUESTION ABOUT? (2026-07-12) ───────────────────────────────────
+# The trace that forced this. Asked "what is my name?", recall returned:
+#
+#     1. Knack told me: My cat's name is Tuffy.
+#     2. Knack told me: The user's name is Knack
+#     3. About myself: My name is Shannon.
+#
+# ...and she answered "My name is Shannon." Of course she did — of the three, row 3 is the
+# one whose SURFACE FORM matches the question. Pure token overlap cannot tell "my name" in
+# HIS mouth from "my name" in HERS; it just sees the words line up.
+#
+# But the store already knows whose each fact is — `speaker` is stamped on every row. The
+# missing step is reading the PRONOUN IN THE QUESTION: when he says "my", he is asking
+# about HIM; when he says "your", he is asking about HER. Scope the search to that person
+# and the ambiguity is gone at the source, rather than being left for the model to resolve
+# by guessing — which is precisely the guess that keeps coming out wrong.
+#
+# The relationship penalty is the second half: "My cat's name is Tuffy" tied with "The
+# user's name is Knack" at 1.00, because the query token was {name} and both rows have it.
+# A row that drags in an entity the question never mentioned (a cat) is answering a
+# question that was not asked.
+_ASKS_SELF = re.compile(r"\b(your|yours|you|you're|youre)\b", re.I)
+_ASKS_USER = re.compile(r"\b(my|mine|me|i|i'm|im)\b", re.I)
+_REL_NOUN = re.compile(
+    r"\b(wife|husband|partner|girlfriend|boyfriend|brother|sister|mother|father|mum|mom|"
+    r"dad|son|daughter|friend|cat|dog|pet)\b", re.I)
+
+
+# THE USER'S ACTUAL WORDS THIS TURN. The gateway sets this before the agent runs.
+#
+# WHY IT HAS TO BE HIS SENTENCE AND NOT HER QUERY (2026-07-12, from the trace). Asked
+# "what is YOUR name?", she called recall(query="What is my name?") — she rewrites the
+# question into her own first person, which is the natural thing to do. Asked "what is MY
+# name?", she called recall(query="What is my name?") — the identical string. Two opposite
+# questions, one query. So the pronoun in the string SHE passes carries no information
+# about who is being asked after; it only tells you whose mouth the paraphrase is in.
+#
+# The pronoun is only reliable where it was UTTERED. In HIS sentence "my" means Knack and
+# "your" means Shannon, always. So ownership is resolved from the human's words, and her
+# query is used for what it is actually good for: matching the content.
+_QUESTION = ""
+
+
+def set_question(text: str) -> None:
+    global _QUESTION
+    _QUESTION = text or ""
+
+
+def _query_target(query: str):
+    """Whose fact is this question asking for? Resolved from HIS sentence, not from her
+    paraphrase of it — see _QUESTION. 'your' -> hers. 'my' -> his."""
+    from harness.skills import lifecycle as lc
+    src = _QUESTION or query          # his words if we have them; hers only as a fallback
+    if _ASKS_SELF.search(src):
+        return lc.SPEAKER_SELF
+    if _ASKS_USER.search(src):
+        return lc.SPEAKER_USER
+    return None
+
+
+def _target_and_rank(query: str, hits):
+    from harness.skills import lifecycle as lc
+    target = _query_target(query)
+    if target:
+        owned = [(s, e) for s, e in hits
+                 if (e.get("speaker") or lc.SPEAKER_USER) == target]
+        if owned:                      # only narrow when the person HAS a matching fact
+            hits = owned
+
+    q_rel = set(m.lower() for m in _REL_NOUN.findall(query))
+    qt = _toks(query)
+
+    def adjust(s, e):
+        t = _text(e)
+        # a row that introduces a relative/pet the question never mentioned is off-target
+        row_rel = set(m.lower() for m in _REL_NOUN.findall(t))
+        if row_rel - q_rel:
+            s -= 0.40
+        # an identity question wants the identity row, not everything containing "name"
+        if "name" in qt and e.get("mem_class") == "identity":
+            s += 0.30
+        return s
+
+    return sorted(((adjust(s, e), e) for s, e in hits), key=lambda x: -x[0])
+
+
 def memory_stats() -> str:
     """A one-line summary of the memory store: count, provenance mix, minted fraction."""
     eps = _load()
@@ -449,7 +567,10 @@ def compact_registry() -> str:
 # never had. Leaving it behind a load_tools() call is exactly how she ended up with 404
 # memories of the user and none of herself. count_memories drops to the index tier to
 # keep the ready-now set small (list_memories subsumes it).
-MEMORY_TOOLS = [remember, remember_about_self, list_memories, forget]
+# recall() JOINS THE LIVE SET. Without it her only way to READ memory was list_memories —
+# a dump of everything — so she did not read at all, and answered from persona instead.
+# A memory she cannot cheaply look up is a memory she does not have.
+MEMORY_TOOLS = [remember, remember_about_self, recall, list_memories, forget]
 # Extra tier: discoverable via the OKFS load_tools index (full signature on demand).
 MEMORY_TOOLS_EXTRA = [provenance, search_memories, memory_stats]
 # Hygiene tools are curation-tier (not in the hot chat set); used by the agency round + operator.

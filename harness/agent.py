@@ -45,6 +45,14 @@ _TOOL_DISCIPLINE = (
     # which is why she slid into speaking as him. Two things were missing: a REASON
     # to write, and a SELF to write about. The tools existed and were gated GREEN;
     # they were simply never given to her.
+    # READING is a tool too. She had only list_memories (a dump of everything), so she
+    # never looked anything up — asked "what is my name?" she answered "I am Shannon-Prime"
+    # from her persona, having consulted nothing. A memory you cannot cheaply look up is a
+    # memory you do not have.
+    "\n\nWHEN HE ASKS YOU SOMETHING YOU WERE TOLD, LOOK IT UP — call recall(\"...\") and "
+    "answer from what it returns. Never guess at a fact you could have looked up. recall "
+    "tells you WHOSE fact it is: \"Knack told me: ...\" is about HIM, \"About myself: ...\" "
+    "is about YOU. \"What is my name?\" is asking about HIM."
     "\n\nYOUR OWN MEMORY IS YOURS TO KEEP. Two separate stores, and they must never blur:"
     "\n  • remember(...) — facts about KNACK. What he tells you about himself."
     "\n  • remember_about_self(...) — facts about YOU: what you notice you enjoy, what you"

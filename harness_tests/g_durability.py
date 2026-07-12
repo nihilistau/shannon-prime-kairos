@@ -73,6 +73,10 @@ FACTS = [
     "I had a 2060 6gb super and i got a new intel nuc",   # hardware, riding in banter
     "we have esp32 mmwave sensors and temp sensors",      # his setup
     "I also have a system that you can use to just wifi adb straight to a phone",
+    # CAUGHT BY THE FIRST CLEANUP DRY RUN: a real preference wearing an exclamation mark.
+    # The reaction rule quarantined it. Losing a fact he actually told her is worse than
+    # keeping a joke, so an attributive claim survives its punctuation.
+    "my favorite tea is Oolong too!",
 ]
 
 
@@ -138,9 +142,40 @@ def main() -> int:
     retired = lc.find_superseded("My name is Shannon.", "self", rows)
     check("her name in her own lane touches nothing of his", not retired)
 
+    print("\nG-RECALL-OWNERSHIP — the pronoun is resolved where it was UTTERED.\n")
+
+    # THE TRAP, from the live trace. She rewrites the question into her own first person,
+    # so BOTH of his questions reach the tool as the SAME string. If ownership is read from
+    # her query, the two are indistinguishable and one of them must be wrong.
+    import os as _os
+    _os.environ.setdefault("SP_RECALL_REGISTRY",
+                           _os.path.join(os.path.dirname(os.path.dirname(
+                               os.path.abspath(__file__))), "var", "memory", "registry.jsonl"))
+    from harness.skills import memory as M
+
+    HER_QUERY = "What is my name?"          # identical in both cases — that IS the trap
+
+    M.set_question("what is my name?")      # HIS words: "my" = Knack
+    his = M.recall(HER_QUERY)
+    check("he asks 'MY name' -> she is handed HIS", "Knack" in his.splitlines()[0], his.splitlines()[0])
+
+    M.set_question("what is your name?")    # HIS words: "your" = Shannon
+    hers = M.recall(HER_QUERY)
+    check("he asks 'YOUR name' -> she is handed HERS",
+          "Shannon" in hers.splitlines()[0], hers.splitlines()[0])
+
+    check("...from the SAME query string she passed",
+          his.splitlines()[0] != hers.splitlines()[0],
+          "if these were equal, her paraphrase would be deciding ownership")
+
+    # and recall never serves a tombstone
+    M.set_question("what is my name?")
+    check("recall never serves a retired memory",
+          "The user said:" not in M.recall("name"), M.recall("name")[:60])
+
     total = len(PASS) + len(FAIL)
-    print(f"\nG-DURABILITY + G-IDENTITY-FIREWALL: {'PASS' if not FAIL else 'FAIL'} "
-          f"({len(PASS)}/{total})")
+    print(f"\nG-DURABILITY + G-IDENTITY-FIREWALL + G-RECALL-OWNERSHIP: "
+          f"{'PASS' if not FAIL else 'FAIL'} ({len(PASS)}/{total})")
     return 0 if not FAIL else 1
 
 
