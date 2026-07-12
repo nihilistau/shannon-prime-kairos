@@ -54,8 +54,21 @@ class Knob:
 
 KNOBS: list[Knob] = [
     # ── KAIROS: when she speaks unprompted ────────────────────────────────────────
-    Knob("kairos.enabled", "Kairos — speaking unprompted", "Enabled", "bool", False,
-         "Master switch. Off = she only ever speaks when spoken to (today's behaviour)."),
+    # ARMED BY DEFAULT (2026-07-12, operator's call). It stayed off while the chain was
+    # unproven and, later, while it was still invisible — she could speak but nothing
+    # rendered it. Both are gated now (G-KAIROS-LIVE 8/8, G-KAIROS-TICK 8/8,
+    # G-KAIROS-CONSOLE 7/7 end-to-end through the console's own session key), so the
+    # default flips. Turning it off is one click on the operator panel.
+    #
+    # What "on" actually costs: nothing on an ordinary turn. The impulse is the raw
+    # stop-vs-continue margin the forward already computed, the policy is SILENT by
+    # default, and every bound (chain limit, cooldown, hourly cap, never-after-a-question)
+    # is checked before she is even consulted. She speaks when she was CUT OFF mid-thought,
+    # and — after 240s of quiet, on a 35% roll — when the room has gone still.
+    Knob("kairos.enabled", "Kairos — speaking unprompted", "Enabled", "bool", True,
+         "Master switch. Off = she only ever speaks when spoken to. On = she may finish a "
+         "thought she was cut off in, and may check in after a long silence — bounded by "
+         "the knobs below, and she stays silent almost always."),
     Knob("kairos.continue_margin", "Kairos — speaking unprompted",
          "Continue margin (logits)", "float", -11.75,
          "How reluctantly she must have stopped before she picks the thread back up. "
