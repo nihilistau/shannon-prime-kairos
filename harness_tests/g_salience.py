@@ -191,6 +191,68 @@ def main() -> int:
     check("...but the appointment is still THERE — decay is rank, not deletion",
           lc.salience(appointment) > 0.0)
 
+    # ── 9. INFORMATION IS SURPRISAL, AND IT IS MEASURED IN BITS ────────────────
+    # THE OPERATOR: "surprise in information theory is something I always circle —
+    # information = surprise."  I(x) = -log2 p(x). In a system named after Shannon, the
+    # first version of this returned a made-up [0,1] "novelty" — a vibe with a decimal
+    # point on it. It has a name, a unit, and a hundred years of theory.
+    from harness.model.person import PersonModel
+    pm = PersonModel()
+    pm.absorb({"text": "I like fun", "mem_class": "preference", "mentions": 5,
+               "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+    known = pm.surprisal("I like fun")
+    novel = pm.surprisal("I am terrified of open water")
+    check("a fact he says constantly carries LITTLE information",
+          known < 1.0, f"{known} bits")
+    check("...and one the model never saw coming carries a lot",
+          novel > known, f"{novel} bits vs {known} bits")
+    check("...but information is CAPPED — an unknown word is not infinitely important",
+          pm.surprisal("My father was a cartographer") <= 8.0)
+
+    # ── 10. THE NEIGHBOUR WHO DID NOT WAVE ─────────────────────────────────────
+    # "there is more information conveyed when you DON'T see your neighbour at 5am than
+    # when you do." He is right, and surprisal() is structurally blind to it — it is only
+    # ever CALLED when a fact arrives. The absence of an expected thing carries MORE
+    # information than its arrival, precisely because the arrival was predictable.
+    now = time.time()
+    def iso(days_ago):
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - days_ago * 86400))
+
+    pm2 = PersonModel()
+    # something he mentioned every ~2 days for a fortnight... and then stopped, 30 days ago
+    pm2.absorb({"text": "I am training for the marathon", "mem_class": "preference",
+                "mentions": 8, "first_seen": iso(44), "last_seen": iso(30)})
+    # ...and something he mentions rarely, right on its normal rhythm
+    pm2.absorb({"text": "I like Oolong tea", "mem_class": "preference",
+                "mentions": 4, "first_seen": iso(60), "last_seen": iso(2)})
+
+    sil = pm2.silences(now=now)
+    quiet = [s for s in sil if "marathon" in s["claim"]]
+    check("a thing he used to say constantly, and has now gone quiet on, is NOTICED",
+          bool(quiet), f"{len(sil)} silence(s) found")
+    if quiet:
+        check("...and the silence carries real information (bits, and lots of them)",
+              quiet[0]["bits"] > 4.0, f"{quiet[0]['bits']} bits after "
+                                      f"{quiet[0]['quiet_days']}d quiet on a "
+                                      f"{quiet[0]['cadence_days']}d rhythm")
+    check("...while a thing still on its normal rhythm is NOT flagged (no false alarm)",
+          not any("Oolong" in s["claim"] for s in sil),
+          "a neighbour who waved on time is not news")
+
+    # ── 11. AN INFERENCE IS NOT A TESTIMONY ────────────────────────────────────
+    # Reflection writes what she has COME TO BELIEVE — things he never said. Framed like
+    # his other facts, the next recall hands them back as "Knack told me: ..." and she
+    # tells him he said a thing he never said. This store has already lost his NAME and
+    # then his GENDER to exactly that blurring. She may be wrong about him. She may not be
+    # wrong about him IN HIS VOICE.
+    insight_row = {"text": "Knack is a cat person.", "speaker": "user", "src": "reflection"}
+    check("an INSIGHT reads back as HERS, not as something he said",
+          lc.render(insight_row).startswith("I've come to think"),
+          lc.render(insight_row))
+    told_row = {"text": "My cat's name is Tuffy.", "speaker": "user", "src": "user turn"}
+    check("...while something he actually SAID still reads as his testimony",
+          lc.render(told_row).startswith("Knack told me"), lc.render(told_row))
+
     total = len(PASS) + len(FAIL)
     print(f"\nG-SALIENCE: {'PASS' if not FAIL else 'FAIL'} ({len(PASS)}/{total})")
     return 0 if not FAIL else 1

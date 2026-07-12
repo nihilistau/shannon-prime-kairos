@@ -227,11 +227,34 @@ def cleanup(dry: bool = False) -> dict[str, Any]:
 
 
 # ──── NIGHTSHIFT — consolidate the day into durable facts ─────────────────────
-def nightshift() -> dict[str, Any]:
-    """The consolidation pass: read back what she has learned and fold it into the store.
-    Runs compaction first (there is no point consolidating a store full of duplicates),
-    then the personality curator, which is what lets traits drift on evidence instead of
-    standing still."""
+def reflect() -> dict[str, Any]:
+    """REFLECTION — she looks back at what she has learned and draws conclusions from it.
+
+    ── THE RENAME (2026-07-13, the operator's call) ──────────────────────────────
+    This used to be called nightshift(), and so is the daemon's auto-finetuning curator
+    (routes.rs alone says "nightshift" 78 times; there is a whole nightshift_curator.rs).
+    Two different things wearing one name is how you end up debugging the wrong one.
+
+    THE DAEMON KEEPS THE NAME. It earns it: it is the offline pass that consolidates memory
+    into weights while nothing else is happening — which is what sleep is for, and what
+    "nightshift" means.
+
+    THIS one runs in the middle of a conversation, on demand, in seconds. It is not sleep.
+    It is what you do when you sit back for a moment and realise something about the person
+    you have been talking to. The literature already has the word — Generative Agents calls
+    exactly this pass REFLECTION — so it is reflect().
+
+    ── WHAT IT DOES ─────────────────────────────────────────────────────────────
+      1. compact   — no point drawing conclusions from a store full of duplicates
+      2. traits    — the personality curator, so who she IS drifts on evidence
+      3. insight   — NEW: she reads what she knows about him and writes down what she has
+                     come to BELIEVE, which is not the same as what she was TOLD
+
+    Step 3 is the one that matters, and it is the piece the literature says we were missing:
+    a memory system that only stores what it is told can never know anything its owner did
+    not say out loud. Reflection is where "he mentioned fun, and music, and playing with the
+    kettle" becomes "he values play for its own sake" — a thing he never said, and the
+    truest thing in the store."""
     out: dict[str, Any] = {"ok": True, "steps": []}
     c = compact()
     out["steps"].append({"step": "compact", **{k: c[k] for k in
@@ -242,8 +265,96 @@ def nightshift() -> dict[str, Any]:
         out["steps"].append({"step": "personality", "result": str(res)[:160]})
     except Exception as exc:
         out["steps"].append({"step": "personality", "skipped": str(exc)[:120]})
+    try:
+        out["steps"].append({"step": "insight", **insight()})
+    except Exception as exc:
+        out["steps"].append({"step": "insight", "skipped": str(exc)[:120]})
     out["stats"] = stats()
     return out
+
+
+# Kept so the old operator endpoint / any caller does not break. The DAEMON keeps the name
+# nightshift for its offline curator, which earns it; this is a thin alias, not a second
+# implementation, because two things wearing one name is what caused the confusion.
+def nightshift() -> dict[str, Any]:
+    """Deprecated alias for reflect(). The daemon's offline curator owns 'nightshift'."""
+    return reflect()
+
+
+def insight() -> dict[str, Any]:
+    """SHE READS WHAT SHE KNOWS AND WRITES DOWN WHAT SHE HAS COME TO BELIEVE.
+
+    A store that only holds what it was TOLD can never know anything its owner did not say
+    out loud. He never said "I value play for its own sake" — he said he likes fun, and that
+    the kettle is his favourite, and that music in the evening is good. The conclusion is
+    the truest thing in the store and nobody has ever written it down, because nothing in
+    the system was ever asked to THINK about the facts, only to keep them.
+
+    This is Generative Agents' reflection step, and it is the missing term the 2026
+    multi-factor work is pointing at when it says the value of a memory cannot be judged at
+    write time from the sentence alone.
+
+    ── THE ONE RULE, AND IT IS THE RULE THIS SYSTEM KEEPS LEARNING ──────────────
+    AN INFERENCE IS NOT A TESTIMONY, AND IT MUST NEVER READ LIKE ONE.
+
+    An insight is HER conclusion, not HIS statement. If it goes into the store looking like
+    something he said, then the next time she recalls it she will tell him HE said it — and
+    this store has already lost his name and then his gender to exactly that confusion, both
+    times because the owner of a sentence got blurred. So every insight is stamped
+    src=reflection, and lifecycle.render() frames it as "I've come to think: ..." — never
+    "Knack told me: ...". She may be wrong about him. She may not be wrong about him in HIS
+    VOICE.
+
+    Reinforcement does something quietly lovely here: an insight she arrives at AGAIN, on a
+    later reflection, does not duplicate — it reinforces, and its mentions climb. A belief
+    she keeps re-deriving from independent evidence gets stronger on its own. That is not a
+    trick; that is what a conviction IS.
+    """
+    from harness.model.person import PersonModel
+    from harness.skills import memory as M
+
+    model = PersonModel.from_registry(_reg())
+    picture = model.render(top=4)
+    if not picture:
+        return {"insights": 0, "why": "nothing known about him yet"}
+
+    prompt = (
+        f"{picture}\n\n"
+        "Those are the things Knack has actually SAID. Read them as a whole and tell me "
+        "what you have come to BELIEVE about him that he has never said out loud — the "
+        "kind of thing a friend notices.\n"
+        "Give AT MOST 2, each a single plain sentence starting with 'Knack '. No preamble, "
+        "no bullets, no hedging. If the evidence does not support a real conclusion, say "
+        "exactly: NOTHING YET."
+    )
+
+    from harness.inference import InferenceConfig
+    from harness.inference.client import get_client
+    text = get_client().chat(
+        messages=[{"role": "user", "content": prompt}],
+        config=InferenceConfig(temperature=0.4, max_tokens=140, auto_recall=False),
+    ).text or ""
+
+    if "NOTHING YET" in text.upper():
+        return {"insights": 0, "why": "she did not think the evidence supported one"}
+
+    written, refused = [], []
+    M.set_author(M.lc.SPEAKER_USER if hasattr(M, "lc") else "user")
+    for line in text.splitlines():
+        line = line.strip().lstrip("-*0123456789. ").strip()
+        if not line.lower().startswith("knack") or len(line.split()) < 4:
+            continue
+        # Straight through remember(), so it meets EVERY door this store has: the durability
+        # gate, the identity firewall, dedupe-into-reinforcement. An insight gets no special
+        # pass. If her conclusion cannot survive the same guards his sentences do, it does
+        # not belong in the store either.
+        res = M.remember(line, source="reflection")
+        (written if res.startswith(("stored", "reinforced")) else refused).append(
+            f"{line[:60]} -> {res[:38]}")
+        if len(written) >= 2:
+            break
+
+    return {"insights": len(written), "wrote": written, "refused": refused[:2]}
 
 
 # ──── memory add / remove (one row at a time, from the panel) ─────────────────

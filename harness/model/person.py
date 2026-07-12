@@ -58,11 +58,21 @@ person instead of a list.
 from __future__ import annotations
 
 import json
+import math
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
 from harness.skills import lifecycle as lc
+
+# INFORMATION IS FINITE HERE, ON PURPOSE. I(x) = -log2 p(x) runs to infinity as p -> 0, and
+# a model that has never heard of something must not be allowed to claim infinite
+# information from it — that is how a single unknown word becomes the most important thing
+# she has ever been told. 8 bits = p of about 1/256: "I would have given this a fraction of
+# a percent", which is as astonished as anything in a conversation ever needs to be.
+_MAX_BITS = 8.0
+_P_FLOOR = 2.0 ** -_MAX_BITS
 
 
 # ── THE SLOTS ─────────────────────────────────────────────────────────────────
@@ -87,6 +97,10 @@ class Dimension:
     """One facet of him, and the evidence for it."""
     name: str
     claims: list = field(default_factory=list)     # [(text, mentions, salience)]
+    # WHEN, as well as what — because an expectation is a rhythm, and a rhythm needs times.
+    # silences() cannot exist without this: you cannot notice that the neighbour is late if
+    # you never wrote down when he usually arrives.
+    timed: list = field(default_factory=list)      # [(text, mentions, salience, first, last)]
 
     @property
     def confidence(self) -> float:
@@ -129,44 +143,110 @@ class PersonModel:
     def absorb(self, row: dict) -> None:
         slot = _CLASS_TO_SLOT.get(row.get("mem_class", ""), "possessions")
         d = self.dims.setdefault(slot, Dimension(slot))
-        d.claims.append((lc.strip_prefix(row.get("text", "")),
-                         int(row.get("mentions", 1) or 1),
-                         lc.salience(row)))
+        text = lc.strip_prefix(row.get("text", ""))
+        m = int(row.get("mentions", 1) or 1)
+        sal = lc.salience(row)
+        d.claims.append((text, m, sal))
+        d.timed.append((text, m, sal,
+                        row.get("first_seen") or row.get("ts") or "",
+                        row.get("last_seen") or row.get("ts") or ""))
 
-    # ── SURPRISE: how much would this fact MOVE the model? ────────────────────
-    def surprise(self, fact: str, mem_class: str = "") -> float:
-        """IMPORTANCE, DERIVED. In [0,1].
+    # ── SURPRISAL: INFORMATION IS -log p(x). IN BITS. ────────────────────────
+    def surprisal(self, fact: str, mem_class: str = "") -> float:
+        """THE INFORMATION CONTENT OF A FACT, in bits: I(x) = -log2 p(x | model).
 
-        Not "how important does this sound" — that is a judgement, and judgements cannot be
-        checked. This is "how much does the model not already know it", which has a receipt.
+        THE OPERATOR: "surprise in information theory is something I always circle —
+        information = surprise."
 
-        A fact that opens a dimension we have nothing in is a large update. A fact that adds
-        a new claim to a thin dimension is a moderate one. A fact we have effectively heard
-        before is confirmation — valuable (it raises confidence) but not NEWS.
+        He is right, and the first version of this was not that. It returned a made-up
+        [0,1] "novelty" score, which is a vibe with a decimal point on it. The real quantity
+        has a name, a unit, and a hundred years of theory behind it — in a system named
+        after the man who wrote it down.
+
+            p(x) high  ->  I(x) low   : he says the thing he always says. Confirms; informs little.
+            p(x) low   ->  I(x) high  : he says something the model did not see coming.
+            p(x) -> 0  ->  I(x) -> inf: capped, because a model that has never heard of
+                                        something must not claim infinite information from it.
+
+        p is estimated from the model, not guessed: how well this fact is covered by what
+        we already hold in its dimension, tempered by how confident that dimension is. A
+        thin dimension makes weak predictions, so it cannot be very surprised — and that is
+        correct, not a bug: you cannot be astonished by news about a person you barely know.
         """
         cls = mem_class or lc.classify(fact)
         slot = _CLASS_TO_SLOT.get(cls, "possessions")
         d = self.dims.get(slot)
-        if d is None or not d.claims:
-            return 1.0                                  # a whole facet of him we did not have
 
         toks = {w for w in "".join(c.lower() if c.isalnum() else " "
                                   for c in fact).split() if len(w) >= 3}
         if not toks:
             return 0.0
+        if d is None or not d.claims:
+            return _MAX_BITS                            # a whole facet of him we did not have
+
         best = 0.0
-        for t, _m, _s in d.claims:
+        for t, m, _s in d.claims:
             tt = {w for w in "".join(c.lower() if c.isalnum() else " "
                                     for c in t).split() if len(w) >= 3}
-            if tt:
-                best = max(best, len(toks & tt) / len(toks))
-        novelty = 1.0 - best                            # 0 = we have heard this exact thing
+            if not tt:
+                continue
+            cover = len(toks & tt) / len(toks)
+            # a claim he has REPEATED predicts harder than one he said once
+            best = max(best, cover * min(1.0, 0.5 + 0.5 * math.log1p(m)))
 
-        # A THIN DIMENSION LEARNS FASTER. The second thing we learn about what he likes tells
-        # us far more than the twentieth. This is the same diminishing-returns shape as the
-        # log in salience(), and for the same reason.
-        thinness = 1.0 / (1.0 + len(d.claims))
-        return round(min(1.0, 0.35 * novelty + 0.65 * (novelty * (0.3 + thinness))), 4)
+        # p(x): what the model would have given this fact before hearing it. Floored so the
+        # information is finite, and shaded by the dimension's confidence — a model that
+        # knows him well is entitled to be more surprised.
+        conf = d.confidence
+        p = _P_FLOOR + (1.0 - _P_FLOOR) * best * (0.5 + 0.5 * conf)
+        return round(min(_MAX_BITS, -math.log2(max(p, _P_FLOOR))), 3)
+
+    def surprise(self, fact: str, mem_class: str = "") -> float:
+        """The same thing, squashed to [0,1] for anyone who wants a weight rather than bits."""
+        return round(min(1.0, self.surprisal(fact, mem_class) / _MAX_BITS), 4)
+
+    # ── THE NEIGHBOUR WHO DID NOT WAVE ───────────────────────────────────────
+    def silences(self, now: Optional[float] = None, min_mentions: int = 3) -> list:
+        """WHAT HAS STOPPED HAPPENING — and that is information too.
+
+        THE OPERATOR, and it is the sharpest thing anyone has said in this build:
+
+            "there is more information conveyed when you DON'T see your neighbour at 5am
+             than when you do."
+
+        He is exactly right, and surprisal() is structurally blind to it. surprisal() is only
+        ever CALLED when a fact arrives. It can be surprised by what is said. It cannot be
+        surprised by what has gone quiet — and the absence of an expected event carries MORE
+        information than its arrival, precisely because the arrival was predictable.
+
+        So this looks the other way. A thing he mentioned on a rhythm — repeatedly, at some
+        cadence — sets up an expectation. When the gap since he last mentioned it grows past
+        that cadence, the SILENCE becomes surprising, and its surprisal grows the longer it
+        lasts. The dog that did not bark.
+
+        This is what lets her notice that he has stopped talking about the thing he never
+        used to shut up about — which is the kind of noticing that makes someone feel known,
+        and which no amount of ranking-by-relevance will ever produce, because nothing is
+        being retrieved. Nobody asked a question. That is the whole point.
+        """
+        now = now if now is not None else time.time()
+        out = []
+        for slot, d in self.dims.items():
+            for t, m, _s, first, last in d.timed:
+                if m < min_mentions:
+                    continue                       # no rhythm, so no expectation to violate
+                span = max(1.0, lc._age_days(first, now) - lc._age_days(last, now))
+                cadence = span / max(1, m - 1)     # ~how often he brings it up, in days
+                quiet = lc._age_days(last, now)
+                if quiet <= cadence * 1.5:
+                    continue                       # still within its normal rhythm
+                # p(still silent) under a Poisson-ish expectation of one mention per cadence
+                p = 0.5 ** (quiet / max(cadence, 0.5))
+                bits = round(min(_MAX_BITS, -math.log2(max(p, 1e-6))), 2)
+                out.append({"claim": t, "mentions": m, "cadence_days": round(cadence, 1),
+                            "quiet_days": round(quiet, 1), "bits": bits, "slot": slot})
+        out.sort(key=lambda r: -r["bits"])
+        return out
 
     # ── RENDER: the model, as she would actually hold it ──────────────────────
     def render(self, top: int = 3) -> str:

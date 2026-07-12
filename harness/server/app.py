@@ -1205,8 +1205,11 @@ def _run_stdlib(host: str, port: int) -> None:
                         res = ops.compact()
                     elif p == "/v1/maintenance/cleanup":
                         res = ops.cleanup()
-                    elif p == "/v1/maintenance/nightshift":
-                        res = ops.nightshift()
+                    elif p in ("/v1/maintenance/reflect", "/v1/maintenance/nightshift"):
+                        # REFLECT is the name now. The DAEMON keeps "nightshift" for its offline curator,
+                        # which earns it (routes.rs says it 78 times). This one runs mid-conversation, in
+                        # seconds — that is not sleep, it is reflection. Old path still answers.
+                        res = ops.reflect()
                     elif p == "/v1/maintenance/stats":
                         res = ops.stats()
                     elif p == "/v1/memory/add":

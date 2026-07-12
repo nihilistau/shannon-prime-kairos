@@ -508,6 +508,17 @@ def render(row: dict) -> str:
     """How a memory should READ back to the model. This is the identity fix: a self
     memory must come back in Shannon's own voice, not as something 'the user said'."""
     t = strip_prefix(row.get("text") or row.get("topic") or "")
+
+    # AN INFERENCE IS NOT A TESTIMONY, AND IT MUST NEVER READ LIKE ONE (2026-07-13).
+    # Reflection writes down what she has COME TO BELIEVE about him — conclusions he never
+    # actually said. Framed like his other facts, the next recall would hand them back as
+    # "Knack told me: Knack values play for its own sake", and she would tell him he said a
+    # thing he never said. This store has already lost his NAME and then his GENDER to
+    # exactly that blurring of who a sentence belongs to. She is allowed to be wrong about
+    # him. She is not allowed to be wrong about him IN HIS VOICE.
+    if "reflection" in (row.get("src") or ""):
+        return f"I've come to think: {t}"
+
     if row.get("speaker") == SPEAKER_SELF:
         return f"About myself: {t}"
     return f"Knack told me: {t}"
