@@ -315,6 +315,23 @@ def agent_chat_stream(
     # trap the agent profile documents for spine_toolset.)
     import time as _time
     _t = _time.time()
+    # ── tools=[] IS NOT "no tools". IT IS "REBUILD THE SYSTEM PROMPT". ────────────
+    # It reads like a harmless way to say "don't offer her any tools this turn", and it is
+    # the most expensive thing you can do to this system: a system prompt without the ~1.5k
+    # -token tool preamble is a DIFFERENT TOKEN 0, so the persist-KV cache reuses nothing
+    # and the whole conversation re-prefills. The kairos continuation and the repeat-guard
+    # reroll both passed `[]`, so every one of them cost a full prefill — and left the
+    # resident cache holding the wrong prefix, so the NEXT ordinary turn re-prefilled too.
+    #     TURN-PHASE: prefill  903 ms                 <- ordinary turn (cache hit)
+    #     TURN-PHASE: prefill 1676 tok in 111531 ms   <- a continuation (tools=[])
+    #     TURN-PHASE: prefill 2628 tok in 188452 ms   <- the turn after it
+    # A cache miss costs O(conversation length), which is why it was fine early and
+    # unbearable later. Nothing degraded; the miss simply got more expensive to pay for.
+    if tools is not None and len(tools) == 0:
+        _lg0 = __import__("logging").getLogger(__name__)
+        _lg0.warning("[agent] tools=[] rewrites the system prompt and DIVERGES THE "
+                     "PERSIST-KV CACHE AT TOKEN 0 — the whole conversation will re-prefill. "
+                     "Pass tools=None to keep the cached prompt (and the cache).")
     if tools is not None:
         system_content, tool_index = build_tool_system(tools, [], system_prefix=load_agent_system())
     else:

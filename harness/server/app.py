@@ -231,9 +231,12 @@ def _repeat_guard(body: Dict[str, Any], msgs: list, text: str, cfg) -> str:
             from harness.agent import agent_chat_stream
             from harness.inference import InferenceConfig as _IC
             hist = list(msgs) + [{"role": "system", "content": nudge}]
+            # tools=None, NOT tools=[] — see _kairos_after_turn. `[]` rebuilds the system
+            # prompt WITHOUT the tool preamble, which diverges the persist-KV cache at
+            # token 0 and re-prefills the entire conversation.
             return "".join(agent_chat_stream(
                 hist, config=_IC(max_tokens=cfg.max_tokens, temperature=0.85,
-                                 auto_recall=False), tools=[]))
+                                 auto_recall=False)))
 
         out, note = guard(text, prev, _reroll)
         if note:
@@ -349,7 +352,30 @@ def _kairos_after_turn(body: Dict[str, Any], reply: str) -> None:
             # the one turn in the system most likely to repeat itself, and it was the one
             # turn with no guard. Fourth variant of the same hole.
             _arm_self_repeat_ban(_cfg, hist)
-            return "".join(agent_chat_stream(hist, config=_cfg, tools=[]))
+            # ── tools=None, NEVER tools=[] ────────────────────────────────────────
+            # THE SLOWDOWN. agent_chat_stream builds the system prompt from `tools`:
+            #     tools is None  -> the CACHED system prompt (persona + ~1.5k tokens of
+            #                       tool preamble). Every normal turn uses this.
+            #     tools == []    -> a FRESH system prompt with NO tool preamble.
+            # `[]` is not None, so passing it rewrites the system block — and agent.py's own
+            # comment, three lines above where it does this, names the consequence: "a
+            # per-turn system-prompt rewrite diverges the persist-KV cache AT TOKEN 0".
+            #
+            # So every kairos continuation re-prefilled the ENTIRE conversation, and then
+            # left the resident cache holding the no-tools prefix, so the NEXT ordinary turn
+            # diverged from THAT and re-prefilled all over again. TWO FULL PREFILLS PER
+            # CONTINUATION, at ~67 ms/tok:
+            #     TURN-PHASE: prefill  903 ms                 <- ordinary turn, cache hit
+            #     TURN-PHASE: prefill 1676 tok in 111531 ms   <- the continuation
+            #     TURN-PHASE: prefill 2628 tok in 188452 ms   <- the turn after it
+            # That is why it is quick at first and unbearable later: the cost of a miss is
+            # O(conversation length), so the same bug that costs 20s at turn 5 costs six
+            # minutes at turn 60. Nothing "degrades" — a cache miss just gets more expensive
+            # to pay for.
+            #
+            # tools=None keeps the identical system block, so the continuation is a STRICT
+            # EXTENSION of the committed KV — the same property every other turn relies on.
+            return "".join(agent_chat_stream(hist, config=_cfg))
 
         ks.on_reply(session, reply, get_client().last_kairos, _continue)
     except Exception as exc:
@@ -910,7 +936,12 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
                 ccfg = InferenceConfig(max_tokens=120, temperature=cfg.temperature,
                                        auto_recall=False)
                 _arm_self_repeat_ban(ccfg, hist)
-                return "".join(agent_chat_stream(hist, config=ccfg, tools=[]))
+                # tools=None, NEVER tools=[] — see the note in _kairos_after_turn. `[]`
+                # rewrites the system block without the tool preamble, diverging the
+                # persist-KV cache at token 0: the continuation re-prefills the whole
+                # conversation, and so does the next ordinary turn. This is the console
+                # path — the one a human is actually sitting in front of, watching it hang.
+                return "".join(agent_chat_stream(hist, config=ccfg))
 
             _ks.on_reply(_session, _final, get_client().last_kairos, _continue)
     except Exception as exc:
