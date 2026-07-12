@@ -139,6 +139,74 @@
   .msg.err .who  { color: var(--err); }
   .msg .who .meta { color: var(--text-faint); font-weight: 400; font-size: 8.5px; letter-spacing: 2px; margin-left: auto; }
   .msg .msg-content { color: var(--text); text-wrap: pretty; word-break: break-word; white-space: pre-wrap; }
+
+  /* ── KAIROS: she spoke without being asked ─────────────────────────────────
+     It must LOOK different from an answer — an unprompted message dressed as a reply is
+     just confusing. The left rule marks it as hers; the tag says what kind, and its
+     tooltip carries the reason and the raw eot_margin, so an unexpected message can
+     always be audited instead of guessed at. */
+  .msg.unprompted { border-left: 2px solid var(--gold); padding-left: 12px; margin-left: -14px; }
+  .msg .kairos-tag { font-size: 8.5px; letter-spacing: 1.5px; font-weight: 600; text-transform: none;
+                     color: #0d1117; background: var(--gold); border-radius: 3px; padding: 1px 6px;
+                     cursor: help; }
+
+  /* ── THE BOARD ──────────────────────────────────────────────────────────────
+     A note has to say four things at a glance: WHAT it is, WHOSE it is, WHETHER it is
+     due, and WHAT KIND it is. Category is a colour bar, not a word — words cost a line
+     each and this panel is 300px. An overdue reminder is the only thing on the page
+     allowed to pulse. */
+  .notes-filters { display: flex; gap: 4px; flex-wrap: wrap; padding: 8px 12px 4px; }
+  .nf { font-size: 8.5px; letter-spacing: 1.5px; text-transform: uppercase; cursor: pointer;
+        border: 1px solid var(--rule); border-radius: 999px; padding: 2px 8px;
+        color: var(--text-faint); background: transparent; user-select: none; }
+  .nf:hover { color: var(--gold); border-color: var(--gold); }
+  .nf.on { color: #0d1117; background: var(--gold); border-color: var(--gold); font-weight: 700; }
+
+  .notes-list { max-height: 320px; overflow-y: auto; padding: 4px 8px 8px; }
+  .note { display: flex; gap: 8px; align-items: flex-start; padding: 8px 8px 8px 0;
+          border-bottom: 1px solid var(--rule-faint); cursor: pointer; position: relative; }
+  .note:hover { background: rgba(255,255,255,0.02); }
+  .note .bar { width: 3px; align-self: stretch; border-radius: 2px; flex: 0 0 3px; }
+  .note .nb { flex: 1; min-width: 0; }
+  .note .nt { font-size: 12px; color: var(--text); line-height: 1.35;
+              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .note .nm { font-size: 8.5px; letter-spacing: 1px; color: var(--text-faint);
+              margin-top: 3px; display: flex; gap: 8px; align-items: center; }
+  .note.done .nt { text-decoration: line-through; opacity: .45; }
+  .note .due { color: var(--gold); }
+  .note .due.over { color: var(--err); font-weight: 700; }
+  .note .by-self { color: var(--gold); }
+  .note.overdue::before { content: ''; position: absolute; left: -8px; top: 12px;
+        width: 4px; height: 4px; border-radius: 50%; background: var(--err);
+        animation: npulse 1.6s ease-in-out infinite; }
+  @keyframes npulse { 0%,100% { opacity: .25 } 50% { opacity: 1 } }
+
+  .modal-back { position: fixed; inset: 0; background: rgba(4,6,10,0.72);
+                display: none; align-items: center; justify-content: center; z-index: 60; }
+  .modal-back.open { display: flex; }
+  .modal { width: min(560px, 92vw); background: #14161b;
+           border: 1px solid var(--rule); border-radius: 10px; padding: 16px 18px;
+           box-shadow: 0 24px 60px rgba(0,0,0,.55); }
+  .modal-head { display: flex; gap: 10px; align-items: center; }
+  .m-title { flex: 1; background: transparent; border: none; border-bottom: 1px solid var(--rule);
+             color: var(--text); font: 600 15px var(--font); padding: 4px 2px; outline: none; }
+  .m-title:focus { border-color: var(--gold); }
+  .modal-meta { display: flex; gap: 8px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
+  .modal-meta select, .modal-meta input { background: #0a0b0e; color: var(--text);
+             border: 1px solid var(--rule); border-radius: 6px; padding: 6px 8px;
+             font-family: var(--font); font-size: 12px; }
+  .modal-meta input { flex: 1; min-width: 150px; }
+  .m-done { font-size: 11px; color: var(--text-faint); display: flex; gap: 5px; align-items: center;
+            cursor: pointer; white-space: nowrap; }
+  .m-body { width: 100%; min-height: 150px; resize: vertical; background: #0a0b0e;
+            color: var(--text); border: 1px solid var(--rule); border-radius: 6px;
+            padding: 10px; font-family: var(--font); font-size: 12.5px; line-height: 1.5; outline: none; }
+  .m-body:focus { border-color: var(--gold); }
+  .modal-foot { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+  .m-who { font-size: 9px; letter-spacing: 1.5px; color: var(--text-faint); text-transform: uppercase; }
+  .m-err { font-size: 11px; color: var(--err); }
+  .toolbtn.go { border-color: var(--gold); color: var(--gold); }
+  .toolbtn.go:hover { background: var(--gold); color: #0d1117; }
   .msg.err .msg-content { color: var(--err); }
   .msg .tok { display: inline; animation: tokFade 0.3s ease-out forwards; opacity: 0; }
   @keyframes tokFade { from { opacity: 0; filter: blur(1.5px); color: var(--gold-hot); } to { opacity: 1; filter: blur(0); color: var(--text); } }
@@ -265,16 +333,23 @@
 
   <!-- LEFT -->
   <div class="pane left">
+    <!-- ── THE BOARD ────────────────────────────────────────────────────────────
+         Notes, ideas, reminders. Shared: he adds them here, she adds them with her
+         tools, and both land on the same list with a mark saying whose is whose.
+         This replaced the DHT peer topology — a graph of a mesh that has never had a
+         second node in it, redrawn every 2 seconds, in the most valuable 300px on the
+         screen. -->
     <div class="ph">
-      <span class="t">active dht peers</span>
-      <span class="badge live" id="mesh-badge">--</span>
+      <span class="t">the board</span>
+      <span class="badge live" id="notes-badge">0</span>
+      <button class="toolbtn" id="note-new" title="Add a note" style="margin-left:auto">+ add</button>
     </div>
-    <div class="mesh-mini" id="mesh-topology">
-      <div class="lbl">position-as-arithmetic</div>
-      <div class="lbl-r">l4 · gossip</div>
-      <svg id="mesh-svg" viewBox="0 0 280 200" preserveAspectRatio="xMidYMid meet"></svg>
+    <div class="notes-filters" id="notes-filters"></div>
+    <div class="notes-list" id="notes-list">
+      <div class="stream-empty"><span class="dot"></span>loading the board</div>
     </div>
-    <div class="ph"><span class="t">sampler · knobs</span></div>
+
+    <div class="ph" style="margin-top:14px"><span class="t">sampler · knobs</span></div>
     <style>
       #sampler-row { display:flex; flex-direction:column; gap:7px; padding:12px 10px; font-size:9px; letter-spacing:1px; color:var(--text-faint); flex-shrink:0; }
       #sampler-row label { display:flex; align-items:center; justify-content:space-between; gap:6px; text-transform:uppercase; }
@@ -286,13 +361,12 @@
       <label title="top_k.">top_k <input type="number" id="s-topk" min="0" max="200" step="1" value="40"></label>
       <label title="repetition penalty. 1.3 breaks the 'I don't know' greedy-rut collapse.">rep <input type="number" id="s-rep" min="1" max="2" step="0.05" value="1.3"></label>
       <label title="eot_bias: stop-token logit bias so the model STOPS cleanly. 0=off, ~4=clean.">eot <input type="number" id="s-eot" min="-10" max="20" step="0.5" value="4"></label>
-      <label title="max_tokens per turn.">max <input type="number" id="s-maxtok" min="8" max="512" step="8" value="128"></label>
+      <!-- 900, was 128. Her replies were being guillotined mid-sentence — and a guillotined
+           reply is also a turn kairos then spends a whole 12B generation stitching back
+           together. Cheap to raise: max_tokens is a CEILING, not a target. She stops when
+           she is done, and eot_bias is what makes sure she does. -->
+      <label title="max_tokens per turn (a ceiling, not a target).">max <input type="number" id="s-maxtok" min="8" max="4096" step="8" value="900"></label>
       <label title="auto-recall: the model self-selects + replays a relevant stored memory."><input type="checkbox" id="s-autorecall" checked> auto-recall</label>
-    </div>
-    <div class="pb">
-      <div id="mesh-container">
-        <div class="stream-empty"><span class="dot"></span>polling /v1/mesh/peers</div>
-      </div>
     </div>
   </div>
 
@@ -422,6 +496,35 @@
 
 </div>
 
+<!-- ── NOTE MODAL ────────────────────────────────────────────────────────────────
+     OUTSIDE .shell, and ABOVE the script. Both are deliberate, and I got both wrong once:
+       * inside .shell it is a GRID CHILD — position:fixed + display:none still claims a
+         column, and it squeezed the app header into four wrapped lines. display:none
+         hides a box; it does not remove it from its parent's layout.
+       * below the script, $('note-modal') is null at parse time and every click on a note
+         is a silent no-op. -->
+<div class="modal-back" id="note-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <input id="m-title" class="m-title" placeholder="Title — what is it?" maxlength="120">
+      <button class="toolbtn" id="m-close" title="Close">✕</button>
+    </div>
+    <div class="modal-meta">
+      <select id="m-cat"></select>
+      <input id="m-due" placeholder='due — "friday 10am", "in 2 hours" (optional)'>
+      <label class="m-done"><input type="checkbox" id="m-done"> done</label>
+    </div>
+    <textarea id="m-body" class="m-body" placeholder="The detail, if there is any…"></textarea>
+    <div class="modal-foot">
+      <span class="m-who" id="m-who"></span>
+      <span class="m-err" id="m-err"></span>
+      <div style="flex:1"></div>
+      <button class="toolbtn danger" id="m-del">remove</button>
+      <button class="toolbtn go" id="m-save">save</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function () {
   'use strict';
@@ -510,47 +613,151 @@
     } catch (_) { $('tel-tps').textContent = '--'; }
   }
 
-  /* ===== 3. DHT MESH POLL  (/v1/mesh/peers) ===================== */
-  const meshContainer = $('mesh-container'), meshBadge = $('mesh-badge'), meshSvg = $('mesh-svg');
-  const Q_COLORS = { q1:'#d94aa1', q2:'#4adba0', q3:'#6ea6ff', q4:'#e89a3c', q5:'#b478ff' };
+  /* ===== 3. THE BOARD  (/v1/notes) ==============================
+     Notes, ideas and reminders — his and hers on one list. She writes to the same store
+     through her tools, so a note she adds mid-conversation appears here on the next poll,
+     marked as hers.
 
-  async function fetchMesh() {
+     This replaced the DHT peer topology: a graph of a mesh that has never had a second
+     node in it, redrawn every 2 seconds, in the most valuable 300px on the screen. */
+  const notesList = $('notes-list'), notesBadge = $('notes-badge'), notesFilters = $('notes-filters');
+  let NOTES = [], NOTE_COLOURS = {}, NOTE_CATS = [], noteFilter = 'all', editing = null;
+
+  const nesc = s => String(s == null ? '' : s).replace(/[<>&"]/g,
+    c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+  const isOverdue = n => n.due_at && !n.done && n.due_at <= new Date().toISOString();
+
+  function dueLabel(n) {
+    if (!n.due_at) return '';
+    const d = new Date(n.due_at);
+    const days = Math.round((d - new Date()) / 86400000);
+    const hhmm = d.toTimeString().slice(0, 5);
+    if (isOverdue(n)) return 'overdue';
+    if (days === 0) return `today ${hhmm}`;
+    if (days === 1) return `tomorrow ${hhmm}`;
+    if (days < 7)  return d.toLocaleDateString(undefined, { weekday: 'short' }) + ' ' + hhmm;
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  }
+
+  async function fetchNotes() {
     try {
-      const r = await fetch(`${DAEMON}/v1/mesh/peers`, { signal: AbortSignal.timeout(4000) });
-      const data = await r.json();
-      const peers = Array.isArray(data) ? data : (data.peers || []);   // daemon returns {peers,active,total}
-      meshBadge.textContent = `${peers.length} peers`;
-      if (peers.length === 0) {
-        meshContainer.innerHTML = '<div class="stream-empty">[ DHT solo · no peers connected ]</div>';
-        drawMesh([]);
-        return;
-      }
-      meshContainer.innerHTML = '';
-      peers.forEach(p => {
-        const col = Q_COLORS[p.shard_id] || 'var(--cyan-bright)';
-        const div = document.createElement('div');
-        div.innerHTML =
-          `<span><strong style="color:${col}">[${p.shard_id}]</strong> <span style="color:var(--text)">${p.node_id}</span></span>` +
-          `<span style="color:var(--text-dim);font-size:9.5px;letter-spacing:1px;">${p.address} · ${p.latency_ms}ms</span>`;
-        meshContainer.appendChild(div);
-      });
-      drawMesh(peers);
+      const r = await fetch(`${GATEWAY}/v1/notes`, { signal: AbortSignal.timeout(4000) });
+      if (!r.ok) throw 0;
+      const d = await r.json();
+      NOTES = d.notes || []; NOTE_COLOURS = d.colours || {}; NOTE_CATS = d.categories || [];
+      drawFilters(); drawNotes();
     } catch (_) {
-      if (!meshContainer.dataset.solo) { meshContainer.dataset.solo = '1';
-        meshContainer.innerHTML = '<div class="stream-empty"><span class="dot"></span>daemon offline · /v1/mesh/peers</div>'; }
+      notesList.innerHTML = '<div class="stream-empty"><span class="dot"></span>gateway offline · the board is unreachable</div>';
     }
   }
 
-  function drawMesh(peers) {
-    const W = 280, H = 200, cx = W/2, cy = H/2;
-    let s = '<defs><radialGradient id="msGlow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#f4c860" stop-opacity="0.9"/><stop offset="1" stop-color="#f4c860" stop-opacity="0"/></radialGradient></defs>';
-    [40,70,95].forEach((r,i)=>{ s += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#1d6e7a" stroke-opacity="${0.4-i*0.1}" stroke-width="0.5" stroke-dasharray="2 6"/>`; });
-    const N = Math.min(peers.length, 10);
-    for (let i=0;i<N;i++){ const a=(i/N)*Math.PI*2-Math.PI/2; const ring=40+(i%3)*25; const px=cx+Math.cos(a)*ring, py=cy+Math.sin(a)*ring; const col=Q_COLORS[peers[i].shard_id]||'#5fb8c4';
-      s += `<line x1="${cx}" y1="${cy}" x2="${px}" y2="${py}" stroke="${col}" stroke-opacity="0.55" stroke-width="0.6"/><circle cx="${px}" cy="${py}" r="6" fill="${col}" fill-opacity="0.18"/><circle cx="${px}" cy="${py}" r="2.4" fill="${col}"/>`; }
-    s += `<circle cx="${cx}" cy="${cy}" r="18" fill="url(#msGlow)"/><circle cx="${cx}" cy="${cy}" r="4.5" fill="#f4c860"/><text x="${cx+8}" y="${cy+14}" font-family="JetBrains Mono" font-size="7" fill="#5fb8c4" letter-spacing="1">SELF · q3</text>`;
-    meshSvg.innerHTML = s;
+  function drawFilters() {
+    if (notesFilters.dataset.built) return;
+    ['all', 'due', ...NOTE_CATS].forEach(c => {
+      const el = document.createElement('span');
+      el.className = 'nf' + (c === noteFilter ? ' on' : '');
+      el.textContent = c;
+      el.onclick = () => { noteFilter = c;
+        notesFilters.querySelectorAll('.nf').forEach(x => x.classList.toggle('on', x === el));
+        drawNotes(); };
+      notesFilters.appendChild(el);
+    });
+    notesFilters.dataset.built = '1';
   }
+
+  function drawNotes() {
+    let rows = NOTES;
+    if (noteFilter === 'due') rows = rows.filter(n => n.due_at && !n.done);
+    else if (noteFilter !== 'all') rows = rows.filter(n => n.category === noteFilter);
+
+    const over = NOTES.filter(isOverdue).length;
+    notesBadge.textContent = over ? `${NOTES.length} · ${over} due` : String(NOTES.length);
+    notesBadge.style.color = over ? 'var(--err)' : '';
+
+    if (!rows.length) {
+      notesList.innerHTML = `<div class="stream-empty">[ nothing ${
+        noteFilter === 'all' ? 'on the board yet' : 'under ' + noteFilter} ]</div>`;
+      return;
+    }
+    notesList.innerHTML = rows.map(n => {
+      const col = n.colour || NOTE_COLOURS[n.category] || '#8b93a3';
+      const mine = n.speaker === 'self';
+      const dl = dueLabel(n);
+      return `<div class="note${n.done ? ' done' : ''}${isOverdue(n) ? ' overdue' : ''}" data-id="${n.id}">
+        <span class="bar" style="background:${col}"></span>
+        <span class="nb">
+          <span class="nt">${nesc(n.title)}</span>
+          <span class="nm">
+            <span style="color:${col}">${nesc(n.category)}</span>
+            <span class="${mine ? 'by-self' : ''}">${mine ? 'shannon' : 'you'}</span>
+            ${dl ? `<span class="due${isOverdue(n) ? ' over' : ''}">${dl}</span>` : ''}
+          </span>
+        </span>
+      </div>`;
+    }).join('');
+    notesList.querySelectorAll('.note').forEach(el =>
+      el.onclick = () => openNote(NOTES.find(n => n.id === el.dataset.id)));
+  }
+
+  const modal = $('note-modal');
+  const mTitle = $('m-title'), mBody = $('m-body'), mCat = $('m-cat'),
+        mDue = $('m-due'), mDone = $('m-done'), mWho = $('m-who'), mErr = $('m-err');
+
+  function openNote(n) {
+    editing = n || null;
+    const cats = NOTE_CATS.length ? NOTE_CATS : ['idea','reminder','task','important','note'];
+    mCat.innerHTML = cats.map(c => `<option value="${c}">${c}</option>`).join('');
+    mTitle.value = n ? n.title : '';
+    mBody.value  = n ? (n.body || '') : '';
+    mCat.value   = n ? n.category : 'note';
+    mDone.checked = n ? !!n.done : false;
+    mDue.value   = n && n.due_at ? n.due_at.slice(0, 16).replace('T', ' ') : '';
+    mWho.textContent = n ? (n.speaker === 'self' ? 'added by Shannon' : 'added by you') : 'new note';
+    mErr.textContent = '';
+    $('m-del').style.display = n ? '' : 'none';
+    modal.classList.add('open');
+    mTitle.focus();
+  }
+  function closeNote() { modal.classList.remove('open'); editing = null; }
+
+  async function saveNote() {
+    const title = mTitle.value.trim();
+    if (!title) { mErr.textContent = 'a note needs a title'; return; }
+    const payload = { title, body: mBody.value, category: mCat.value,
+                      due: mDue.value.trim(), done: mDone.checked };
+    if (editing) payload.id = editing.id;
+    mErr.textContent = '';
+    try {
+      const r = await fetch(`${GATEWAY}/v1/notes/${editing ? 'update' : 'add'}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload) });
+      const d = await r.json();
+      // AN UNREADABLE TIME IS AN ERROR, NOT A SILENT NO-OP. Save it quietly and the note
+      // exists with no reminder on it, and he finds out by missing the thing.
+      if (!d.ok) { mErr.textContent = d.error || 'could not save'; return; }
+      closeNote(); fetchNotes();
+    } catch (e) { mErr.textContent = String(e.message || e); }
+  }
+
+  async function deleteNote() {
+    if (!editing) return;
+    try {
+      await fetch(`${GATEWAY}/v1/notes/remove`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: editing.id }) });
+      closeNote(); fetchNotes();
+    } catch (_) {}
+  }
+
+  $('note-new').onclick = () => openNote(null);
+  $('m-close').onclick = closeNote;
+  $('m-save').onclick  = saveNote;
+  $('m-del').onclick   = deleteNote;
+  modal.onclick = e => { if (e.target === modal) closeNote(); };
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && modal.classList.contains('open')) closeNote();
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && modal.classList.contains('open')) saveNote();
+  });
 
   /* ===== 4. PoUW LEDGER  (SSE /v1/pouw/ledger) ================== */
   const ledgerWindow = $('ledger-window'), ledgerBadge = $('ledger-badge');
@@ -879,6 +1086,45 @@
     if (abortCtrl) abortCtrl.abort();
   }
 
+  /* ===== 5b. KAIROS  (GET /v1/kairos/outbox) ====================
+     What she decided to say WITHOUT being asked: finishing a thought she was cut off in,
+     checking in after a long quiet, or keeping a reminder he asked her for.
+
+     THE LAST MILE, AND IT WAS MISSING TWICE. First nothing polled the outbox at all — the
+     impulse fired, the policy allowed it, she generated, the scheduler filed the message,
+     and no page was listening. Then it WAS polled... in console.html, a fork of this file
+     that nobody opens. Every part of the chain was built and gated except the one that lets
+     a human see it.
+
+     Her turn is pushed into `history` like any other. Shown-but-not-remembered would leave
+     a hole in the next turn's context exactly where she had spoken: she would say something
+     and then not know she had said it. */
+  async function pollKairos() {
+    if (abortCtrl) return;                    // never interleave with a live generation
+    try {
+      const r = await fetch(`${GATEWAY}/v1/kairos/outbox?session=${encodeURIComponent(SESSION_ID)}`,
+                            { signal: AbortSignal.timeout(4000) });
+      if (!r.ok) return;
+      const { messages } = await r.json();
+      for (const m of (messages || [])) {
+        const { msg } = appendMessage('ai', m.text);
+        msg.classList.add('unprompted');
+        const who = msg.querySelector('.who');
+        // SHE SAYS WHY, AND IT IS ON THE PAGE. An unprompted message with no account of
+        // itself is indistinguishable from a bug.
+        const label = m.kind === 'continue' ? 'picked the thread back up'
+                    : m.kind === 'remind'   ? 'reminding you'
+                    : 'spoke up';
+        if (who) who.innerHTML += ` <span class="kairos-tag" title="${
+          String(m.reason || '').replace(/"/g, '&quot;')}${
+          m.margin != null ? ' · eot_margin ' + Number(m.margin).toFixed(2) : ''}">${label}</span>`;
+        const ic = msg.querySelector('.gen-icon'); if (ic) ic.style.display = 'none';
+        history.push({ role: 'assistant', content: m.text });
+        if (m.kind === 'remind') fetchNotes();   // it is raised now — refresh the board
+      }
+    } catch (_) { /* gateway down: the chat still works, she just cannot speak first */ }
+  }
+
   /* ===== 6. REWIND (client-side scrub of the last reply) ========= */
   function openRewind()  { rewindBar.classList.add('open'); rewindScrub.value = 100; applyRewind(100); }
   function closeRewind() { rewindBar.classList.remove('open'); lastTokenNodes.forEach(n => n.style.opacity = ''); }
@@ -1043,7 +1289,11 @@
   connectTelemetry();
   connectLedger();
   pollMetrics();   setInterval(pollMetrics, 1000);
-  fetchMesh();     setInterval(fetchMesh, 2000);
+  // The board polls slowly on purpose: it changes when a human types or when she uses a
+  // tool — not 30 times a minute, which is what the DHT topology it replaced was doing to
+  // render a mesh with one node in it.
+  fetchNotes();    setInterval(fetchNotes, 5000);
+  setInterval(pollKairos, 4000);
   probeGateway();  setInterval(probeGateway, 8000);
   pollPersonaState(); setInterval(pollPersonaState, 12000);
   const peBtn = document.getElementById('persona-edit-btn');

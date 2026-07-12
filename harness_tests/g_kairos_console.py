@@ -51,9 +51,42 @@ def get(path):
 def main() -> int:
     print("G-KAIROS-CONSOLE - she speaks, and a human can see it.\n")
 
-    # ── 1. the console page must actually poll the outbox ───────────────────────
-    page = open(os.path.join(ROOT, "console", "console.html"), encoding="utf-8").read()
-    check("console.html polls the kairos outbox at all",
+    # ── 0. THE FILE A HUMAN ACTUALLY OPENS ──────────────────────────────────────
+    # This gate used to read console/console.html — and PASS — while the console served at
+    # :3000/ was console/index.html, a different file that polled nothing. Two consoles had
+    # drifted apart: index.html had the voice pipeline, console.html had everything I had
+    # built for two days, and the operator only ever saw index.html. The gate agreed with me
+    # because I pointed it at my own copy.
+    #
+    # A gate that tests an artifact nobody runs is not a gate; it is a second opinion from
+    # the same mistake. So: the gate now reads the SERVED file, and it FAILS if a second
+    # console appears beside it — because the next fork will look exactly as reasonable as
+    # the last one did.
+    console_dir = os.path.join(ROOT, "console")
+    served = os.path.join(console_dir, "index.html")     # what the daemon serves at :3000/
+
+    # A CONSOLE is a page you TALK TO HER IN: a composer, a transcript, and a live stream.
+    # Not merely a page that calls the chat endpoint — operator.html fires one request from
+    # a button and is a panel, not a console, and the first cut of this check flagged it.
+    # Panels (ops/tuning/dashboard/operator) are fine and expected; a second place to HOLD A
+    # CONVERSATION is what drifts, because it is the one that grows features.
+    forks = []
+    for fn in os.listdir(console_dir):
+        if not fn.endswith(".html") or fn == "index.html":
+            continue
+        txt = open(os.path.join(console_dir, fn), encoding="utf-8", errors="replace").read()
+        if 'http-equiv="refresh"' in txt:
+            continue                                   # a redirect stub is not a console
+        if all(k in txt for k in ("chat-input", "send-btn", "appendMessage")):
+            forks.append(fn)
+    check("there is exactly ONE console", not forks,
+          f"forks of the console that a human could open: {forks}" if forks else
+          "index.html — the file the daemon serves")
+
+    page = open(served, encoding="utf-8").read()
+
+    # ── 1. it must actually poll the outbox ─────────────────────────────────────
+    check("the SERVED console polls the kairos outbox",
           "/v1/kairos/outbox" in page,
           "the entire chain is unobservable without this")
     check("...and renders her unprompted turn into the transcript",
@@ -62,6 +95,10 @@ def main() -> int:
           re.search(r"history\.push\(\s*\{\s*role:\s*'assistant',\s*content:\s*m\.text",
                     page) is not None,
           "shown-but-not-remembered leaves a hole in the next turn's context")
+    check("...and it keeps the voice pipeline it already had",
+          "/v1/voice" in page, "the fork had lost it")
+    check("...and it shows the board",
+          "/v1/notes" in page and "the board" in page)
 
     # ── 2. THE KEY. Drive it exactly as the console does: session_id. ───────────
     sess = f"gkc{int(time.time()) % 100000}"
