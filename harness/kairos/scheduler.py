@@ -38,6 +38,12 @@ _STATE: dict[str, TurnState] = defaultdict(TurnState)
 _OUTBOX: dict[str, deque] = defaultdict(deque)
 _TIMERS: dict[str, threading.Timer] = {}
 
+# THE LAST TURN, PER SESSION — her reply, and the closure that can run one more turn on
+# that conversation. The idle ticker needs both: to check in, she has to be able to SPEAK,
+# and speaking means generating against the history she was last in.
+_LAST: dict[str, tuple] = {}
+_TICKER: Optional[threading.Thread] = None
+
 
 def live_config() -> KairosConfig:
     """Read the knobs fresh, every turn. The UI is the source of truth."""
@@ -70,6 +76,14 @@ def on_reply(
     """Called after each assistant reply. `generate(nudge)` runs one more turn with the
     nudge appended and returns her text. Returns the Impulse (for the receipt/telemetry)."""
     cfg = live_config()
+
+    # REMEMBER THE TURN EVEN WHEN SHE IS SILENT — and even when kairos is off. The idle
+    # ticker speaks against the last conversation, so it needs the closure regardless of
+    # what this turn decided. Storing it only on the speaking path would mean she could
+    # only ever check in after a turn she had already interrupted.
+    with _LOCK:
+        _LAST[session] = (reply_text, generate)
+
     if not cfg.enabled:
         return None
 
@@ -88,6 +102,12 @@ def on_reply(
     if not imp.speaks:
         return imp
 
+    _arm(session, imp, reply_text, generate, margin)
+    return imp
+
+
+def _arm(session, imp, reply_text, generate, margin) -> None:
+    """Wait the delay, generate, and let worth_saying() have the last word."""
     def _fire():
         # the CONTINUE nudge is built from the reply so she can see WHERE she was cut —
         # without the tail she just restates the whole thing and worth_saying() drops it.
@@ -117,7 +137,61 @@ def on_reply(
         t.daemon = True
         _TIMERS[session] = t
         t.start()
-    return imp
+
+
+# ── THE IDLE TICK (2026-07-12) ────────────────────────────────────────────────
+# CHECK_IN was unreachable code. decide() has a whole branch for it — "the room has been
+# quiet a long time" — and the only caller of decide() was on_reply(), which fires the
+# instant a reply is produced, i.e. moments after HE spoke. So `idle = now - last_user_at`
+# was always ~0, and `idle >= checkin_idle_s` (240s) could never be true. The knobs were on
+# the operator panel; the policy was gated pure and correct; the branch could not run.
+#
+# That is the "she ticks turns noop" the operator named at the outset: the system had a
+# heartbeat everywhere except where it needed one. Silence is not an event, so nothing
+# generated it — and a thing that can only act when spoken to cannot notice a quiet room.
+# It needs a clock of its own.
+#
+# The tick is cheap: it asks the POLICY, not the model. It reaches the model only if the
+# policy says speak — and the policy says SILENT almost always (240s of quiet, then a 35%
+# roll, then the cooldown, the hourly cap and the chain limit all still apply).
+def tick_once(now: Optional[float] = None) -> None:
+    cfg = live_config()
+    if not cfg.enabled:
+        return
+    now = now if now is not None else time.monotonic()
+    with _LOCK:
+        sessions = list(_LAST.items())
+    for session, (reply_text, generate) in sessions:
+        with _LOCK:
+            st = _STATE[session]
+            if _TIMERS.get(session) and _TIMERS[session].is_alive():
+                continue                       # she is already about to say something
+            imp = decide(cfg=cfg, state=st, now=now,
+                         reply_text=reply_text, eot_margin=None)
+        if not imp.speaks:
+            continue
+        logger.info("[kairos] session=%s idle tick -> %s (%s)", session, imp.action, imp.reason)
+        _arm(session, imp, reply_text, generate, None)
+
+
+def start_ticker(period_s: float = 15.0) -> None:
+    """One clock for the whole gateway. Idempotent."""
+    global _TICKER
+    with _LOCK:
+        if _TICKER and _TICKER.is_alive():
+            return
+
+        def _loop():
+            while True:
+                time.sleep(period_s)
+                try:
+                    tick_once()
+                except Exception as exc:
+                    logger.warning("[kairos] tick failed: %s", exc)
+
+        _TICKER = threading.Thread(target=_loop, name="kairos-tick", daemon=True)
+        _TICKER.start()
+        logger.info("[kairos] idle ticker started (every %.0fs)", period_s)
 
 
 def drain(session: str) -> list[dict]:

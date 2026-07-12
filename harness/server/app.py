@@ -282,13 +282,22 @@ def _kairos_after_turn(body: Dict[str, Any], reply: str) -> None:
         session = str(body.get("session") or body.get("session_id") or "default")
 
         def _continue(nudge: str) -> str:
-            from harness.agent import agent_chat_stream
+            from harness.agent import agent_chat_stream, _arm_self_repeat_ban
             from harness.inference import InferenceConfig as _IC
             hist = list(body.get("messages", []))
             hist.append({"role": "assistant", "content": reply})
             hist.append({"role": "system", "content": nudge})
-            return "".join(agent_chat_stream(
-                hist, config=_IC(max_tokens=120, temperature=0.0, auto_recall=False), tools=[]))
+            _cfg = _IC(max_tokens=120, temperature=0.0, auto_recall=False)
+            # ARM THE SELF-REPEAT BAN ON THE CONTINUATION TOO. Her first live continuation
+            # resumed correctly ("...by the occasional wave crest that breaks into white
+            # foam") and then re-covered ground she had already said — "the air is thick
+            # with moisture, the ocean below a vast expanse". Of course it did: a
+            # continuation is conditioned on a reply that was CUT OFF mid-sentence, which
+            # is the strongest possible pull back into the words it just produced. This is
+            # the one turn in the system most likely to repeat itself, and it was the one
+            # turn with no guard. Fourth variant of the same hole.
+            _arm_self_repeat_ban(_cfg, hist)
+            return "".join(agent_chat_stream(hist, config=_cfg, tools=[]))
 
         ks.on_reply(session, reply, get_client().last_kairos, _continue)
     except Exception as exc:
@@ -1153,6 +1162,16 @@ def _run_stdlib(host: str, port: int) -> None:
     import os as _os
     if _os.environ.get("SP_GATEWAY_PREWARM") == "1":
         _prewarm()  # background: hydrate the persona+tools prefix into the persist cache
+    # KAIROS NEEDS A CLOCK. Her CHECK_IN branch asks "has the room been quiet for a while?"
+    # — and silence is not an event, so nothing was ever going to ask it on her behalf. The
+    # ticker only consults the POLICY (which says SILENT almost always); it reaches the
+    # model only when the policy says speak. Guarded by kairos.enabled, so an operator who
+    # has not armed her pays nothing.
+    try:
+        from harness.kairos import scheduler as _ks
+        _ks.start_ticker()
+    except Exception as exc:
+        logger.warning("[gateway] kairos ticker not started: %s", exc)
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 

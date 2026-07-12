@@ -74,19 +74,40 @@ def main() -> int:
     reply = say("Describe a thunderstorm over the ocean in vivid detail, at length.",
                 sess, max_tokens=40, tools=False)
     print(f"    (cut off at: {reply.strip()[-46:]!r})")
+    # WAIT LONG ENOUGH FOR A GENERATION. The first cut of this polled for 80s and reported
+    # "she never continued" — while the gateway log said `SPOKE (continue)` at +93s. The
+    # continuation is not a lookup, it is a full 12B turn on a 2060: the impulse fires
+    # immediately, then she has to actually WRITE the thing. An 80s budget was measuring
+    # the machine's speed and calling it a broken feature.
     got = []
-    for _ in range(40):                      # delay + a continuation turn
+    deadline = time.time() + 240
+    while time.time() < deadline:
         time.sleep(2)
         got = outbox(sess)["messages"]
         if got:
             break
     check("after being CUT OFF mid-thought she picks the thread back up", bool(got),
-          repr(got[0]["text"][:70]) if got else "nothing — she never continued")
+          repr(got[0]["text"][:70]) if got else "nothing — she never continued in 240s")
     if got:
+        txt = got[0]["text"]
         check("...and she says WHY (auditable)", bool(got[0].get("reason")), got[0]["reason"])
-        check("...and it is not a greeting or a restatement",
-              not got[0]["text"].lower().lstrip("*_ (").startswith(("hi", "hey", "hello", "sorry")),
-              got[0]["text"][:50])
+        check("...and it is not a greeting or an apology",
+              not txt.lower().lstrip("*_ (").startswith(("hi", "hey", "hello", "sorry")),
+              txt[:50])
+        # RESUMES, not RESTARTS. A continuation that begins the answer again is not a
+        # continuation — and this is the turn most prone to it, being conditioned on a
+        # sentence that was severed mid-word.
+        head = " ".join(txt.split()[:12]).lower()
+        check("...and it RESUMES rather than starting the answer over",
+              not head.startswith(("a thunderstorm", "the thunderstorm", "imagine",
+                                   "picture", "let me", "certainly", "of course")),
+              head[:60])
+        # and it must not re-say a whole clause it already said
+        prev = reply.lower()
+        dup = [s.strip() for s in txt.lower().split(".")
+               if len(s.split()) >= 6 and s.strip() and s.strip() in prev]
+        check("...and it does not re-say a clause from the cut-off reply",
+              not dup, f"repeated: {dup[:1]}" if dup else "")
 
     # ── 3. she cannot chain: nothing more without him speaking ──────────────────
     time.sleep(10)
