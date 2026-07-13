@@ -30,6 +30,7 @@ from __future__ import annotations
 import math
 import re
 import time
+import calendar
 from typing import Iterable, Optional
 
 USER_PREFIX = "The user said: "
@@ -557,10 +558,46 @@ _HALF_LIFE_DAYS = 45.0        # a fact unmentioned for 45 days is worth half as 
 
 
 def _age_days(iso: str, now: Optional[float] = None) -> float:
+    """How old is this, in days. THE one age function in the memory system.
+
+    ── THE TEN-HOUR LIE, AND I FIXED IT THIS MORNING IN A DIFFERENT FILE (2026-07-14) ─────
+    This read `time.mktime(time.strptime(iso, "...Z"))`.
+
+    EVERY timestamp in this system is WRITTEN with time.gmtime() — UTC, with a literal Z on the
+    end. time.mktime interprets a struct_time as LOCAL time. calendar.timegm is the inverse of
+    gmtime; mktime is the inverse of localtime. Pairing gmtime with mktime is a silent lie
+    exactly the size of the operator's UTC offset, and he is at UTC+10.
+
+    MEASURED, on the live store:
+
+        A fact stored RIGHT NOW reports an age of:
+            _age_days (mktime) : 0.417 days  = 10.0 HOURS
+            truth     (timegm) : 0.000 days
+        All 78 rows in the registry were inflated by 0.42 days.
+
+    Ten hours of phantom age on every memory the instant it is written. And this function is not
+    a corner: it is what SALIENCE decays on (log(mentions) x recency(half_life) x weight) and
+    what SILENCE accrues on (quiet vs cadence). So every fact was slightly less available than it
+    should have been, forever, and every silence was 10 hours closer to firing before he had said
+    a word.
+
+    ── AND IT IS THE SAME BUG I FIXED IN watch.py EIGHT HOURS AGO ─────────────────────────
+    Same pairing. Same offset. Same file tree. I found it, fixed it, wrote a commit message about
+    it — AND NEVER GREPPED FOR THE PATTERN. I have a phrase for this, from a commit I wrote about
+    the identity firewall: "I FIXED THE INSTANCE AND CALLED IT THE CLASS." Then I did it again.
+
+    A bug found in one file is a HYPOTHESIS about the codebase, not a fact about the file. The
+    grep is not optional. It is the cheapest thing in the entire toolbox and I skipped it twice.
+
+    It is invisible at UTC+0, a 5-hour lie in New York, and 10 hours here. No unit test that runs
+    in under a day can see it. Only a ROUND-TRIP assertion can — write the stamp the way the store
+    writes it, read it the way the store reads it, demand they agree. G-CLOCK does that now, for
+    every stamp-writer in the tree, under three timezones.
+    """
     if not iso:
         return 0.0
     try:
-        t = time.mktime(time.strptime(iso, "%Y-%m-%dT%H:%M:%SZ"))
+        t = calendar.timegm(time.strptime(iso, "%Y-%m-%dT%H:%M:%SZ"))
     except Exception:
         return 0.0
     now = now if now is not None else time.time()
