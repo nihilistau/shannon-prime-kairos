@@ -135,12 +135,77 @@ _PENDING_INSIGHT: dict = {}
 
 
 def _evidence_count() -> int:
-    """How much she has been told. Cheap, and enough to answer 'has anything changed?'"""
+    """How much she has been TOLD — not how much she has CONCLUDED.
+
+    ── A REFLECTION IS A CONCLUSION, NOT AN OBSERVATION (2026-07-14) ────────────────────
+    This used to be `len(_load())`: every row in the store, including her own reflections.
+
+    And `insight()` WRITES ROWS. So the sequence was:
+
+        ev = evidence_count()          # 46
+        if ev == last_evidence: return # "nothing new to think about"
+        last_evidence = ev             # 46
+        insight()                      # <-- writes 2 rows. The store is now 48.
+
+    ...and on the next tick the count is 48, which is "new evidence", so she reflects again —
+    ON HER OWN REFLECTIONS. The gate that was supposed to mean "has he told me anything?"
+    actually meant "has the store changed?", and she is part of the store.
+
+    It never spun (the 30-minute cooldown bounded it). IT JUST DRIFTED. Each pass took her
+    conclusions as fresh input and concluded something about them, and from the outside that
+    reads as "the model has got a bit weird lately" — which is unfalsifiable, gets blamed on
+    the weights, and is nearly impossible to see from a transcript.
+
+    DERIVING A BELIEF FROM EVIDENCE MUST NOT CREATE EVIDENCE.
+
+    Evidence is what HE said and what the WORLD did. Never what SHE concluded. A system whose
+    inferences re-enter its own input is not learning, it is compounding — and the only thing
+    that compounds is its own certainty.
+
+    (The same shape as `_capture_after_turn` storing tool RESULTS as facts about him — she ate
+    her own exhaust. It is the third time this exact loop has appeared in this codebase, which
+    is why it gets a named rule rather than a fix.)
+    """
     try:
         from harness.skills.memory import _load
-        return len(_load())
+        return sum(1 for r in _load() if _is_evidence(r))
     except Exception:
         return -1
+
+
+def _is_evidence(row: dict) -> bool:
+    """Is this row something the WORLD told her, or something SHE decided?
+
+    ── src IS AN AUDIT TRAIL, NOT A CLAIM STATUS, AND I NEARLY SHIPPED A GATE THAT TRUSTED IT ──
+    My first cut tested `src not in ("reflection", "insight")`. It passed — because exactly ONE
+    row in the live store happens to have src EXACTLY "reflection". Here is what src actually
+    holds:
+
+        'user turn'                                     30
+        'rescued from ep_live_m1783826444872'            1
+        'user turn | repair: un-retired (2026-07-12)'    1
+        ' | cleanup: stamped speaker=user'               9
+        'reflection'                                     1
+
+    It is FREE-TEXT PROVENANCE PROSE that gets appended to over time. The moment a reflection row
+    is touched by a cleanup pass it becomes "reflection | cleanup: ...", the exact-match fails,
+    and the row silently becomes EVIDENCE again — reopening the self-feeding loop this function
+    exists to close. The gate would not error. It would just quietly stop working, months later,
+    because of a maintenance script.
+
+    So: check the STRUCTURED field (speaker) first, and treat src as a fuzzy hint, not a key.
+    A field that is a paragraph is not a field you can branch on.
+
+    (This is why the store needs a real claim status — candidate/observed/inferred/confirmed —
+    as a first-class enum, instead of inferring epistemics from prose. Filed as its own task;
+    this is the hardening that makes today's fix survive until then.)
+    """
+    if (row.get("speaker") or "user") == "self":
+        return False                       # her own voice is not news from the world
+    src = (row.get("src") or "").lower()
+    if "reflection" in src or "insight" in src:
+        return False                       # a conclusion is not an observation
+    return True
 
 
 def reflect_tick(now: Optional[float] = None) -> Optional[dict]:

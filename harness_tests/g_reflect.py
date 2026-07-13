@@ -29,9 +29,24 @@ sys.path.insert(0, ROOT)
 _TMP = tempfile.mkdtemp()
 os.environ["SP_RECALL_REGISTRY"] = os.path.join(_TMP, "registry.jsonl")
 
+# ── A GATE THAT NEEDS A LIVE DAEMON IS NOT A GATE (2026-07-14) ──────────────────────────
+# remember() makes a SYNCHRONOUS call to the daemon's /v1/capture to mint the episode —
+# `urlopen(..., timeout=120)` — on EVERY memory write. With the daemon up, this gate hung: the
+# episode mint is a model forward and it grinds. With the daemon down it degrades gracefully
+# (the fact is still recorded), which is the behaviour the gate actually wants to test.
+#
+# So point it at a closed port. Connection-refused fails in microseconds; a LIVE daemon fails in
+# up to two minutes, per write. A test whose runtime depends on whether a GPU service happens to
+# be running is a test that will be quietly disabled the first week it annoys someone.
+#
+# (The 120s inline capture on the memory-write hot path is a real finding and has its own task.
+# It is not this gate's job to work around it — it is this gate's job not to DEPEND on it.)
+os.environ["SP_DAEMON_URL"] = "http://127.0.0.1:9"   # discard port: always refused, instantly
+
 from harness.kairos import impulse as I        # noqa: E402
 from harness.kairos import scheduler as S      # noqa: E402
 from harness.model.person import PersonModel   # noqa: E402
+from harness.skills import memory as M         # noqa: E402
 from harness.tuning import registry as tune    # noqa: E402
 
 PASS, FAIL = [], []
@@ -136,6 +151,44 @@ def main() -> int:
     S._LAST_EVIDENCE = S._evidence_count()     # ...but nothing new has been said
     check("she does not re-think the same evidence and call it a discovery",
           S.reflect_tick(t0) is None, "no new evidence, no new thinking")
+
+    # ── A REFLECTION IS A CONCLUSION, NOT AN OBSERVATION ─────────────────────────────────
+    # THE CHECK ABOVE PASSED FOR WEEKS WHILE THE BUG WAS LIVE, because it SETS _LAST_EVIDENCE
+    # by hand and then asserts she does not reflect. It tested THE GUARD. It never tested THE
+    # THING THE GUARD PROTECTS: that her own output does not bump the count that opens the gate.
+    #
+    # The bug: _evidence_count() was len(_load()) — every row, including src=reflection. And
+    # insight() WRITES ROWS. So she reflected, the store grew, "new evidence" appeared, and she
+    # reflected on her own reflections. Bounded only by the 30-minute cooldown, so it never
+    # spun — it DRIFTED, which from outside reads as "the model got weird lately" and gets
+    # blamed on the weights.
+    #
+    # DERIVING A BELIEF FROM EVIDENCE MUST NOT CREATE EVIDENCE. A system whose inferences
+    # re-enter its own input is not learning, it is compounding its own certainty.
+    # Written through the SAME call insight() uses — M.remember(line, source="reflection") —
+    # so the gate tests the real path and not a convenient stand-in.
+    before = S._evidence_count()
+    M.remember("Knack is deeply curious about how things work", source="reflection")
+    after_infer = S._evidence_count()
+    check("HER OWN CONCLUSION IS NOT NEW EVIDENCE",
+          after_infer == before,
+          f"evidence {before} -> {after_infer} after she concluded something — the loop is open")
+
+    # ...and `src` is FREE-TEXT PROSE that maintenance passes APPEND to. A cleanup that stamps a
+    # reflection row turns src into "reflection | cleanup: ..." — so an EXACT-match test would
+    # silently start counting it as evidence again, months later, because of a housekeeping
+    # script, and nothing would error. Substring, not equality.
+    M.remember("Knack values play for its own sake",
+               source="reflection | cleanup: stamped speaker=user (2026-07-14)")
+    check("...even after a maintenance pass has scribbled on its provenance",
+          S._evidence_count() == before,
+          "a src that is a PARAGRAPH is not a field you can branch on")
+
+    # But the world must still be able to tell her something.
+    M.remember("My father was a cartographer", source="user turn")
+    check("but something HE said is still evidence",
+          S._evidence_count() == before + 1,
+          "if nothing counts as evidence, she never thinks again")
 
     total = len(PASS) + len(FAIL)
     print(f"\nG-REFLECT: {'PASS' if not FAIL else 'FAIL'} ({len(PASS)}/{total})")
