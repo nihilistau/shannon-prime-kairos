@@ -4076,6 +4076,12 @@ struct sp_g4_kv {
      * jcur = journal depth = dpos_host - commit_pos. jK/jV[L] = [Jmax*kvd] per
      * SWA owner; globals stay full-cache (no window ⇒ no alias ⇒ no journal). */
     int   ring_W, Jmax, commit_pos, jcur;
+  /* HIGH-WATER FACT, NOT A DERIVED ONE (2026-07-13). Once any position past ring_W has been
+   * written, the SWA slots at [0..dpos%ring_W) have been overwritten and are no longer
+   * positional — FOREVER, for this residency, regardless of where dpos is dragged afterwards
+   * by a rewind. The shear used to infer this from the current dpos and was wrong in exactly
+   * the case that corrupted the KV (P1c-2). Set once, cleared only by a true reset to 0. */
+  int   ring_wrapped;
     float **jK, **jV;
     /* ADR-011 CPU FFN OFFLOAD: cpu_tail = number of trailing layers whose FFN runs on the CPU
      * (their FFN weights are NOT uploaded to VRAM; build_weights skips them). cpu_x = a host
@@ -4632,7 +4638,7 @@ extern "C" sp_g4_kv *gemma4_kv_open(const qwen3_model *m, int Pmax) {
     const qwen3_config *c = &m->cfg;
     sp_g4_kv *s = (sp_g4_kv *)calloc(1, sizeof(sp_g4_kv));
     if (!s) { sp_set_error("gemma4_kv_open: host OOM"); return NULL; }
-    s->m = m; s->Pmax = Pmax; s->dpos_host = 0;
+    s->m = m; s->Pmax = Pmax; s->dpos_host = 0; s->ring_wrapped = 0;
     s->E=(int)c->n_embd; s->NL=(int)c->n_layers; s->V=(int)c->n_vocab; s->SW=(int)c->sliding_window;
     s->period=(int)c->g4_swa_period?(int)c->g4_swa_period:6;
     s->kvfs=(int)c->g4_n_kv_from_start?(int)c->g4_n_kv_from_start:s->NL;
@@ -5050,6 +5056,7 @@ extern "C" int gemma4_kv_prefill_batched(sp_g4_kv *s, const int32_t *toks, int n
     { cudaError_t e=cudaStreamSynchronize(st); if (e!=cudaSuccess){ fail_cuda(e,"batch-prefill sync"); goto bdone; } }
     { cudaError_t e=cudaGetLastError(); if (e!=cudaSuccess){ fail_cuda(e,"batch-prefill kernel"); goto bdone; } }
     s->dpos_host = n;
+    if (s->ring_W > 0 && s->dpos_host > s->ring_W) s->ring_wrapped = 1;  /* batched prefill wraps the ring too */
     /* wave-6: leave commit_pos/jcur EXACTLY as the per-token gemma4_kv_prefill leaves them
      * (untouched — the decode's B2 undo-journal auto-slides commit_pos forward). Setting
      * commit_pos=n here desynced the persist-KV reuse math on the NEXT turn (a second request
@@ -5112,6 +5119,7 @@ extern "C" int gemma4_kv_prefill(sp_g4_kv *s, const int32_t *toks, int n) {
     for (int i = 0; i < n; i++) {                 /* every position: forward + store K/V; last runs the head */
         if (g4_kv_step(s, /*do_head=*/(i == n - 1))) return -1;
         s->dpos_host++;
+    if (s->ring_W > 0 && s->dpos_host > s->ring_W) s->ring_wrapped = 1;  /* high-water: never un-set by a rewind */
         if (((i + 1) % sync_every) == 0 && (i + 1) < n) {
             cudaError_t ce = cudaStreamSynchronize(st);
             if (ce == cudaSuccess) ce = cudaGetLastError();
@@ -5166,6 +5174,7 @@ extern "C" int gemma4_kv_decode(sp_g4_kv *s, int n_gen, int32_t *out) {
     for (int g = 0; g < n_gen; g++) {             /* process the just-predicted token, predict next */
         if (g4_kv_step(s, /*do_head=*/1)) return -1;
         s->dpos_host++;
+    if (s->ring_W > 0 && s->dpos_host > s->ring_W) s->ring_wrapped = 1;  /* high-water: never un-set by a rewind */
         if (out && cudaMemcpyAsync(&out[g], s->dseq + s->dpos_host, sizeof(int),
                                    cudaMemcpyDeviceToHost, st) != cudaSuccess) { sp_set_error("g4_kv decode D2H"); return -1; }
     }
@@ -5212,6 +5221,7 @@ extern "C" int gemma4_kv_decode_logits(sp_g4_kv *s, int32_t token, float *logits
                         cudaMemcpyDeviceToHost, st) != cudaSuccess) {
         sp_set_error("gemma4_kv_decode_logits: logits D2H"); return -1; }
     s->dpos_host++;
+    if (s->ring_W > 0 && s->dpos_host > s->ring_W) s->ring_wrapped = 1;  /* high-water: never un-set by a rewind */
     cudaError_t e = cudaStreamSynchronize(st);
     if (e != cudaSuccess) return fail_cuda(e, "gemma4_kv_decode_logits sync");
     return 0;
@@ -5240,6 +5250,7 @@ extern "C" int gemma4_kv_decode_batch(sp_g4_kv *s, const int32_t *toks, int B,
                             cudaMemcpyDeviceToHost, st) != cudaSuccess) {
             sp_set_error("gemma4_kv_decode_batch: logits D2H"); return -1; }
         s->dpos_host++;
+    if (s->ring_W > 0 && s->dpos_host > s->ring_W) s->ring_wrapped = 1;  /* high-water: never un-set by a rewind */
     }
     cudaError_t e = cudaStreamSynchronize(st);
     if (e != cudaSuccess) return fail_cuda(e, "gemma4_kv_decode_batch sync");
@@ -5361,6 +5372,7 @@ extern "C" int gemma4_kv_pos(const sp_g4_kv *s) { return s ? s->dpos_host : -1; 
 extern "C" int gemma4_kv_reset(sp_g4_kv *s) {
     if (!s) return -1;
     s->dpos_host = 0; s->commit_pos = 0; s->jcur = 0;
+    s->ring_wrapped = 0;   /* a TRUE reset: the ring is about to be rebuilt from slot 0 */
     int zero = 0;
     if (cudaMemcpy(s->dpos, &zero, sizeof(int), cudaMemcpyHostToDevice) != cudaSuccess) {
         sp_set_error("gemma4_kv_reset: dpos H2D"); return -1;
@@ -5399,6 +5411,7 @@ extern "C" int gemma4_kv_reset_cold(sp_g4_kv *s) {
     cudaError_t e = cudaStreamSynchronize(st);
     if (e != cudaSuccess) return fail_cuda(e, "gemma4_kv_reset_cold memset sync");
     s->dpos_host = 0; s->commit_pos = 0; s->jcur = 0;
+    s->ring_wrapped = 0;   /* a TRUE reset: the ring is about to be rebuilt from slot 0 */
     int zero = 0;
     if (cudaMemcpy(s->dpos, &zero, sizeof(int), cudaMemcpyHostToDevice) != cudaSuccess) {
         sp_set_error("gemma4_kv_reset_cold: dpos H2D"); return -1;
@@ -5998,6 +6011,7 @@ extern "C" int gemma4_kv_replay(sp_g4_kv *s, const char *epdir, int npos, int ze
     cudaStreamSynchronize(st);
     cudaFree(dK); cudaFree(dV); sp_xbar_manifest_free(&mf);
     s->dpos_host += npos;
+    if (s->ring_W > 0 && s->dpos_host > s->ring_W) s->ring_wrapped = 1;
     if (cudaMemcpy(s->dpos, &s->dpos_host, sizeof(int), cudaMemcpyHostToDevice) != cudaSuccess) { sp_set_error("kv_replay: dpos H2D"); return -1; }
     fprintf(stderr, "    [xbar-#222] gemma4_kv_replay: %s episode into resident cache [%d,%d) alpha=%.3f eff_mass(a*npos)=%.1f%s\n",
             zero ? "ZEROED" : "intact", base, base + npos, replay_alpha, replay_alpha * (float)npos, zero ? " (reject control)" : "");
@@ -6044,8 +6058,24 @@ extern "C" int gemma4_kv_ablate_rows(sp_g4_kv *s, int base, const int *pos, int 
  * as before. ring_W == 0 (full-cache, KAI-1b) shears unconditionally. */
 extern "C" int gemma4_kv_shear(sp_g4_kv *s, int P) {
     if (!s || P < 0 || P > s->dpos_host) { sp_set_error("gemma4_kv_shear: bad P"); return -1; }
-    if (s->ring_W > 0 && s->dpos_host > s->ring_W) {
-        sp_set_error("gemma4_kv_shear: ring wrapped this residency - slots [0..P) no longer positional; full prefill required");
+    /* ── THE P1c-2 CORRUPTION, AND IT IS A PROXY BUG (2026-07-13) ────────────────────────
+     * This read `s->dpos_host > s->ring_W` — the CURRENT position — as a stand-in for the
+     * thing it actually needs to know: HAS THE RING EVER WRAPPED IN THIS RESIDENCY? They are
+     * not the same question. Grow a conversation to 3000 (the ring wraps; slots [0..952) are
+     * overwritten by positions 2048..3000), then rewind back to 2000, and now dpos_host=2000
+     * <= ring_W=2048 — THE GUARD PASSES — and the shear declares rows [0..P) pristine when
+     * they were clobbered an hour ago. That is the KV corruption behind "the model emits
+     * end-of-turn immediately (1-26 char replies) for the rest of the residency".
+     *
+     * It is the same mistake as every other one in this tree: AN INVARIANT TESTED THROUGH A
+     * PROXY. The proxy agreed with the invariant in every case anyone tested, and disagreed
+     * in the one case that shipped.
+     *
+     * So the session now carries the fact itself: `ring_wrapped`, a high-water flag set the
+     * moment dpos exceeds ring_W and cleared only by a genuine reset to 0. It is not derived.
+     * It is remembered. */
+    if (s->ring_W > 0 && (s->ring_wrapped || s->dpos_host > s->ring_W)) {
+        sp_set_error("gemma4_kv_shear: ring wrapped this residency - slots [0..P) no longer positional; use the prefix snapshot");
         return -1;
     }
     cudaStreamSynchronize(g_w.stream);
@@ -6054,6 +6084,113 @@ extern "C" int gemma4_kv_shear(sp_g4_kv *s, int P) {
     s->jcur = 0;
     if (s->dpos && cudaMemcpy(s->dpos, &P, sizeof(int), cudaMemcpyHostToDevice) != cudaSuccess) {
         sp_set_error("gemma4_kv_shear: dpos H2D"); return -1;
+    }
+    return 0;
+}
+
+/* ── PREFIX SNAPSHOT / RESTORE (2026-07-13) — THE 164-SECOND HELLO ───────────────
+ *
+ * MEASURED: 164 seconds to say "Hello! How are you today?". The prompt was 2679 tokens;
+ * its first 2517 were the SAME PREAMBLE already sitting correct in VRAM. 94% of the work
+ * was done. It was thrown away because the other 6% differed, and the whole thing was
+ * re-prefilled from token 0 at 60 ms/tok.
+ *
+ * WHY THE TWO EXISTING INSTRUMENTS BOTH MISS:
+ *
+ *  - THE JOURNAL (rewind) restores a TAIL. It is bounded by Jmax (~64 positions) and costs
+ *    VRAM per position. But a new conversation diverges by the ENTIRE LENGTH of the previous
+ *    conversation — hundreds or thousands of tokens. No journal depth reaches that. Wrong
+ *    instrument: it undoes a few steps, and we need to restore a PREFIX.
+ *
+ *  - THE SHEAR (gemma4_kv_shear) restores a prefix in O(1) with no copies — but ONLY while
+ *    the SWA ring has never wrapped, because once it wraps, slot = pos % ring_W and the rows
+ *    at [0..P) have been overwritten by later positions. The operator's preamble is 2517
+ *    tokens and ring_W is 2048, SO THE RING WRAPS INSIDE THE PREAMBLE ITSELF. The shear can
+ *    never legally fire at this config. (And its guard tested `dpos_host > ring_W` — the
+ *    CURRENT position — as a proxy for "has the ring EVER wrapped". Grow past the ring, rewind
+ *    back under it, and the guard passes onto clobbered rows. That is the P1c-2 KV corruption,
+ *    and it is the same bug this codebase keeps making: AN INVARIANT TESTED THROUGH A PROXY.)
+ *
+ * SO: COPY THE BYTES. It is the one thing that works regardless of wrapping, because it does
+ * not reason about wrapping at all — it restores the cache to the exact state it was in.
+ *
+ * We copy only what attention can reach at dpos == P:
+ *   globals : rows [0..P)      (slot == pos, no ring)
+ *   SWA     : the WHOLE ring   (it has wrapped; every slot is live)
+ * Rows >= P in the globals are junk beyond dpos that no mask can reach and that the suffix
+ * prefill overwrites as it advances — exactly the shear's own argument, minus the wrap
+ * assumption.
+ *
+ * BYTE-EXACT BY CONSTRUCTION: it is the same bytes. Not a recomputation, not an approximation.
+ *
+ * COST: one D2H memcpy to make it, one H2D memcpy to use it. The P1c-2 receipt measured the
+ * store at ~540 MiB, which over PCIe is ~90 ms. Against 164,000 ms. What P1c-2 actually
+ * refuted was BUILDING this with capture_batched (10+ min at 100% GPU) — not the memcpy. The
+ * instrument was thrown out because the wrong tool was used to make it.
+ */
+extern "C" long gemma4_kv_prefix_bytes(const sp_g4_kv *s, int P) {
+    if (!s || P <= 0 || P > s->Pmax) return -1;
+    long bytes = 0;
+    for (int L = 0; L < s->kvfs && L < s->NL; L++) {
+        const int global = ((L % s->period) == s->period - 1);
+        const int kvd = (global ? s->g_nkv : s->s_nkv) * (global ? s->g_hd : s->s_hd);
+        const size_t slots = (s->ring_W > 0 && !global) ? (size_t)s->ring_W : (size_t)P;
+        bytes += 2L * (long)(slots * (size_t)kvd * sizeof(float));
+    }
+    return bytes;
+}
+
+/* Snapshot the cache AS IT STANDS at dpos == P into a caller-owned flat host blob of
+ * gemma4_kv_prefix_bytes(s, P). Returns bytes written, or -1.
+ * REQUIRES dpos_host == P: we are snapshotting a state, not reconstructing one. */
+extern "C" long gemma4_kv_snapshot_prefix(const sp_g4_kv *s, void *host, long cap, int P) {
+    if (!s || !host || P <= 0) { sp_set_error("kv_snapshot_prefix: bad args"); return -1; }
+    if (s->dpos_host != P) { sp_set_error("kv_snapshot_prefix: dpos != P (snapshot a STATE, not a guess)"); return -1; }
+    const long need = gemma4_kv_prefix_bytes(s, P);
+    if (need < 0 || need > cap) { sp_set_error("kv_snapshot_prefix: buffer too small"); return -1; }
+    cudaStreamSynchronize(g_w.stream);
+    char *p = (char *)host;
+    for (int L = 0; L < s->kvfs && L < s->NL; L++) {
+        const int global = ((L % s->period) == s->period - 1);
+        const int kvd = (global ? s->g_nkv : s->s_nkv) * (global ? s->g_hd : s->s_hd);
+        const size_t slots = (s->ring_W > 0 && !global) ? (size_t)s->ring_W : (size_t)P;
+        const size_t nb = slots * (size_t)kvd * sizeof(float);
+        if (cudaMemcpy(p, s->dKc[L], nb, cudaMemcpyDeviceToHost) != cudaSuccess) {
+            sp_set_error("kv_snapshot_prefix: K D2H"); return -1; }
+        p += nb;
+        if (cudaMemcpy(p, s->dVc[L], nb, cudaMemcpyDeviceToHost) != cudaSuccess) {
+            sp_set_error("kv_snapshot_prefix: V D2H"); return -1; }
+        p += nb;
+    }
+    return need;
+}
+
+/* Restore the cache to the snapshotted state and set the position machinery to P.
+ * Journal is emptied (commit_pos = P, jcur = 0): there is nothing behind the new baseline to
+ * rewind into, exactly as after a shear. Works WITH a wrapped ring, which is the entire point. */
+extern "C" int gemma4_kv_restore_prefix(sp_g4_kv *s, const void *host, long cap, int P) {
+    if (!s || !host || P <= 0 || P > s->Pmax) { sp_set_error("kv_restore_prefix: bad args"); return -1; }
+    const long need = gemma4_kv_prefix_bytes(s, P);
+    if (need < 0 || need > cap) { sp_set_error("kv_restore_prefix: blob does not match this session"); return -1; }
+    cudaStreamSynchronize(g_w.stream);
+    const char *p = (const char *)host;
+    for (int L = 0; L < s->kvfs && L < s->NL; L++) {
+        const int global = ((L % s->period) == s->period - 1);
+        const int kvd = (global ? s->g_nkv : s->s_nkv) * (global ? s->g_hd : s->s_hd);
+        const size_t slots = (s->ring_W > 0 && !global) ? (size_t)s->ring_W : (size_t)P;
+        const size_t nb = slots * (size_t)kvd * sizeof(float);
+        if (cudaMemcpy(s->dKc[L], p, nb, cudaMemcpyHostToDevice) != cudaSuccess) {
+            sp_set_error("kv_restore_prefix: K H2D"); return -1; }
+        p += nb;
+        if (cudaMemcpy(s->dVc[L], p, nb, cudaMemcpyHostToDevice) != cudaSuccess) {
+            sp_set_error("kv_restore_prefix: V H2D"); return -1; }
+        p += nb;
+    }
+    s->dpos_host = P;
+    s->commit_pos = P;
+    s->jcur = 0;
+    if (s->dpos && cudaMemcpy(s->dpos, &P, sizeof(int), cudaMemcpyHostToDevice) != cudaSuccess) {
+        sp_set_error("kv_restore_prefix: dpos H2D"); return -1;
     }
     return 0;
 }

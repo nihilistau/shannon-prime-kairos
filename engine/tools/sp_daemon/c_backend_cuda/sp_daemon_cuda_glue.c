@@ -130,6 +130,14 @@ extern int   gemma4_kv_rewind(sp_g4_kv *s, int delta);
 extern int   gemma4_kv_reset(sp_g4_kv *s);
 extern int   gemma4_kv_reset_cold(sp_g4_kv *s);
 extern int   gemma4_kv_shear(sp_g4_kv *s, int P);   /* KAIROS P1c-2 prefix shear */
+/* PREFIX SNAPSHOT / RESTORE (2026-07-13) — the 164-second hello.
+ * The shear is O(1) but only legal while the SWA ring has never wrapped, and the operator's
+ * preamble (2517 tok) is LONGER than ring_W (2048), so the ring wraps inside the preamble and
+ * the shear can never fire at this config. Copying the bytes works regardless of wrapping,
+ * because it does not reason about wrapping at all. ~540 MiB, ~90 ms, vs 164,000 ms. */
+extern long  gemma4_kv_prefix_bytes(const sp_g4_kv *s, int P);
+extern long  gemma4_kv_snapshot_prefix(const sp_g4_kv *s, void *host, long cap, int P);
+extern int   gemma4_kv_restore_prefix(sp_g4_kv *s, const void *host, long cap, int P);
 extern int   gemma4_kv_pos(const sp_g4_kv *s);
 extern void  gemma4_kv_close(sp_g4_kv *s);
 /* WIRE-CUDA-DECODE-GEMMA4 §3.1.A — additive logits-returning step (now defined
@@ -297,6 +305,36 @@ int sp_daemon_cuda_kvdecode_shear(void *handle, int P) {
     sp_g4_kv *s = (sp_g4_kv *)handle;
     if (!s) { sp_set_error("cuda kvdecode shear: NULL handle"); return -1; }
     return gemma4_kv_shear(s, P);
+}
+
+/* ── PREFIX SNAPSHOT / RESTORE (2026-07-13) ──────────────────────────────────────
+ * The shear restores a prefix in O(1) but is only legal while the SWA ring has never
+ * wrapped. The operator's preamble is 2517 tokens and ring_W is 2048 — THE RING WRAPS
+ * INSIDE THE PREAMBLE — so the shear can never legally fire at his config, and the
+ * fallback is a full re-prefill: 164 SECONDS to say "Hello! How are you today?".
+ *
+ * Copying the bytes works regardless of wrapping, because it does not reason about
+ * wrapping at all: it restores the cache to the exact state it was in. Byte-exact by
+ * construction. ~540 MiB over PCIe, ~90 ms.
+ *
+ * The blob is host memory owned by the CALLER (Rust). The engine never allocates it,
+ * so there is no hidden lifetime and nothing to leak on a session teardown. */
+long sp_daemon_cuda_kvdecode_prefix_bytes(void *handle, int P) {
+    sp_g4_kv *s = (sp_g4_kv *)handle;
+    if (!s) { sp_set_error("cuda kvdecode prefix_bytes: NULL handle"); return -1; }
+    return gemma4_kv_prefix_bytes(s, P);
+}
+
+long sp_daemon_cuda_kvdecode_snapshot_prefix(void *handle, void *host, long cap, int P) {
+    sp_g4_kv *s = (sp_g4_kv *)handle;
+    if (!s) { sp_set_error("cuda kvdecode snapshot_prefix: NULL handle"); return -1; }
+    return gemma4_kv_snapshot_prefix(s, host, cap, P);
+}
+
+int sp_daemon_cuda_kvdecode_restore_prefix(void *handle, const void *host, long cap, int P) {
+    sp_g4_kv *s = (sp_g4_kv *)handle;
+    if (!s) { sp_set_error("cuda kvdecode restore_prefix: NULL handle"); return -1; }
+    return gemma4_kv_restore_prefix(s, host, cap, P);
 }
 
 /* position(handle): current dpos, -1 on NULL. */

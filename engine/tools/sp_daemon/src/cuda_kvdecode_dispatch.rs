@@ -112,6 +112,16 @@ unsafe extern "C" {
     /// 0 ok; nonzero = wrapped/bad args (caller falls back to full prefill).
     fn sp_daemon_cuda_kvdecode_shear(handle: *mut c_void, p: c_int) -> c_int;
 
+    /// PREFIX SNAPSHOT / RESTORE (2026-07-13). The shear cannot fire when the ring has
+    /// wrapped, and the operator's 2517-token preamble is longer than ring_W=2048, so it
+    /// wraps inside the preamble and the shear is dead code at his config. Copying the
+    /// bytes works regardless of wrapping. Blob is host memory OWNED BY RUST.
+    fn sp_daemon_cuda_kvdecode_prefix_bytes(handle: *mut c_void, p: c_int) -> i64;
+    fn sp_daemon_cuda_kvdecode_snapshot_prefix(
+        handle: *mut c_void, host: *mut c_void, cap: i64, p: c_int) -> i64;
+    fn sp_daemon_cuda_kvdecode_restore_prefix(
+        handle: *mut c_void, host: *const c_void, cap: i64, p: c_int) -> c_int;
+
     /// `gemma4_kv_pos(s)`. Current dpos, or -1 on NULL.
     fn sp_daemon_cuda_kvdecode_position(handle: *const c_void) -> c_int;
 
@@ -390,6 +400,65 @@ pub unsafe fn shear(handle: *mut c_void, p: i32) -> Result<(), String> {
     }
     // SAFETY: handle live per caller.
     let rc = unsafe { sp_daemon_cuda_kvdecode_shear(handle, p) };
+    if rc == 0 { Ok(()) } else { Err(last_error()) }
+}
+
+// ── PREFIX SNAPSHOT / RESTORE (2026-07-13) — THE 164-SECOND HELLO ────────────────
+//
+// The shear above is O(1) and byte-exact, and CANNOT FIRE AT THE OPERATOR'S CONFIG: his
+// preamble is 2517 tokens and ring_W is 2048, so the SWA ring wraps INSIDE the preamble and
+// the shear correctly refuses. The fallback was a full re-prefill from token 0 — 2679 tokens
+// at 60 ms/tok = 164 SECONDS to say "Hello! How are you today?", when 2517 of those tokens
+// were already sitting correct in VRAM.
+//
+// Copying the bytes works regardless of wrapping, because it does not reason about wrapping:
+// it restores the cache to the exact state it was in. ~540 MiB over PCIe ≈ 90 ms.
+//
+// THE BLOB IS OWNED BY RUST. The engine never allocates it, so there is no hidden lifetime,
+// nothing to leak when a session dies, and the size is checked on BOTH sides against
+// prefix_bytes() — a blob from a different Pmax/ring_W cannot be restored into this session.
+
+/// Bytes a prefix snapshot at `p` needs for THIS session's geometry.
+///
+/// # Safety
+/// `handle` must be a live `sp_g4_kv*` from [`open`].
+pub unsafe fn prefix_bytes(handle: *mut c_void, p: i32) -> Result<usize, String> {
+    if handle.is_null() || p <= 0 {
+        return Err("kvdecode prefix_bytes: NULL handle or P<=0".to_string());
+    }
+    let n = unsafe { sp_daemon_cuda_kvdecode_prefix_bytes(handle, p) };
+    if n > 0 { Ok(n as usize) } else { Err(last_error()) }
+}
+
+/// Snapshot the cache AS IT STANDS at `dpos == p` into `buf`.
+/// The engine REFUSES if dpos != p: we snapshot a STATE, never a guess.
+///
+/// # Safety
+/// `handle` must be a live `sp_g4_kv*` from [`open`]. Caller holds the cache Mutex.
+pub unsafe fn snapshot_prefix(handle: *mut c_void, buf: &mut [u8], p: i32) -> Result<usize, String> {
+    if handle.is_null() || p <= 0 {
+        return Err("kvdecode snapshot_prefix: NULL handle or P<=0".to_string());
+    }
+    let n = unsafe {
+        sp_daemon_cuda_kvdecode_snapshot_prefix(
+            handle, buf.as_mut_ptr() as *mut c_void, buf.len() as i64, p)
+    };
+    if n > 0 { Ok(n as usize) } else { Err(last_error()) }
+}
+
+/// Restore the cache to a snapshotted prefix and set dpos/commit_pos to `p`.
+/// Works WITH a wrapped ring — that is the entire point of it.
+///
+/// # Safety
+/// `handle` must be a live `sp_g4_kv*` from [`open`]. Caller holds the cache Mutex.
+pub unsafe fn restore_prefix(handle: *mut c_void, buf: &[u8], p: i32) -> Result<(), String> {
+    if handle.is_null() || p <= 0 {
+        return Err("kvdecode restore_prefix: NULL handle or P<=0".to_string());
+    }
+    let rc = unsafe {
+        sp_daemon_cuda_kvdecode_restore_prefix(
+            handle, buf.as_ptr() as *const c_void, buf.len() as i64, p)
+    };
     if rc == 0 { Ok(()) } else { Err(last_error()) }
 }
 

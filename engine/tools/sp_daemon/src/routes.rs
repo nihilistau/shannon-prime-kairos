@@ -826,6 +826,27 @@ pub async fn v1_chat(
 #[cfg(feature = "wire_cuda_backend")]
 static KV_COMMITTED: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
 
+// ── THE PREFIX SNAPSHOT (2026-07-13) ────────────────────────────────────────────────
+// The KV of the shared constant preamble, in HOST memory, plus the exact tokens it was
+// minted from. One slot: the daily-driver preamble. It is LEARNED, not configured — the
+// first time a prompt diverges past the rewind bound we take the shared prefix we just
+// observed, snapshot it, and never pay for it again. If the preamble ever changes, the
+// token compare misses and it is simply re-learned on the next divergence.
+//
+// The tokens are stored ALONGSIDE the bytes and compared before every restore. A KV blob
+// is only correct for the exact token sequence that produced it, and a snapshot keyed by
+// length alone would eventually restore the wrong cache into a live conversation and be
+// almost impossible to see — the model would just quietly start answering a prompt it was
+// never given. THE KEY IS THE CONTENT, NOT THE SIZE.
+#[cfg(feature = "wire_cuda_backend")]
+struct PrefixSnap {
+    toks: Vec<i32>,
+    blob: Vec<u8>,
+}
+
+#[cfg(feature = "wire_cuda_backend")]
+static PREFIX_SNAP: std::sync::Mutex<Option<PrefixSnap>> = std::sync::Mutex::new(None);
+
 // B4-SEAL (GEODESIC session 2026-07-03): mint the L5 query-key for a LIVE-captured
 // episode with the SAME provenance as the curated corpus (write_ep_l5.py): a
 // standalone position-0 forward of the episode text on a throwaway scratch session,
@@ -1689,12 +1710,87 @@ fn run_kvdecode_chat(
             } else if lcp >= PREFIX_SNAP_MIN && lcp < tokens.len()
                 && std::env::var("SP_PREFIX_SNAPSHOT").as_deref() == Ok("1")
             {
-                // P1c PREFIX-SNAPSHOT: a NEW chat over the shared constant
-                // preamble (drop_n blew the rewind bound). Restore the captured
-                // prefix instead of the full cold re-prefill. Any failure
-                // returns 0 ⇒ the byte-identical full-prefill null floor.
+                // ── THE 164-SECOND HELLO (2026-07-13) ────────────────────────────────────
+                // drop_n blew the rewind bound, so the old code fell straight to a full cold
+                // re-prefill from token 0. MEASURED: 2679 tokens at 60 ms/tok = 164 SECONDS
+                // to say "Hello! How are you today?" — and 2517 of those tokens were the SAME
+                // PREAMBLE already sitting correct in VRAM. 94% of the work, thrown away
+                // because the other 6% differed.
+                //
+                // The shear (P1c-2) was supposed to be the answer and CANNOT FIRE HERE: it is
+                // only legal while the SWA ring has never wrapped, and the preamble (2517) is
+                // LONGER than ring_W (2048), so the ring wraps inside the preamble itself.
+                // It refuses, correctly, every single time. It was dead code at this config.
+                //
+                // So: COPY THE BYTES. A snapshot does not reason about wrapping at all — it
+                // restores the cache to the exact state it was in. Byte-exact by construction.
                 drop(committed);
-                prefill_from = prefix_snapshot_restore(app, handle, tokens, lcp);
+                let want = lcp.min(tokens.len() - 1);
+                let mut snap = PREFIX_SNAP.lock().unwrap();
+
+                // (1) FAST PATH — we have a snapshot and this prompt starts with it.
+                let hit = snap.as_ref().filter(|s| {
+                    s.toks.len() <= want && !s.toks.is_empty()
+                        && tokens[..s.toks.len()] == s.toks[..]
+                });
+                if let Some(s) = hit {
+                    let p = s.toks.len();
+                    let t0 = std::time::Instant::now();
+                    // reset first: restore writes the cache and the position machinery whole.
+                    let ok = unsafe { kv::reset(handle) }.is_ok()
+                        && unsafe { kv::restore_prefix(handle, &s.blob, p as i32) }.is_ok();
+                    if ok {
+                        prefill_from = p;
+                        tracing::info!(
+                            "PREFIX-SNAPSHOT: restored {} tokens in {:?} ({:.1} MiB); prefill suffix {} \
+                             (full would be {} = ~{:.0}s)",
+                            p, t0.elapsed(), s.blob.len() as f64 / 1048576.0,
+                            tokens.len() - p, tokens.len(), tokens.len() as f64 * 0.060);
+                    } else {
+                        // NEVER WEDGE ON AN OPTIMISATION. A failed restore falls back to the
+                        // full re-prefill — slow, but byte-identical and always correct. The
+                        // snapshot is also DROPPED: if it could not be restored into this
+                        // session it is not a snapshot of this session, and keeping it around
+                        // to fail again every turn would turn one bad turn into a bad hour.
+                        tracing::warn!("PREFIX-SNAPSHOT: restore failed — full-prefill floor");
+                        let _ = unsafe { kv::reset(handle) };
+                        prefill_from = 0;
+                        *snap = None;
+                    }
+                } else {
+                    // (2) SLOW PATH, ONCE. We are about to pay the full re-prefill anyway, so
+                    // pay it in TWO halves and keep the first: prefill [0..want), snapshot it,
+                    // then let the normal path prefill the suffix. The next divergence — and
+                    // every one after it — is a memcpy.
+                    //
+                    // The preamble length is LEARNED from the data (the first observed shared
+                    // prefix), not configured. Nothing has to be told what the preamble is, and
+                    // if it ever changes, the token compare above misses and it is re-learned.
+                    let t0 = std::time::Instant::now();
+                    let built = (|| -> Result<Vec<u8>, String> {
+                        unsafe { kv::reset(handle) }?;
+                        unsafe { kv::prefill(handle, &tokens[..want]) }?;
+                        let n = unsafe { kv::prefix_bytes(handle, want as i32) }?;
+                        let mut buf = vec![0u8; n];
+                        unsafe { kv::snapshot_prefix(handle, &mut buf, want as i32) }?;
+                        Ok(buf)
+                    })();
+                    match built {
+                        Ok(blob) => {
+                            tracing::info!(
+                                "PREFIX-SNAPSHOT: captured {} tokens ({:.1} MiB) in {:?} — \
+                                 this cold prefill is the LAST one; the next divergence is a memcpy",
+                                want, blob.len() as f64 / 1048576.0, t0.elapsed());
+                            *snap = Some(PrefixSnap { toks: tokens[..want].to_vec(), blob });
+                            prefill_from = want;
+                        }
+                        Err(e) => {
+                            tracing::warn!("PREFIX-SNAPSHOT: capture failed ({e}) — full-prefill floor");
+                            let _ = unsafe { kv::reset(handle) };
+                            prefill_from = 0;
+                        }
+                    }
+                }
             }
         }
     }

@@ -56,7 +56,7 @@ autofit_margin_mb = 256
 # chats after a shear; no gate covered "shear, then converse past the ring".
 # The verb stays in the tree; it does NOT run until it has a gate that grows a
 # conversation past ring_W after a shear. Default-off, as levers should be.
-prefix_snapshot = false
+prefix_snapshot = true   # ARMED 2026-07-13: the 164s hello. Real snapshot+restore now (the shear could never fire: preamble 2517 > ring_W 2048).
 
 [memory]
 recall_authority = 'L5'  # exactly one; serve.py refuses profiles that arm two
