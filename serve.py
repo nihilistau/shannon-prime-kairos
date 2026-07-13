@@ -65,6 +65,33 @@ def build_env(c: dict) -> dict:
         "SP_CUDA_DECODE_INT8": "1" if kv.get("int8", True) else "0",
         "SP_DAEMON_KVDECODE_RING_W": str(kv["ring_w"]),
         "SP_DAEMON_KVDECODE_PMAX": str(kv["pmax"]),
+        # ── THE SILENT SPILL (2026-07-13). The knob existed and NOTHING COULD REACH IT. ──
+        # MEASURED, this session, on the 2060: daemon 11,272 MiB dedicated of a 12,288 MiB
+        # card, desktop 674 MiB, and 336 MiB ALREADY IN SHARED (host) MEMORY AT IDLE. An
+        # 11-token prompt with max_tokens=4 did not return in four minutes.
+        #
+        # This is NOT an OOM. Windows/WDDM does not fail an oversubscribed CUDA allocation --
+        # it silently backs it with system RAM over PCIe and keeps going. No error, no log,
+        # no crash. Just every touched page crossing the bus. THE WORST FAILURE MODE THERE IS:
+        # the one that never fails, only degrades, so it presents as a mystery instead of a bug.
+        # It is the true answer to "why is it fast at first but painfully slow 6000 turns
+        # later?" -- the KV grows into the last free megabytes and then you are not running on
+        # a GPU any more, you are running on a GPU pretending.
+        #
+        # pmax*128 KB is the only Pmax-scaling term (the 8 global-attention layers; the SWA
+        # layers are ring-bounded and O(1)). pmax=12096 => ~1.55 GB, allocated FLAT, on a card
+        # with ~340 MiB spare. gemma4_kv_open has had the fix since ADR-010/PK2 wave-6 -- it
+        # reads cudaMemGetInfo and clamps Pmax to the VRAM that is ACTUALLY FREE -- and it is
+        # default-off, and this table never mapped it, so the profile could not turn it on and
+        # nobody knew it was there.
+        #
+        # THE SAME BUG AS EVERY OTHER BUG IN THIS CODEBASE: the invariant is enforced in one of
+        # two paths, so it is enforced in NEITHER. The engine can size itself to the card. The
+        # launcher could not ask it to.
+        #
+        # It only ever clamps DOWN, never up. Gate: harness_tests/g_vram.py.
+        "SP_G4_KV_AUTOFIT": b(kv.get("autofit", True)),
+        "SP_G4_KV_AUTOFIT_MARGIN_MB": str(kv.get("autofit_margin_mb", 512)),
         "SP_PERSIST_KV": b(kv["persist"]),
         "SP_PERSIST_B4": b(kv["persist_b4"]),
         "SP_PREFIX_SNAPSHOT": b(kv.get("prefix_snapshot", False)),  # P1c

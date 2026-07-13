@@ -24,8 +24,18 @@ gateway_port = 8800
 [kv]
 persist = true
 persist_b4 = true        # HINDSIGHT: cache alive under B4 growth (minutes -> seconds)
-ring_w = 2048
+ring_w = 1024
 pmax = 12096
+# AUTOFIT (2026-07-13) — pmax above is now a CEILING, not a promise.
+# The 8 global-attention layers cost ~128 KB per Pmax slot, so pmax=12096 reserves ~1.55 GB
+# of VRAM up front. On the 2060 that left ~340 MiB of headroom and put 336 MiB into SHARED
+# (host) memory before a single word was typed — and WDDM does not error on that, it just
+# runs everything over PCIe. Fast at first, unusable later, no message anywhere.
+# gemma4_kv_open now reads the card's ACTUAL free VRAM and clamps pmax to what fits.
+# It never raises it. The SWA ring is O(1), so long context still works on those layers;
+# only the globals' resident depth is bounded. Set autofit=false to get the old verbatim pmax.
+autofit = true
+autofit_margin_mb = 512
 # P1c-2 SHEAR: DISARMED 2026-07-11 23:30 (live-play regression, operator).
 # The shear sets commit_pos = P, which REDEFINES the SWA undo-journal baseline
 # (jcur = dpos - commit_pos, bounded by Jmax=64). Once a conversation grows past
