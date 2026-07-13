@@ -44,6 +44,48 @@ def build_env(c: dict) -> dict:
             f"profile invalid: no_repeat_ngram={dec['no_repeat_ngram']} breaks verbatim copy "
             f"(G-VERBATIM). Set 0, or export SP_ALLOW_NGRAM_BAN=1 to override deliberately.")
 
+    # ── ONE MEMORY AUTHORITY, ENFORCED AT THE DOOR INSTEAD OF HOPED FOR IN A COMMENT ──────
+    #
+    # 2026-07-12 retired the daemon as a memory writer: "two authorities decided what a memory
+    # was — the daemon's word-count-and-a-pronoun, and the harness's lifecycle rules. The daemon
+    # won every time, because it wrote first." The remedy was `growth = false`, and it was written
+    # down as PROSE, in ONE profile's comment.
+    #
+    # THE DAEMON HAS TWO WRITE FLAGS. Only one of them was turned off.
+    #
+    #   growth      (SP_B4_NIGHTSHIFT) -> auto-capture the whole turn.   RETIRED in agent.toml.
+    #   store_verb  (SP_MEM_STORE)     -> intercept "remember that X" /  STILL TRUE in 12 of 13
+    #                                     "note that X", write the         profiles, INCLUDING THE
+    #                                     registry directly, and answer    LIVE ONE.
+    #                                     with ZERO DECODE so the model
+    #                                     never even sees the turn.
+    #
+    # So the fix for "an invariant enforced in one of two paths is enforced in neither" was itself
+    # applied to one of two paths. On the live profile, "note that I'll be late" still goes to the
+    # daemon, which writes the registry with speaker hardcoded to "user", no `status`, and NONE of
+    # is_memorable(), the identity firewall, dedupe/reinforce, find_superseded(), or the
+    # private-secret classifier. It is the exact bug the growth=false fix was written to kill.
+    #
+    # And the reason store_verb existed is gone. It was added because the model would say "I don't
+    # know how to store memories" while an episode grew silently behind it. Capture no longer
+    # depends on the model choosing a tool: app._capture_after_turn() runs on EVERY turn, splits
+    # the human's text, and puts each durable sentence through remember(). The deterministic
+    # guarantee store_verb was providing is now provided by the correct door.
+    #
+    # A rule that lives in a comment gets applied to the file the comment is in. This one now lives
+    # in the only door, where a profile that arms two memory writers CANNOT BOOT.
+    writers = [n for n, on in (("memory.growth", mem.get("growth")),
+                               ("memory.store_verb", mem.get("store_verb"))) if on]
+    if writers and agent.get("authority") == "spine":
+        raise SystemExit(
+            "profile invalid: TWO MEMORY AUTHORITIES.\n"
+            f"  agent.authority = 'spine'  -> the HARNESS owns memory writes "
+            f"(admission, identity firewall, dedupe, supersede, private-secret classification)\n"
+            f"  but {' and '.join(writers)} = true -> the DAEMON also writes var/memory/registry.jsonl, "
+            f"with none of those guards.\n"
+            "  The daemon wins, because it writes first. Set them false, or set authority to "
+            "something other than 'spine' if you genuinely want the daemon to own memory.")
+
     e = dict(os.environ)
     e["PATH"] = paths["llvm_bin"].replace("/", "\\") + os.pathsep + e.get("PATH", "")
     b = lambda v: "1" if v else "0"

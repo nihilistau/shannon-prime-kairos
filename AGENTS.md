@@ -131,16 +131,18 @@ These are real. They are not hypotheticals. Do not be the next person to redisco
    **every class the decider branches on must be one the writer can produce.** Add an `if mc == "..."`
    branch with no producer and the gate fails the day you write it, not eight weeks later when it leaks.
 
-2. **`store_verb = true` on the live profile** (`profiles/agent.toml:104`). The daemon intercepts raw
-   "remember that …" / "note that …" turns, writes the registry itself via `capture_live_episode`, and
-   **short-circuits the turn with zero model inference** — so `remember()`'s admission, identity firewall,
-   dedupe and supersede never run.
-
-3. **`growth = true` in 8 non-live profiles** (`kairos.toml`, `q4*.toml`, `batch`, `float`, `agent-q8`,
-   `agent-q4b`, `q4b-agent`). That re-arms the daemon's B4-NIGHTSHIFT auto-writer, which writes the same
-   registry with `speaker` hardcoded to `"user"`, no `status`, no admission, no firewall, no supersede.
-   The live `agent.toml` has `growth = false`. **The other profiles are a landmine**, and `kairos.toml` is a
-   plausible thing for an operator to reach for by name.
+2. ~~**`store_verb = true` on the live profile.**~~ ~~**`growth = true` in 8 non-live profiles.**~~
+   **BOTH FIXED 2026-07-14 — G-ONEWRITER 35/35.** Kept here because the shape is instructive:
+   the daemon had **two** write flags, and the 2026-07-12 "one memory authority" fix turned off one.
+   The comment announcing that fix literally said *"the daemon no longer writes memories. Recall, **the
+   store verb**, and classification are untouched"* — it **named** the second write path while declaring
+   the daemon no longer wrote. So `"note that I'll be late"` was still a registry write, performed by the
+   daemon, with `speaker` hardcoded, no `status`, and none of admission / firewall / dedupe / supersede /
+   secret-classification — **and zero model inference, so she never saw the turn.**
+   The remedy for *an invariant enforced in one of two paths* was enforced in one of two paths.
+   Both flags are now false on all 13 profiles, and **`serve.py` refuses to boot** any profile that arms
+   either while `agent.authority = 'spine'`. A rule in a comment gets applied to the file the comment is
+   in; this one lives in the door.
 
 4. **`_AUTHOR` / `_QUESTION` are process-wide module globals** in `harness/skills/memory.py`, under a
    `ThreadingHTTPServer`. Concurrent turns can cross-contaminate speaker attribution. Known risk.

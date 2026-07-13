@@ -98,10 +98,34 @@ delivery = 'plain'       # Hodor binding: never systemecho globally
 # supersede and the identity firewall. Two authorities deciding what a memory is — the
 # daemon's word-count-and-a-pronoun and the harness's lifecycle rules — is the same shape
 # as the two-recall-authorities bug serve.py already refuses. So: the daemon no longer
-# writes memories. Recall, the store verb, and classification are untouched.
+# writes memories.
+#
+# ── THE DAEMON HAD TWO WRITE FLAGS AND THIS FIX TURNED OFF ONE (2026-07-14) ─────────────
+# The sentence that used to end the paragraph above read:
+#
+#     "So: the daemon no longer writes memories. Recall, THE STORE VERB, and classification
+#      are untouched."
+#
+# The store verb IS A WRITE PATH. It was named, in the very comment declaring that the daemon
+# no longer writes, and left armed. store_verb=true means the daemon intercepts any turn
+# starting "remember that" / "note that" / "remember:", writes registry.jsonl ITSELF via
+# capture_live_episode (speaker hardcoded "user", no `status`, no is_memorable, no identity
+# firewall, no dedupe, no supersede, no private-secret classification), and answers with ZERO
+# DECODE so the model never even sees the turn. "note that I'll be late" was a memory write.
+#
+# THE REMEDY FOR "AN INVARIANT ENFORCED IN ONE OF TWO PATHS IS ENFORCED IN NEITHER" WAS
+# ENFORCED IN ONE OF TWO PATHS.
+#
+# And the reason the verb existed is gone: it was added because the model would say "I don't
+# know how to store memories" while an episode grew silently behind it. Capture no longer
+# depends on the model choosing a tool — _capture_after_turn runs on EVERY turn regardless.
+#
+# Both flags are off now, on every profile, and serve.py REFUSES to boot a profile that arms
+# either one while agent.authority='spine'. A rule in a comment gets applied to the file the
+# comment is in — this one lives in the door. Gate: G-ONEWRITER.
 growth = false           # SP_B4_NIGHTSHIFT — capture moved to the gateway (one authority)
 persist_growth = true    # SP_NIGHTSHIFT_PERSIST
-store_verb = true        # SP_MEM_STORE
+store_verb = false       # SP_MEM_STORE — the daemon's OTHER write path. Retired 2026-07-14.
 classify = true          # SP_MEM_CLASSIFY
 policy = true            # SP_MEM_POLICY (per-entry delivery dispatch)
 qkey_mint = true         # question-space ep.l5 keys
