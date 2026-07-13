@@ -226,6 +226,19 @@ def main() -> int:
     pm2.absorb({"text": "I like Oolong tea", "mem_class": "preference",
                 "mentions": 4, "first_seen": iso(60), "last_seen": iso(2)})
 
+    # ── SHE MUST HAVE BEEN LOOKING (2026-07-14) ──────────────────────────────────────────
+    # silences() now measures ATTENDED days, not calendar days: a gap he was not present for is
+    # not a silence, it is a gap in the RECORD. So the gate must supply the attention it was
+    # previously assuming for free — and in doing so it says the thing out loud:
+    #
+    #   he talked to her EVERY DAY for two months and never once mentioned the marathon.
+    #
+    # That is a silence. "He was on holiday for three weeks" is not, and the old code could not
+    # tell the difference — it would have fired on every dimension at once the day he got back.
+    from harness.model import presence
+    for d in range(62):
+        presence.note_turn(now - d * 86400)
+
     sil = pm2.silences(now=now)
     quiet = [s for s in sil if "marathon" in s["claim"]]
     check("a thing he used to say constantly, and has now gone quiet on, is NOTICED",

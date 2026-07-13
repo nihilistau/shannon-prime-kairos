@@ -172,6 +172,28 @@ def _arm_turn(msgs: list) -> str:
         M.set_author("user")
     except Exception:
         pass
+
+    # ── THE ATTENTION LEDGER: HE WAS HERE (2026-07-14) ──────────────────────────────────
+    # The observation receipt for the NON-event. silences() used to measure "days since he last
+    # mentioned it" and never asked whether he was PRESENT — so a three-week holiday made EVERY
+    # dimension go quiet at once and she would have greeted him with "you've stopped talking
+    # about the marathon, and the GPU, and Tuffy." That is not noticing; it is a bug wearing
+    # noticing's clothes.
+    #
+    # ABSENCE IS ONLY INFORMATION IF YOU CAN PROVE YOU WERE LOOKING. This is the proof. It
+    # records nothing about WHAT he said — only that the channel was open today.
+    #
+    # AND IT LIVES HERE, INSIDE _arm_turn, ON PURPOSE. _arm_turn is called from BOTH the OpenAI
+    # path and the native SSE path (app.py:89 and :915). Hooking the two CALLERS instead of the
+    # SEAM is the exact mistake this file has already made six times — on_user_turn was armed on
+    # one path and not the other, and the gate that was written to prove the fix ran down the
+    # unguarded path and PASSED. An invariant enforced in one of two paths is enforced in neither.
+    try:
+        from harness.model import presence
+        presence.note_turn()
+    except Exception:
+        pass                                  # a missing receipt must never cost him his turn
+
     return human
 
 

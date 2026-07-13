@@ -121,8 +121,22 @@ def main() -> int:
     pm = PersonModel()
     pm.absorb({"text": "I am training for the marathon", "mem_class": "preference",
                "mentions": 8, "first_seen": iso(44), "last_seen": iso(30)})
+
+    # ── SHE MUST HAVE BEEN LOOKING (2026-07-14) ──────────────────────────────────────────
+    # This setup used to just assert `bool(sil)`. It passed, and it was asserting a bug: a
+    # silence computed from CALENDAR days, with no evidence he was ever present. Now silences()
+    # measures ATTENDED days, so the gate has to supply the attention it was silently assuming.
+    #
+    # AND THAT IS THE POINT. He talked to her every day for the last 45 and never once mentioned
+    # the marathon he used to bring up constantly. THAT is the dog that did not bark. Without
+    # these 45 receipts she is a system that has been asleep and is claiming to have seen nothing.
+    from harness.model import presence
+    for d in range(46):
+        presence.note_turn(now - d * 86400)
+
     sil = pm.silences(now=now)
-    check("(setup) a thing he has gone quiet on is detected", bool(sil))
+    check("(setup) a thing he has gone quiet on IS detected — WHEN SHE WAS THERE THE WHOLE TIME",
+          bool(sil), "the attention ledger is what makes this a real silence")
 
     nudge = I.muse_nudge({"text": sil[0]["claim"], "bits": sil[0]["bits"], "silence": sil[0]})
     check("a SILENCE becomes a gentle question, not an announcement",

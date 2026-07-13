@@ -65,6 +65,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from harness.skills import lifecycle as lc
+from harness.model import presence
 
 # INFORMATION IS FINITE HERE, ON PURPOSE. I(x) = -log2 p(x) runs to infinity as p -> 0, and
 # a model that has never heard of something must not be allowed to claim infinite
@@ -206,7 +207,8 @@ class PersonModel:
         return round(min(1.0, self.surprisal(fact, mem_class) / _MAX_BITS), 4)
 
     # ── THE NEIGHBOUR WHO DID NOT WAVE ───────────────────────────────────────
-    def silences(self, now: Optional[float] = None, min_mentions: int = 3) -> list:
+    def silences(self, now: Optional[float] = None, min_mentions: int = 3,
+                 attend=None) -> list:
         """WHAT HAS STOPPED HAPPENING — and that is information too.
 
         THE OPERATOR, and it is the sharpest thing anyone has said in this build:
@@ -228,16 +230,57 @@ class PersonModel:
         used to shut up about — which is the kind of noticing that makes someone feel known,
         and which no amount of ranking-by-relevance will ever produce, because nothing is
         being retrieved. Nobody asked a question. That is the whole point.
+
+        ── AND IT COULD NOT PROVE SHE WAS LOOKING (2026-07-14) ─────────────────────────────
+
+        The first version measured `quiet = CALENDAR days since he last mentioned it`. It never
+        asked whether he was THERE.
+
+        So: go away for three weeks — a holiday, a deadline, a hospital — and EVERY dimension with
+        three or more mentions goes silent SIMULTANEOUSLY, at high bits. She greets him with:
+
+            "You've stopped talking about the marathon. And the GPU. And Tuffy. And your flight."
+
+        That is not noticing. IT IS A BUG WEARING NOTICING'S CLOTHES — and it is worse than saying
+        nothing, because the one signal in this system that makes a person feel KNOWN would be
+        firing on the fact that they were busy.
+
+        ABSENCE IS ONLY INFORMATION IF YOU CAN PROVE YOU WERE LOOKING. The neighbour tells you
+        something by NOT being there only if you were at the window at 5am. If you slept in, the
+        empty driveway carries zero bits. The information is not in the absence — it is in the
+        CONJUNCTION of a live expectation and a proven observation that came back empty.
+
+        So every clock in here is an ATTENTION clock now. Calendar time is irrelevant to silence.
+        The only quantity that can make an absence mean anything is:
+
+            DAYS HE TALKED TO HER AND STILL DID NOT MENTION IT.
+
+        If he said nothing at all, attended == 0, p == 1, bits == 0, and nothing is surprising —
+        which falls out of the arithmetic for free rather than needing a special case. That is how
+        you know it is the right quantity and not a patch.
         """
         now = now if now is not None else time.time()
+        att = attend if attend is not None else presence   # injectable: the gate drives a fake calendar
         out = []
         for slot, d in self.dims.items():
             for t, m, _s, first, last in d.timed:
                 if m < min_mentions:
                     continue                       # no rhythm, so no expectation to violate
-                span = max(1.0, lc._age_days(first, now) - lc._age_days(last, now))
-                cadence = span / max(1, m - 1)     # ~how often he brings it up, in days
-                quiet = lc._age_days(last, now)
+
+                # THE CADENCE IS AN ATTENDED QUANTITY TOO, and getting this wrong is subtle. If he
+                # mentioned a thing four times across a span that happened to contain a 3-week
+                # absence, his real rhythm is far TIGHTER than the calendar says. Using calendar
+                # span would overstate the cadence, which would UNDERSTATE the surprise when he
+                # finally does go quiet. Both clocks attended, or neither — a half-attended
+                # measure is just a new way to be wrong.
+                t_first = now - lc._age_days(first, now) * 86400.0
+                t_last = now - lc._age_days(last, now) * 86400.0
+                span = max(1.0, att.attended_days(t_first, t_last))
+                cadence = span / max(1, m - 1)     # how often he brings it up, in days HE WAS HERE
+
+                # ...and the silence itself: days he was PRESENT and still said nothing of it.
+                quiet = att.attended_days(t_last, now)
+
                 if quiet <= cadence * 1.5:
                     continue                       # still within its normal rhythm
                 # p(still silent) under a Poisson-ish expectation of one mention per cadence
