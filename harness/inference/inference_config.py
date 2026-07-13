@@ -12,7 +12,7 @@ backend payloads.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
 
 
@@ -48,6 +48,12 @@ class InferenceConfig:
     # whole prompt -- that was no_repeat_ngram, which banned QUOTING and had to go).
     self_repeat_ngram: Optional[int] = None
     self_repeat_text: Optional[str] = None
+    # CONSTRAINED TOOL DECODING. The harness owns the grammar (harness/mcp/grammar.py); this
+    # is the part of it the ENGINE can enforce — the set of names that exist. With it, a
+    # hallucinated tool is not a typo to be healed in a regex, it is a token sequence the
+    # sampler cannot produce. Empty (the default) = the engine masks nothing, so no caller
+    # that does not ask for this is affected in any way.
+    tool_names: Optional[list] = None
                                             # (without this the gateway path never terminates)
 
     # Routing / model selection (harness-side, not sent to daemon)
@@ -77,7 +83,9 @@ class InferenceConfig:
             "temperature", "top_p", "top_k", "repetition_penalty",
             "frequency_penalty", "seed", "max_tokens",
             "byteexact", "raw_logits", "auto_recall",
-            "replay", "replay_npos", "single_entry", "eot_bias", "self_repeat_ngram", "self_repeat_text",
+            "replay", "replay_npos", "single_entry", "eot_bias",
+            "self_repeat_ngram", "self_repeat_text",
+            "tool_names",
         ):
             v = getattr(self, k)
             if v is not None:

@@ -247,6 +247,16 @@ pub struct ChatRequest {
     // SELF-REPEAT BAN: forbid N-grams drawn from `self_repeat_text` (= her PREVIOUS reply)
     // only, NOT from the whole prompt. This is the narrow replacement for the global
     // no_repeat_ngram that had to be turned off because it banned quoting (G-VERBATIM).
+    // CONSTRAINED TOOL DECODING. The harness owns the grammar (harness/mcp/grammar.py) and
+
+    // sends the names it will accept; the engine makes everything else UNREACHABLE. Empty =
+
+    // off, which is the default, so nothing changes for any caller that does not ask.
+
+    #[serde(default)]
+
+    pub tool_names: Vec<String>,
+
     #[serde(default)]
     pub self_repeat_ngram: Option<usize>,
     #[serde(default)]
@@ -503,6 +513,7 @@ pub async fn v1_chat(
     let single_entry = req.single_entry.unwrap_or(false);
     let eot_bias = req.eot_bias; // N5: per-request override of the SP_EOT_BIAS default
     let req_self_repeat_ngram = req.self_repeat_ngram;   // SELF-REPEAT BAN (narrow scope)
+    let tool_names = req.tool_names.clone();
     let req_self_repeat_text = req.self_repeat_text.clone();
     let inject_frames = req.inject_frames.clone();
     let inject_ph = req.inject_ph;
@@ -546,6 +557,26 @@ pub async fn v1_chat(
         let mut dec_buf = TokenDecodeBuffer::new(stop_strings);
         // A2: the L2 sampler for this turn (temp=0 ⇒ strict argmax null floor).
         let mut sampler = crate::sampler::Sampler::with_suppress(sampling, suppress_ids);
+
+        // ── CONSTRAINED TOOL DECODING (DOMINO-aligned) ────────────────────────────
+        // The harness owns the grammar and sends the names it will accept; the engine makes
+        // every OTHER name unreachable. Not "wrong and healed later" — unreachable.
+        //
+        // The trie is built from `tokenizer.encode(name)` — THE MODEL'S OWN TOKENISATION.
+        // That is the whole point, and it is DOMINO's central finding: a mask built over
+        // CHARACTERS misaligns with the subword vocabulary and measurably DEGRADES the model.
+        // Every path through this trie is a token sequence the model would naturally have
+        // produced, so it is never asked to spell a word one letter at a time.
+        //
+        // Empty tool_names ⇒ mask never constructed ⇒ nothing changes for anyone.
+        let mut tool_mask = if tool_names.is_empty() {
+            None
+        } else {
+            let tk = tokenizer.clone();
+            Some(crate::tool_mask::ToolMask::new(&tool_names, move |s| {
+                tk.encode(s).unwrap_or_default()
+            }))
+        };
         // Anti-echo (#47, G-ECHO-FIX): on the PLAIN chat path, greedy on a
         // contentless turn recites the system prompt verbatim. SP_NO_REPEAT_NGRAM=n
         // (n>=2) seeds a no-repeat-ngram guard with the prompt tokens so any verbatim
@@ -634,8 +665,30 @@ pub async fn v1_chat(
             }
         }
 
-        let mut next_token = sampler.sample(&mut logits);
+        // ── APPLY THE TOOL MASK ───────────────────────────────────────────────────
+        // `allowed()` returns None while she is TALKING, which is the overwhelming majority
+        // of tokens — the mask has no opinion about her prose. It returns Some only once the
+        // ```tool_code fence is open, and then only until '(' is emitted: the ARGUMENTS are
+        // hers. Constraining a genuine choice is how you make a model stupid.
+        let mut next_token = if let Some(tm) = tool_mask.as_mut() {
+            match tm.allowed() {
+                Some(ids) => {
+                    for (i, l) in logits.iter_mut().enumerate() {
+                        if !ids.contains(&(i as i32)) {
+                            *l = f32::NEG_INFINITY;
+                        }
+                    }
+                    sampler.sample(&mut logits)
+                }
+                None => sampler.sample(&mut logits),
+            }
+        } else {
+            sampler.sample(&mut logits)
+        };
         sampler.observe(next_token);
+        if let Some(tm) = tool_mask.as_mut() {
+            tm.push(next_token, tokenizer.decode_token(next_token));
+        }
 
         // A2-polish: this arch's turn boundary is the `<|turn>`/`<turn|>` token
         // (no `<end_of_turn>` token exists), so treat those ids as EOS-equivalent.
@@ -683,10 +736,44 @@ pub async fn v1_chat(
                 break 'decode;
             }
 
+            // ── THE FREE TOKEN, AND WHY IT IS NOT HERE YET ────────────────────────
+            // The obvious optimisation: when exactly one continuation is legal (after `rec`
+            // there is only `all`; after `recall` there is only `(`), the model has no choice
+            // to make, so skip the forward pass and just emit it. DOMINO gets up to ~2x from
+            // precisely this, and I wrote it that way first.
+            //
+            // IT WOULD HAVE CORRUPTED THE KV CACHE. decode_step() is not merely "compute the
+            // logits" — it is what ADVANCES THE MODEL'S STATE with the token just emitted.
+            // Skip it and the cache never sees that token: the sequence desynchronises, and
+            // every token after it in the turn is conditioned on a history that did not
+            // happen. Silently. It would have looked like a speedup and behaved like brain
+            // damage, and this system has already spent a day on one cache-divergence bug
+            // (tools=[] re-prefilling the whole conversation, 111s a turn).
+            //
+            // The speedup is real, but it is a BATCHING problem, not a skipping one: collect
+            // the forced run and feed the whole thing through prefill_chunk() in ONE call —
+            // which is exactly what speculative decoding does, and what the engine already
+            // has the machinery for. That is the next commit, not a footnote in this one.
+            // Correctness first; the mask below is the part that makes hallucinated tools
+            // unreachable, and it is worth shipping on its own.
             match child.decode_step(next_token, &mut logits) {
                 Ok(()) => {
-                    next_token = sampler.sample(&mut logits);
+                    next_token = if let Some(ids) =
+                        tool_mask.as_mut().and_then(|tm| tm.allowed())
+                    {
+                        for (i, l) in logits.iter_mut().enumerate() {
+                            if !ids.contains(&(i as i32)) {
+                                *l = f32::NEG_INFINITY;
+                            }
+                        }
+                        sampler.sample(&mut logits)
+                    } else {
+                        sampler.sample(&mut logits)
+                    };
                     sampler.observe(next_token);
+                    if let Some(tm) = tool_mask.as_mut() {
+                        tm.push(next_token, tokenizer.decode_token(next_token));
+                    }
                 }
                 Err(_) => break 'decode,
             }

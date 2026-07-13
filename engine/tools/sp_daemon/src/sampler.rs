@@ -399,6 +399,7 @@ mod tests {
             repetition_penalty: 1.1,
             frequency_penalty: 0.0,
             seed: Some(42),
+            ..Default::default()
         };
         let logits_master = vec![1.0f32, 2.0, 3.0, 0.5, -1.0, 2.5, 1.5, 0.0];
         let mut a = Sampler::new(p.clone());
@@ -423,6 +424,9 @@ mod tests {
             repetition_penalty: 1.0,
             frequency_penalty: 0.0,
             seed: Some(7),
+            // ..Default::default() rather than another literal: the next field added to
+            // SamplingParams should not break the test suite a second time.
+            ..Default::default()
         });
         let mut logits = vec![0.1, 9.0, 3.0, 2.0];
         // top_k=1 collapses the candidate set to the single max ⇒ deterministic.
@@ -467,6 +471,9 @@ mod tests {
             repetition_penalty: 4.0,
             frequency_penalty: 0.0,
             seed: Some(1),
+            // ..Default::default() rather than another literal: the next field added to
+            // SamplingParams should not break the test suite a second time.
+            ..Default::default()
         });
         s.observe(1); // token 1 was generated before
         // Logit 1 (10.0) is highest but penalized /4 = 2.5; token 2 (3.0) wins.

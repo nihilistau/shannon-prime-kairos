@@ -34,6 +34,10 @@ mod sieve_ffi;
 mod spec;
 mod state;
 mod tokenizer;
+// CONSTRAINED TOOL DECODING (DOMINO-aligned): a hallucinated tool name is not a typo to be
+// healed in the harness — it is a token sequence the sampler cannot produce. Off unless the
+// request supplies tool_names, and it masks NOTHING while she is talking.
+mod tool_mask;
 // Chat-integration: daemon-callable MeMo dialogue runner — host + android
 // safe; drives M.2's 3-turn Grounding → Entity ID → Synthesis protocol
 // through the existing crate::session::SpSession wrapper.

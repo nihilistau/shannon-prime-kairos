@@ -65,23 +65,14 @@ _TOOL_DISCIPLINE = (
     "to him so a misheard time is caught now, not on Friday."
     "\n  • \"what's on the board?\" / \"did I write down...?\"  -> find_notes(...)"
     "\n  • \"anything I need to be reminded about?\"  -> due_reminders()"
-
     # SYNTAX IS NOT CAPABILITY. She used to say "I will look out for a 3090 GPU to be
-
-    # available" — a beautifully-formed promise with NOTHING behind it. She had no
-
-    # mechanism to look out for anything. Same failure as a reminder that never fires,
-
-    # and the worst kind this system makes: not a crash, a thing he TRUSTED that was
-
-    # quietly untrue. Now the mechanism exists, so the rule can be absolute.
-
+    # available" — a beautifully-formed promise with NOTHING behind it. She had no mechanism
+    # to look out for anything. Same failure as a reminder that never fires, and the worst
+    # kind this system makes: not a crash, a thing he TRUSTED that was quietly untrue. The
+    # mechanism exists now, so the rule can be absolute.
     "\n  • \"keep an eye out for X\" / \"tell me when X happens\"  -> watch_for(...)"
-
     "\nNEVER say you will look out for something, watch for something, or let him know when"
-
     " something happens UNLESS you have called watch_for(...). Without it nothing looks and"
-
     " nothing will ever happen, and he will believe you. If you cannot watch for it, say so."
     "\nYou may put things on the board YOURSELF — an idea you had, something you want to "
     "come back to. It is your board too."
@@ -418,6 +409,36 @@ def agent_chat_stream(
     import logging as _lg
     _lg.getLogger(__name__).info("[agent] tool-system build %.1fs (cached=%s)",
                                  _time.time() - _t, tools is None)
+    # ── SEND THE GRAMMAR TO THE ENGINE ────────────────────────────────────────
+
+    # The names she has are the names she may emit. The engine masks every other token
+
+    # sequence to -inf once the ```tool_code fence is open — so `recal(` is not a typo to
+
+    # be healed by a regex in the harness, it is a thing the sampler cannot produce.
+
+    # Outside the fence it masks NOTHING: she is free to talk, which is most of a turn.
+
+    # OFF BY DEFAULT — SP_TOOL_MASK=1 to arm.
+    #
+    # The engine side compiles and its unit tests are green (4/4 in tool_mask.rs: prose is
+    # never masked, a hallucinated name is unreachable, the only legal token is free, the
+    # mask lifts once the call begins). But I have NOT proven on the live GPU that it leaves
+    # ordinary generation untouched, and I saw one single-token turn I could not attribute
+    # either way while the daemon was cold-prefilling at 300s.
+    #
+    # A LOGIT MASK IS NOT SOMETHING TO SHIP ON A HUNCH. It sits inside the sampler, on every
+    # token, in his live conversation. "It compiled and the unit tests passed" is exactly the
+    # evidence that would have shipped the KV-corrupting fast path I caught an hour ago — and
+    # that one would have looked like a speedup and behaved like brain damage.
+    #
+    # TO ARM IT, MEASURE IT: same prompt, mask off vs on, temperature 0, byte-compare the
+    # prose turns (they must be IDENTICAL — the mask must not touch a turn with no tool call
+    # in it), then confirm a hallucinated name is unreachable and the tolerance counter in
+    # the harness goes to zero.
+    if os.environ.get("SP_TOOL_MASK") == "1" and getattr(cfg, "tool_names", None) is None:
+        cfg.tool_names = sorted(tool_index.keys())
+
     system = {"role": "system", "content": system_content}
     convo = messages if mutate_messages else list(messages)
 
