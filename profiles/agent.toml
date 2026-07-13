@@ -25,7 +25,7 @@ gateway_port = 8800
 persist = true
 persist_b4 = true        # HINDSIGHT: cache alive under B4 growth (minutes -> seconds)
 ring_w = 2048
-pmax = 20000
+pmax = 15000
 # AUTOFIT (2026-07-13) — pmax above is now a CEILING, not a promise.
 # The 8 global-attention layers cost ~128 KB per Pmax slot, so pmax=12096 reserves ~1.55 GB
 # of VRAM up front. On the 2060 that left ~340 MiB of headroom and put 336 MiB into SHARED
@@ -34,6 +34,16 @@ pmax = 20000
 # gemma4_kv_open now reads the card's ACTUAL free VRAM and clamps pmax to what fits.
 # It never raises it. The SWA ring is O(1), so long context still works on those layers;
 # only the globals' resident depth is bounded. Set autofit=false to get the old verbatim pmax.
+# ── THE 32-TOKEN CLIFF (2026-07-13) ────────────────────────────────────────────
+# The persist-KV cache rewinds a divergence of at most rewind_bound tokens before it gives
+# up and re-prefills the WHOLE prompt from token 0. It was a hardcoded 32, and the SWA undo
+# journal that bounds it (jmax) was never mapped by serve.py at all.
+# MEASURED: 164 SECONDS to say "Hello! How are you today?" -- a 2679-token prompt whose first
+# 2517 tokens were the SAME preamble already sitting correct in VRAM. Binned because the tail
+# differed. A new conversation diverges ~160 tokens; a recall injection ~100-200.
+# rewind_bound is CLAMPED to jmax-1 in the engine: rewinding past the journal CORRUPTS the KV.
+jmax = 64            # the journal costs ~320 KB/position across the SWA owners at ring 2048.
+rewind_bound = 63    # jmax-1: FREE (the journal is already allocated). 32 -> 63 costs nothing.
 prefill_batch = true     # G-PERF: the n-wide forward. Was default-off and the profile never set it.
 autofit = false   # operator: verbatim 2048/20k. autofit would clamp it; he asked for the real number.
 autofit_margin_mb = 256

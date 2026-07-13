@@ -1638,7 +1638,32 @@ fn run_kvdecode_chat(
         // though the first real turn diverges right after it (the dummy warm-up tail is rewound).
         // Byte-exact: the reused prefix K/V is the same deterministic compute; the new suffix is
         // prefilled fresh, overwriting the rewound positions.
-        const REWIND_BOUND: usize = 32;
+        //
+        // ── THE 32-TOKEN CLIFF (2026-07-13) ──────────────────────────────────────────────
+        // This was `const REWIND_BOUND: usize = 32;`. MEASURED consequence: 164 SECONDS to say
+        // "Hello! How are you today?" --
+        //     !! RE-PREFILL 2679 tok in 163.3s -- the cache was thrown away
+        // -- on a prompt whose first 2517 tokens were the SAME PREAMBLE already sitting correct
+        // in VRAM. 94% of the work was done. It was binned because the other 6% differed.
+        //
+        // 32 is not a budget, it is a cliff, and everything real steps off it: a new conversation
+        // diverges ~160 tokens, a recall injection ~100-200, an aux/judge call ~1450. The rewind
+        // is bounded by the SWA undo-journal (SP_G4_KV_JMAX), so the ONLY reason this was 32 is
+        // that the journal defaults to 64 and NOTHING COULD RAISE IT -- serve.py never mapped
+        // JMAX at all. A constant chosen to be safe against a default that could not be changed.
+        //
+        // Now: profile-driven, and it must stay strictly inside the journal or the rewind reads
+        // past its bound and CORRUPTS THE KV (the P1c-2 shear regression, learned the hard way:
+        // 1-26 char replies for the rest of the residency). So it is clamped to jmax-1 here, at
+        // the seam, where it cannot be got wrong by a profile edit.
+        let rewind_bound: usize = {
+            let jmax: usize = std::env::var("SP_G4_KV_JMAX").ok()
+                .and_then(|v| v.trim().parse().ok()).unwrap_or(64);
+            let want: usize = std::env::var("SP_KV_REWIND_BOUND").ok()
+                .and_then(|v| v.trim().parse().ok()).unwrap_or(32);
+            want.min(jmax.saturating_sub(1))
+        };
+        let REWIND_BOUND = rewind_bound;
         // P1b-2 diagnostics: a silent guard miss = a silent FULL re-prefill
         // (minutes). Name the reason so log forensics never has to guess again.
         if cl >= 1 && pos as usize != cl {

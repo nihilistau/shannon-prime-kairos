@@ -65,6 +65,31 @@ def build_env(c: dict) -> dict:
         "SP_CUDA_DECODE_INT8": "1" if kv.get("int8", True) else "0",
         "SP_DAEMON_KVDECODE_RING_W": str(kv["ring_w"]),
         "SP_DAEMON_KVDECODE_PMAX": str(kv["pmax"]),
+        # ── THE 32-TOKEN CLIFF (2026-07-13) ─────────────────────────────────────────────
+        # MEASURED: 164 SECONDS to say "Hello! How are you today?".
+        #     !! RE-PREFILL 2679 tok in 163.3s -- the cache was thrown away
+        # ...on a prompt that shared a 2517-token IDENTICAL PREAMBLE with the cache that was
+        # already resident. 94% of the work had already been done, correctly, and sat in VRAM.
+        # It was thrown away because the OTHER 6% differed.
+        #
+        # The persist-KV cache can rewind a divergence of at most REWIND_BOUND tokens before
+        # it gives up and re-prefills from token 0. REWIND_BOUND was a hardcoded 32, and the
+        # SWA undo-journal that bounds it (SP_G4_KV_JMAX) defaults to 64 and WAS NOT MAPPED
+        # HERE AT ALL -- the engine reads it, the profile could not set it. (RING_W and PMAX
+        # were mapped. JMAX was not. Third unreachable knob today, same shape as SP_G4_KV_AUTOFIT
+        # and SP_KV_PREFILL_BATCH: THE ENGINE COULD DO THE RIGHT THING AND NOTHING COULD ASK IT TO.)
+        #
+        # 32 tokens is not a budget, it is a cliff. Everything real steps off it:
+        #     a new conversation      diverges ~160 tokens
+        #     a recall injection      diverges ~100-200
+        #     an aux/judge call       diverges ~1450
+        # Each one costs a FULL re-prefill of a preamble that never changed.
+        #
+        # The journal costs VRAM (~750 KB per journalled position across the SWA owners at
+        # ring_w=2048), so this is a real trade against pmax -- which is why it belongs in the
+        # profile, in front of the operator, and not buried as a constant in routes.rs.
+        "SP_DAEMON_KVDECODE_JMAX": str(kv.get("jmax", 64)),
+        "SP_KV_REWIND_BOUND": str(kv.get("rewind_bound", 32)),
         # ── THE SILENT SPILL (2026-07-13). The knob existed and NOTHING COULD REACH IT. ──
         # MEASURED, this session, on the 2060: daemon 11,272 MiB dedicated of a 12,288 MiB
         # card, desktop 674 MiB, and 336 MiB ALREADY IN SHARED (host) MEMORY AT IDLE. An
