@@ -33,6 +33,7 @@ The only missing piece was a note whose trigger is a QUESTION instead of a TIME.
 """
 from __future__ import annotations
 
+import calendar
 import logging
 import time
 from typing import Optional
@@ -55,7 +56,22 @@ def due_checks(now: Optional[float] = None, every_hours: float = 6.0) -> list:
             out.append(r)
             continue
         try:
-            t = time.mktime(time.strptime(last, "%Y-%m-%dT%H:%M:%SZ"))
+            # THE TIMEZONE THAT BURNED THE GPU (2026-07-13).
+            #
+            # check() writes this stamp with time.gmtime() -- UTC. This line used to read it
+            # back with time.mktime(), which interprets a struct_time as LOCAL time. The
+            # operator is at UTC+10, so every stamp she wrote was read back as TEN HOURS OLDER
+            # THAN IT WAS. A watch checked one second ago computed as 10h stale, the 6-hour
+            # gate could never close, and the ticker re-ran the watch EVERY 15 SECONDS: a live
+            # web search plus a ~1450-token judge call, 78 seconds of GPU, forever. She had
+            # checked for his RTX 3090 forty-six times. It is why his turns took 86 seconds
+            # instead of 4.5 -- they were queued behind her, looking for a graphics card.
+            #
+            # calendar.timegm IS THE INVERSE OF gmtime. time.mktime is the inverse of
+            # localtime. Pairing gmtime with mktime is a silent 10-hour lie here, a silent
+            # 5-hour lie in New York, and CORRECT IN LONDON -- which is exactly why no test
+            # caught it and why it can only be caught by a test that asserts the ROUND TRIP.
+            t = calendar.timegm(time.strptime(last, "%Y-%m-%dT%H:%M:%SZ"))
         except Exception:
             out.append(r)
             continue

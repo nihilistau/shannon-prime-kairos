@@ -102,6 +102,35 @@ def main() -> int:
     check("an empty search is NOT evidence of absence (and never fires)",
           not r["fired"] and "not evidence of absence" in r["why"], r["why"])
 
+    # ── RULE 4: SHE MUST NOT LOOK AGAIN THE MOMENT SHE HAS LOOKED ────────────────────
+    # THE TIMEZONE THAT BURNED THE GPU (2026-07-13). check() stamped last_checked with
+    # time.gmtime() (UTC); due_checks() read it back with time.mktime() (LOCAL). At UTC+10
+    # every stamp she wrote came back TEN HOURS OLD THE INSTANT SHE WROTE IT, so the 6-hour
+    # gate could never close and the ticker re-ran the watch EVERY 15 SECONDS -- a live web
+    # search plus a ~1450-token judge call, 78 seconds of GPU, forever. She had searched for
+    # his RTX 3090 forty-six times. His own turns queued behind her and took 86 seconds
+    # instead of 4.5. That is the whole "fast at first, painfully slow later" mystery.
+    #
+    # THE TEST HAS TO ASSERT THE ROUND TRIP, because the bug is INVISIBLE AT UTC+0. Any
+    # assertion that only reads, or only writes, passes in London and burns the card in
+    # Sydney. So: write the stamp the way check() writes it, read it the way due_checks()
+    # reads it, and demand they agree -- under a forced non-zero TZ.
+    import calendar
+    import time as _t
+
+    stamp = _t.strftime("%Y-%m-%dT%H:%M:%SZ", _t.gmtime())
+    drift = abs(_t.time() - calendar.timegm(_t.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ")))
+    check("last_checked survives its own round trip (gmtime out, timegm back)",
+          drift < 5, f"{drift:.0f}s drift (the bug read 36000s = exactly 10h)")
+
+    # And the behaviour that drift actually causes: a watch looked at ONE SECOND AGO is not due.
+    w3 = N.add("just looked", category="watch", watch="rtx 3090")
+    N.update(w3["id"], checked=1,
+             last_checked=_t.strftime("%Y-%m-%dT%H:%M:%SZ", _t.gmtime()))
+    still_due = [r for r in W.due_checks() if r["id"] == w3["id"]]
+    check("a watch checked one second ago is NOT due again",
+          not still_due, "it was due again immediately — the ticker will spin forever")
+
     total = len(PASS) + len(FAIL)
     print(f"\nG-WATCH: {'PASS' if not FAIL else 'FAIL'} ({len(PASS)}/{total})")
     return 0 if not FAIL else 1
