@@ -34,8 +34,9 @@ pmax = 12096
 # gemma4_kv_open now reads the card's ACTUAL free VRAM and clamps pmax to what fits.
 # It never raises it. The SWA ring is O(1), so long context still works on those layers;
 # only the globals' resident depth is bounded. Set autofit=false to get the old verbatim pmax.
+prefill_batch = true     # G-PERF: the n-wide forward. Was default-off and the profile never set it.
 autofit = true
-autofit_margin_mb = 512
+autofit_margin_mb = 256
 # P1c-2 SHEAR: DISARMED 2026-07-11 23:30 (live-play regression, operator).
 # The shear sets commit_pos = P, which REDEFINES the SWA undo-journal baseline
 # (jcur = dpos - commit_pos, bounded by Jmax=64). Once a conversation grows past
