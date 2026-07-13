@@ -12,23 +12,62 @@ other gate we own — it presents to the operator as a mystery ("why is it fast 
 painfully slow 6000 turns later?") and to me as a wild goose chase. I spent an hour blaming
 a logit mask that was not even in the code path of the request that hung.
 
-So it gets a gate, and the gate asserts the ONE thing no exception will ever tell us:
+So it gets a gate. My first version of it asserted:
 
-    SHARED (host) GPU MEMORY MUST BE ZERO.
+    SHARED (host) GPU MEMORY MUST BE ZERO.        <-- WRONG. It can never be zero.
 
-Measured, not asserted. If this fails, the daemon is running on a GPU pretending to be a GPU.
+The operator killed that in one line: "spill is always 200mb". He was pointing at something I
+had looked straight past -- the number DID NOT MOVE. 76 MiB at pmax=2955. 76 MiB at pmax=11743.
+Still 76 MiB at ring=2048/pmax=1024 WITH 1.3 GB OF VRAM SITTING FREE. Nothing spills when there
+is that much room. That floor is the daemon's own PINNED HOST STAGING (h_logits, h_router, the
+H2D/D2H scratch) -- host memory that is SUPPOSED to be host memory. Windows' "Shared Usage"
+counter does not distinguish it from evicted VRAM. I did not either.
+
+So the gate now asserts the two things that are actually true:
+
+    1. HOST MEMORY ABOVE THE MEASURED PINNED FLOOR   (the spill is a DELTA, not a total)
+    2. PREFILL ms/token                              (a CLOCK -- no counter, no interpretation)
+
+(2) is the one to trust. Memory bookkeeping is a proxy I have now misread twice; time is not.
+Measured on this card: healthy 60 ms/tok, spilled 133 ms/tok. The clock cannot be argued with.
 
     python harness_tests/g_vram.py
 """
 import json
+import os
+import re
 import subprocess
 import sys
 import time
 import urllib.request
 
 DAEMON = "http://127.0.0.1:3000/v1/chat"
-MARGIN_MB = 512          # must match profiles/agent.toml [kv].autofit_margin_mb
-SPILL_TOLERANCE_MB = 64  # the desktop compositor jitters; a real spill is HUNDREDS of MiB
+
+# ── THE FLOOR THAT IS NOT A SPILL (2026-07-13, the operator caught this) ────────────
+# I asserted "shared host memory must be ~0". IT CAN NEVER BE ZERO. The operator noticed the
+# number never moved -- 76 MiB at pmax=2955, 76 MiB at pmax=11743, and STILL 76 MiB at
+# ring=2048/pmax=1024 with 1.3 GB OF VRAM SITTING FREE. Nothing spills when there is that much
+# room. That 76 MiB is the daemon's own PINNED HOST STAGING BUFFERS (h_logits, h_router, the
+# H2D/D2H scratch) -- memory that is SUPPOSED to live in host RAM.
+#
+# Windows' "Shared Usage" counter lumps DELIBERATE host allocations in with EVICTED VRAM. I
+# read one as the other, and built a gate that would have failed forever on a perfectly healthy
+# daemon -- and, worse, would have pushed me to shrink his MODEL to chase a number that was
+# never going to move. A GATE THAT MEASURES THE WRONG QUANTITY DOES NOT FAIL SAFE: it fails
+# confidently, with a number, and sends you to work on the wrong thing.
+#
+# So the spill is the DELTA above the floor, and the floor is MEASURED, not assumed.
+SPILL_FLOOR_MB = 96      # pinned host staging: legitimate, always present, not a spill
+
+# AND THE REAL METRIC IS TIME, NOT MEMORY. A memory counter is a proxy; ms/token is the thing
+# we actually care about, and it is immune to my misreading of Windows' bookkeeping. Measured
+# on the 2060 with the b1-reason weights:
+#     healthy (ring 1024, pmax 11743, 76 MiB):   60 ms/tok prefill, 151 s prewarm
+#     spilled (ring 2048, pmax 20000, 218 MiB): 133 ms/tok prefill, 334 s prewarm
+# 60 is the floor this card can do. Anything near 2x that means the working set is on the wrong
+# side of the PCIe bus, whatever the memory counters claim.
+PREFILL_MS_PER_TOK_MAX = 90.0
+MARGIN_MB = 256          # must match profiles/agent.toml [kv].autofit_margin_mb
 
 
 def _ps(cmd):
@@ -92,9 +131,34 @@ def main():
     free = total - used
     print(f"  card: {used} / {total} MiB dedicated, {free} MiB free, {sh} MiB SHARED\n", flush=True)
 
-    # 1. THE ONE THAT MATTERS. Nothing may live in host memory.
-    check("no host spill at idle", 0 <= sh <= SPILL_TOLERANCE_MB,
-          f"{sh} MiB shared (tolerance {SPILL_TOLERANCE_MB})")
+    # 1. Host memory ABOVE THE PINNED FLOOR. Not "shared == 0" -- shared is never 0.
+    check("no host spill above the pinned floor", 0 <= sh <= SPILL_FLOOR_MB,
+          f"{sh} MiB shared (floor {SPILL_FLOOR_MB} = legitimate pinned staging)")
+
+    # 1b. AND THE ONE THAT ACTUALLY MATTERS: ms/token. The memory counter is a proxy and I got
+    #     it wrong; this is the ground truth. A spilled daemon prefills at ~133 ms/tok on this
+    #     card, a healthy one at ~60. No counter, no bookkeeping, no interpretation -- a clock.
+    try:
+        log = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "var", "daemon.log")
+        # THE BIGGEST PREFILL, NOT THE LAST ONE. My first cut took the last match and read
+        # 39 ms/tok off a 16-token warm prefill -- and PASSED, on a daemon that was demonstrably
+        # spilling at 133 ms/tok on the cold one. A short prefill rides in cache and tells you
+        # nothing about whether the working set is on the wrong side of the bus. The COLD,
+        # LARGE prefill is the only one that touches enough memory to expose the spill.
+        rate, best_n = None, 0
+        with open(log, "r", errors="replace") as f:
+            for line in f:
+                m = re.search(r"prefill (\d+) tok in \d+ ms \(([\d.]+) ms/tok\)", line)
+                if m and int(m.group(1)) > best_n:
+                    best_n, rate = int(m.group(1)), float(m.group(2))
+        if rate is None:
+            check("prefill is not paging over PCIe", False, "no prefill line in daemon.log yet")
+        else:
+            check("prefill is not paging over PCIe", rate <= PREFILL_MS_PER_TOK_MAX,
+                  f"{rate:.0f} ms/tok over {best_n} tok (healthy ~60; spilled ~133)")
+    except Exception as e:
+        check("prefill is not paging over PCIe", False, f"{type(e).__name__}: {e}")
 
     # 2. Autofit's whole job: leave the margin it was told to leave. If free VRAM is under
     #    the margin, autofit did not clamp -- either it is off, or serve.py is not mapping it.
@@ -115,7 +179,7 @@ def main():
     try:
         turn("Count from one to forty, in words, slowly.", max_tokens=256)
         sh2 = shared_mb()
-        check("no host spill after the KV grows", 0 <= sh2 <= SPILL_TOLERANCE_MB,
+        check("no host spill after the KV grows", 0 <= sh2 <= SPILL_FLOOR_MB,
               f"{sh2} MiB shared after a 256-token turn")
     except Exception as e:
         check("no host spill after the KV grows", False, f"{type(e).__name__}")

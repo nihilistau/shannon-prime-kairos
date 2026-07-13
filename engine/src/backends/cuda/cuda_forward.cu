@@ -4690,7 +4690,29 @@ extern "C" sp_g4_kv *gemma4_kv_open(const qwen3_model *m, int Pmax) {
                         s->Pmax, fit, freeb/(1024u*1024u), per_slot, margin_mb);
                 s->Pmax = (int)fit; Pmax = (int)fit;
             } else if (fit <= 0) {
-                fprintf(stderr, "    [g4-kv] AUTOFIT: WARNING free VRAM cannot fit even a minimal global cache (free %zuMiB)\n", freeb/(1024u*1024u));
+                /* FAIL-OPEN WAS THE BUG (2026-07-13). This branch used to print a warning and
+                 * then LEAVE s->Pmax ALONE -- i.e. hand back the caller's 12096, the single most
+                 * oversubscribed value available, at the exact moment we had just proved the card
+                 * cannot afford it. A safety valve whose failure mode is TO DISABLE THE SAFETY
+                 * VALVE is not a safety valve; it is a warning label on a hole in the floor.
+                 * Measured on the 2060 at ring_W=2048: it bailed, passed 12096 through, and put
+                 * 202 MiB into host memory -- which WDDM never reports as an error, it just runs
+                 * every touch of those pages over PCIe (prewarm 151s -> 210s+).
+                 *
+                 * "I cannot fit this" must CLAMP, not surrender. So: drop the comfort margin
+                 * (it is slack, not a requirement), keep an eighth of what is left as real slop,
+                 * and never go below a floor that can still hold a turn. Still never RAISES Pmax. */
+                const size_t hard = swa_fixed + buffers;
+                const size_t avail0 = (freeb > hard) ? (freeb - hard) : 0;
+                long fit0 = (long)(avail0 / per_slot);
+                fit0 -= fit0 / 8;                       /* 12.5% slop in place of the margin */
+                const long FLOOR = 1024;                /* below this a conversation cannot live */
+                long chosen = (fit0 > FLOOR) ? fit0 : FLOOR;
+                if (chosen > s->Pmax) chosen = s->Pmax; /* clamp DOWN only, always */
+                fprintf(stderr, "    [g4-kv] AUTOFIT: margin %ldMiB does not fit — CLAMPING Pmax %d -> %ld "
+                                "(free %zuMiB, %zu B/slot) rather than passing the largest value through\n",
+                        margin_mb, s->Pmax, chosen, freeb/(1024u*1024u), per_slot);
+                s->Pmax = (int)chosen; Pmax = (int)chosen;
             }
         }
       }
