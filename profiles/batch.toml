@@ -52,6 +52,7 @@ store_verb = false        # SP_MEM_STORE
 classify = true          # SP_MEM_CLASSIFY
 policy = true            # SP_MEM_POLICY (per-entry delivery dispatch)
 qkey_mint = true         # question-space ep.l5 keys
+mint_async = true      # SP_CAPTURE_ASYNC — the KV mint must not block her reply (G-CAPTURE-ASYNC)
 
 [agent]
 # OFF (live-play 4): the per-turn toolset swap REWRITES THE SYSTEM PROMPT, which

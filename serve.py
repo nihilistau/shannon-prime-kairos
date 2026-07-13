@@ -306,6 +306,12 @@ def build_env(c: dict) -> dict:
         "SP_MEM_CLASSIFY": b(mem["classify"]),
         "SP_MEM_POLICY": b(mem["policy"]),
         "SP_QKEY_MINT": b(mem["qkey_mint"]),
+        # The KV-episode mint runs on a background worker instead of blocking her reply.
+        # MEASURED: 426 ms per fact, up to 4 facts per turn = 1.7 s of silence on a 4.4 s turn,
+        # with an EIGHT MINUTE worst case (timeout=120 x 4). And on this profile the episodes it
+        # builds are never read — authority='spine' disables the engine recall that consumes them.
+        # false = the old synchronous behaviour (determinism, for gates). Gate: G-CAPTURE-ASYNC.
+        "SP_CAPTURE_ASYNC": b(mem.get("mint_async", True)),
 
         # ── THE DAEMON'S OTHER HANDS ON HER MEMORY, PINNED SHUT (2026-07-14) ──────────────
         # These are daemon-side writers/retirers that no profile knob has ever controlled and

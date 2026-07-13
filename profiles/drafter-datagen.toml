@@ -37,6 +37,7 @@ store_verb = false
 classify = false
 policy = false
 qkey_mint = false
+mint_async = true      # SP_CAPTURE_ASYNC — the KV mint must not block her reply (G-CAPTURE-ASYNC)
 
 [agent]
 spine_toolset = false

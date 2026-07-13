@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
+import threading
 import time
 import urllib.request
 from typing import List
@@ -52,17 +54,118 @@ def _load() -> List[dict]:
     return eps
 
 
+# ── THE REGISTRY IS READ-MODIFY-WRITTEN FROM SEVERAL THREADS (2026-07-14) ──────────────
+# The gateway is a ThreadingHTTPServer — a thread per request — and the mint worker below is
+# another. Every mutation here is load-all / change / rewrite-all. Two of those interleaving is a
+# LOST WRITE: thread A loads 86 rows, thread B loads the same 86, A appends and rewrites 87, B
+# appends its own and rewrites 87 — and A's fact is gone, silently, with no error and no tombstone.
+#
+# os.replace is atomic, so the FILE is never half-written. That is a guarantee about bytes, not
+# about facts, and it is the guarantee we already had. The one we need is that a read-modify-write
+# is not interleaved with another, and that takes a lock.
+#
+# It has to be an RLock: remember() takes it and calls _save_all(), which takes it again.
+_REG_LOCK = threading.RLock()
+
+
+# ── THE MINT QUEUE: SHE ANSWERS FIRST, THE CACHE CATCHES UP ────────────────────────────
+# One worker, one queue, daemon thread. Deliberately ONE: the daemon is a single GPU and the whole
+# point is to stop contending with the turn she is trying to answer. Four parallel captures would
+# just move the stall from the harness into the engine.
+_MINT_Q: "queue.Queue" = queue.Queue()
+_MINT_WORKER = None
+_MINT_LOCK = threading.Lock()
+
+
+def _mint_is_async() -> bool:
+    """Async unless explicitly told otherwise. SP_CAPTURE_ASYNC is mapped in serve.py (it has to
+    be: build_env now strips every unmapped SP_*, so an unmapped knob is an unreachable one —
+    G-ONEDOOR made that structural, and it is what forced this to be a real profile knob rather
+    than a getenv nobody could find)."""
+    return os.environ.get("SP_CAPTURE_ASYNC", "1") == "1"
+
+
+def _mint_now(daemon: str, fact: str, out_dir: str):
+    """The blocking capture. Still used when async is off (gates that want determinism) and by the
+    background worker, which is the only place it belongs."""
+    try:
+        body = json.dumps({"text": fact, "out_dir": out_dir}).encode()
+        req = urllib.request.Request(
+            daemon + "/v1/capture", data=body, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            j = json.loads(r.read().decode())
+        npos = int(j.get("npos", 0))
+        return npos, (bool(j.get("ok", False)) or npos > 0)
+    except Exception:
+        return 0, False
+
+
+def _mint_drain():
+    while True:
+        item = _MINT_Q.get()
+        try:
+            if item is None:
+                return
+            fact, out_dir = item
+            daemon = os.environ.get("SP_DAEMON_URL", "http://127.0.0.1:3000")
+            npos, minted = _mint_now(daemon, fact, out_dir)
+            if not minted:
+                continue
+            # Update the row IN PLACE, found by its out_dir — NOT by its text.
+            #
+            # By the time this lands, the turn is long over and the store has moved on. If we
+            # matched on text, a reinforcement or a supersede could have changed which row that
+            # text belongs to, and we would stamp npos onto the wrong memory. `dir` is unique per
+            # capture and was written at the same instant as the row. It is the only key that
+            # still means what it meant when we queued it.
+            with _REG_LOCK:
+                rows = _load()
+                hit = next((r for r in rows if r.get("dir") == out_dir), None)
+                if hit is not None:
+                    hit["npos"] = npos
+                    hit["minted_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    _save_all(rows)
+        except Exception:
+            pass
+        finally:
+            _MINT_Q.task_done()
+
+
+def _mint_later(fact: str, out_dir: str) -> None:
+    global _MINT_WORKER
+    with _MINT_LOCK:
+        if _MINT_WORKER is None or not _MINT_WORKER.is_alive():
+            _MINT_WORKER = threading.Thread(target=_mint_drain, name="sp-mint",
+                                            daemon=True)
+            _MINT_WORKER.start()
+    _MINT_Q.put((fact, out_dir))
+
+
+def mint_backlog() -> int:
+    """How many episodes are still waiting to be minted. For the gate and the ops panel."""
+    return _MINT_Q.qsize()
+
+
+def mint_drain_blocking(timeout: float = 30.0) -> bool:
+    """Wait for the queue to empty. Gates and shutdown only — never a turn."""
+    t0 = time.time()
+    while _MINT_Q.qsize() and time.time() - t0 < timeout:
+        time.sleep(0.05)
+    return _MINT_Q.qsize() == 0
+
+
 def _save_all(rows: List[dict]) -> None:
     """Rewrite the registry. Atomic via os.replace — a half-written memory file is worse
     than a stale one, and this is now called on the hot path (every reinforcement)."""
     p = _reg_path()
     if not p:
         return
-    tmp = p + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        for r in rows:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    os.replace(tmp, p)
+    with _REG_LOCK:
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        os.replace(tmp, p)
 
 
 def _text(e: dict) -> str:
@@ -167,24 +270,50 @@ def remember(fact: str, source: str = "") -> str:
             inter = len(ft & et)
             if inter / len(ft) >= 0.9 and inter / len(et) >= 0.9:
                 return _reinforce(e, "said again, in different words")
-    # Mint the episode (ep.k/ep.v/ep.mf) via the daemon so the fact is RECALL-able,
-    # not just listed. Degrades gracefully: if the daemon is unreachable the fact is
-    # still recorded for introspection/curation.
+    # ── SHE WAS MADE TO WAIT ON A GPU BEFORE SHE WAS ALLOWED TO ANSWER HIM (2026-07-14) ────
+    #
+    # This block used to POST /v1/capture SYNCHRONOUSLY, with timeout=120, right here — on the
+    # write path of every single fact. And _capture_after_turn() calls remember() once PER DURABLE
+    # SENTENCE, up to four, BEFORE the gateway returns her reply (app.py:116, :128).
+    #
+    # MEASURED against the live daemon, warm, nothing else running:
+    #
+    #     527 ms  'My workshop bench is made of oak'
+    #     403 ms  'Knack has an esp32 running the sensors'
+    #     475 ms  'My NUC runs 24/7 in the cupboard'
+    #     297 ms  'Knack is teaching himself the guitar'
+    #     ------
+    #    1702 ms  ADDED TO A ~4,400 ms TURN, before he sees a single token of what she says.
+    #
+    # And that is the GOOD case. timeout=120, four facts: THE WORST CASE IS EIGHT MINUTES OF
+    # SILENCE because she is waiting on a GPU to finish building a cache. Exactly the shape of the
+    # judge-call bug (#19-#22): AN AUX MODEL CALL SITTING INLINE ON A PATH A HUMAN IS WAITING ON.
+    #
+    # ── AND THE THING SHE WAS WAITING FOR IS NOT READ ON THIS PROFILE ──────────────────────
+    # The mint builds ep.k/ep.v/ep.mf: KV blobs for the ENGINE's L5/replay recall. On the live
+    # profile `authority = 'spine'`, and app.py:816 sets `cfg.auto_recall = False` on EVERY gateway
+    # turn — so the engine's recall, THE ONLY CONSUMER OF THESE EPISODES, never runs on a turn.
+    # In the harness, `npos` is read by exactly two functions: memory_stats() and verify_registry().
+    # Both of them are REPORTING. Nothing on the recall path reads it.
+    #
+    # So she was being held silent for up to 1.7 seconds building an artifact that the live recall
+    # path is structurally incapable of reading. Not useless — the episodes serve the daemon-direct
+    # fallback when the gateway is down — but they have no business on the critical path.
+    #
+    # THE ROW IS WHAT MATTERS AND THE ROW IS WRITTEN HERE, SYNCHRONOUSLY, WITH EVERY GUARD. Only
+    # the KV mint is deferred: queued, done by one background worker, and the row is updated in
+    # place with its npos when it lands. Nothing is lost, nothing is racy (see _REG_LOCK), and if
+    # the process dies before the queue drains, the fact is still on disk — exactly as it already
+    # was whenever the daemon happened to be unreachable.
     daemon = os.environ.get("SP_DAEMON_URL", "http://127.0.0.1:3000")
     out_dir = os.path.join(os.path.dirname(p), "eps", f"ep_tool_{int(time.time() * 1000)}")
     out_dir = out_dir.replace("\\", "/")
     npos = 0
     minted = False
-    try:
-        body = json.dumps({"text": fact, "out_dir": out_dir}).encode()
-        req = urllib.request.Request(
-            daemon + "/v1/capture", data=body, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=120) as r:
-            j = json.loads(r.read().decode())
-        npos = int(j.get("npos", 0))
-        minted = bool(j.get("ok", False)) or npos > 0
-    except Exception:
-        minted = False
+    if _mint_is_async():
+        _mint_later(fact, out_dir)                 # she answers him now; the cache catches up
+    else:
+        npos, minted = _mint_now(daemon, fact, out_dir)
     # ── MEM-OKF v2 LIFECYCLE (2026-07-12) ───────────────────────────────────────
     # SUPERSEDE-ON-CONFLICT. A fact that fills the same slot with a DIFFERENT value
     # retires the old one — tombstoned, never deleted, so "what did I used to think?"

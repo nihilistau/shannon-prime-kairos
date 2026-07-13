@@ -129,6 +129,7 @@ store_verb = false       # SP_MEM_STORE — the daemon's OTHER write path. Retir
 classify = true          # SP_MEM_CLASSIFY
 policy = true            # SP_MEM_POLICY (per-entry delivery dispatch)
 qkey_mint = true         # question-space ep.l5 keys
+mint_async = true      # SP_CAPTURE_ASYNC — the KV mint must not block her reply (G-CAPTURE-ASYNC)
 
 # ── KAIROS: the continuation IMPULSE (2026-07-12) ─────────────────────────────
 # SP_KAIROS was 0 — the profile had no [kairos] block at all — so the daemon never emitted
