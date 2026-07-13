@@ -129,6 +129,36 @@ def build_env(c: dict) -> dict:
         # That is the G-VERBATIM failure mode. fp16 has a 10-bit mantissa and no scales.
         # Gate: harness_tests/g_kvfp16.py. THE ONE THAT MATTERS IS "4471" -> "4471".
         "SP_CUDA_KV_FP16": b(kv.get("fp16", False)),
+        # ── ADR-012b: fp16 the 2 GLOBAL owners as well. SEPARATE FLAG, ON PURPOSE. ──────
+        # WHY IT IS NEEDED: cudaMemGetInfo reports FREE = 0 MiB inside the daemon process even
+        # though nvidia-smi shows 988 MiB free on the card — WDDM has the process at its
+        # allocation budget, which is why 76 MiB already sits in shared. So the batched prefill's
+        # 159 MiB of activation scratch cannot be had at ANY margin. The memory has to come back
+        # from the RESIDENT session, and the globals are 2 x 13000 x 2048 x 2 x 4 B = 213 MiB.
+        #
+        # WHY IT IS NOT THE SAME SWITCH AS kv.fp16: the SWA owners are read by ATTENTION ONLY.
+        # The globals are also read by gemma4_kv_read_global_k, which mints the 256-bit C2 RECALL
+        # SIGNATURES — every episode in her registry was keyed off those exact rows. Arming a
+        # CACHE optimisation must not silently change the MEMORY system. If recall got subtly
+        # worse the symptom would be "she seems vaguer lately", which is unfalsifiable and would
+        # be blamed on the model. Different blast radius, different flag, different gate.
+        # Gate: G-RECALL-PRECISION must still pass with this on.
+        "SP_CUDA_KV_FP16_GLOBALS": b(kv.get("fp16_globals", False)),
+        # ── THE 512 MB VETO (2026-07-13) — THE FOURTH UNREACHABLE KNOB TODAY ────────────
+        # gemma4_kv_prefill_batched estimates its own O(n) f32 activation scratch and then
+        # DECLINES unless `need + margin` fits in free VRAM. The margin defaults to 512 MB and
+        # SERVE.PY NEVER MAPPED IT, so the profile could not lower it.
+        #
+        # MEASURED: for the 520-token judge, per_tok = 5E + 2QD + 2KV + 3FF ~= 310 KB/token, so
+        # need ~= 161 MB. Free VRAM after the fp16 win: ~350 MB. IT FITS — and it was refused
+        # anyway, because 161 + 512 > 350. THE CARD HAD THE MEMORY. IT DID NOT HAVE PERMISSION.
+        #
+        # That is the same bug shape as SP_G4_KV_AUTOFIT, SP_KV_PREFILL_BATCH and SP_G4_KV_JMAX:
+        # THE ENGINE COULD DO THE RIGHT THING AND NOTHING COULD ASK IT TO. Four times in one day
+        # is not four bugs, it is one bug — this env table is the ONLY door into the engine, and
+        # it has been quietly missing doors. Every future engine knob gets mapped HERE, on the
+        # day it is written, or it does not exist.
+        "SP_KV_BATCH_VRAM_MARGIN_MB": str(kv.get("batch_vram_margin_mb", 512)),
         "SP_G4_KV_AUTOFIT": b(kv.get("autofit", True)),
         "SP_G4_KV_AUTOFIT_MARGIN_MB": str(kv.get("autofit_margin_mb", 512)),
         "SP_PERSIST_KV": b(kv["persist"]),

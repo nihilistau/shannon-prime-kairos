@@ -71,11 +71,23 @@ __device__ __forceinline__ float kv_ld(const __half *p, size_t i) { return __hal
 __device__ __forceinline__ void  kv_st(float  *p, size_t i, float v) { p[i] = v; }
 __device__ __forceinline__ void  kv_st(__half *p, size_t i, float v) { p[i] = __float2half(v); }
 
-/* Host-side: is this layer's cache fp16? Only the SWA owners are converted — the 2 global
- * owners stay fp32 (they are 0.43 GB, and gemma4_kv_read_global_k mints the C2 recall
- * signatures off them, so leaving them alone keeps that whole subsystem BYTE-IDENTICAL and out
- * of the blast radius entirely). */
-#define G4_KV_FP16_LAYER(s, L) ((s)->kv_fp16 && ((L) % (s)->period) != (s)->period - 1)
+/* Host-side: is this layer's cache fp16?
+ *
+ * TWO FLAGS, NOT ONE, AND ON PURPOSE.
+ *
+ *   kv_fp16    (SP_CUDA_KV_FP16)         — the SWA owners. 0.62 GB. Attention only. PROVEN:
+ *                                           G-VERBATIM 6/6 with fp16 armed, "4471" -> "4471".
+ *   kv_fp16_g  (SP_CUDA_KV_FP16_GLOBALS) — the 2 global owners. 0.21 GB. NOT just attention:
+ *                                           gemma4_kv_read_global_k mints the C2 RECALL
+ *                                           SIGNATURES off these exact rows, and every episode
+ *                                           in the registry was keyed off them.
+ *
+ * Rolling these into one switch would mean that arming a CACHE optimisation silently changes
+ * the MEMORY system — and if recall got subtly worse, the evidence would be "she seems vaguer
+ * lately", which is unfalsifiable and would be blamed on the model. Different blast radius,
+ * different flag, different gate (G-RECALL-PRECISION). */
+#define G4_KV_FP16_LAYER(s, L) \
+    ((((L) % (s)->period) != (s)->period - 1) ? (s)->kv_fp16 : (s)->kv_fp16_g)
 #include <malloc.h>   /* N6 diag: _heapchk() host-heap-corruption checkpoint */
 
 /* ADR-011 CPU LAYER OFFLOAD: the math-core CPU FFN residual block (core/forward/gemma4.c),
@@ -4160,8 +4172,9 @@ struct sp_g4_kv {
    * Nothing guesses, nothing silently reads NULL, nothing quietly falls back to a stale float
    * buffer. A dtype refactor that "mostly works" is the worst possible outcome here, because
    * the failure is not a crash — it is a plausible sentence with the wrong number in it. */
-  int      kv_fp16;
-  __half **dKh, **dVh;      /* SWA owner cache, fp16 (NULL when kv_fp16 == 0) */
+  int      kv_fp16;         /* SWA owners  — attention only. Proven (G-VERBATIM 6/6). */
+  int      kv_fp16_g;       /* GLOBAL owners — ALSO the C2 recall signature source. Its own gate. */
+  __half **dKh, **dVh;      /* fp16 cache (NULL for any layer still on fp32) */
   __half **jKh, **jVh;      /* SWA undo journal, fp16 (must match the cache it rewinds) */
     float **jK, **jV;
     /* ADR-011 CPU FFN OFFLOAD: cpu_tail = number of trailing layers whose FFN runs on the CPU
@@ -4956,11 +4969,13 @@ extern "C" sp_g4_kv *gemma4_kv_open(const qwen3_model *m, int Pmax) {
      * scratch session or the batched prefill's activation scratch, so both are starved and the
      * daemon spills to host memory. Halving it frees 770 MB; we need ~535. Globals stay fp32. */
     { const char *fe = getenv("SP_CUDA_KV_FP16");
-      s->kv_fp16 = (fe && fe[0]=='1') ? 1 : 0; }
+      s->kv_fp16 = (fe && fe[0]=='1') ? 1 : 0;
+      const char *ge = getenv("SP_CUDA_KV_FP16_GLOBALS");
+      s->kv_fp16_g = (ge && ge[0]=='1') ? 1 : 0; }
     s->dKc=(float**)calloc((size_t)s->NL,sizeof(float*));
     s->dVc=(float**)calloc((size_t)s->NL,sizeof(float*));
     if (!s->dKc||!s->dVc) ok=0;
-    if (s->kv_fp16){
+    if (s->kv_fp16 || s->kv_fp16_g){
         s->dKh=(__half**)calloc((size_t)s->NL,sizeof(__half*));
         s->dVh=(__half**)calloc((size_t)s->NL,sizeof(__half*));
         if(!s->dKh||!s->dVh) ok=0;
@@ -4991,8 +5006,8 @@ extern "C" sp_g4_kv *gemma4_kv_open(const qwen3_model *m, int Pmax) {
             if (s->ring_W>0 && !global){ KA(s->jK[L],(size_t)s->Jmax*kvd); KA(s->jV[L],(size_t)s->Jmax*kvd); }
         }
       }
-      if (ok && s->kv_fp16)
-        fprintf(stderr,"    [g4-kv] KV-FP16: SWA owners in __half (globals stay fp32); freed %.2f GB\n",
+      if (ok && (s->kv_fp16 || s->kv_fp16_g))
+        fprintf(stderr,"    [g4-kv] KV-FP16: SWA=%s globals=%s; freed %.2f GB\n", s->kv_fp16?"__half":"fp32", s->kv_fp16_g?"__half":"fp32",
                 (double)saved/1073741824.0);
     }
     if (s->ring_W>0) fprintf(stderr,"    [g4-kv] RING mode: Wring=%d Jmax=%d (SWA owners ring+journal; globals full-cache)\n",s->ring_W,s->Jmax);
@@ -5101,8 +5116,45 @@ extern "C" int gemma4_kv_prefill_batched(sp_g4_kv *s, const int32_t *toks, int n
             if (margin_mb < 0) { const char *e = getenv("SP_KV_BATCH_VRAM_MARGIN_MB");
                 margin_mb = (e && *e) ? atol(e) : 512; if (margin_mb < 0) margin_mb = 0; }
             const size_t margin = (size_t)margin_mb * 1024u * 1024u;
-            if (need + margin > freeb) {
-                sp_set_error("gemma4_kv_prefill_batched: batched scratch would oversubscribe VRAM");
+            /* ── THE ORACLE THAT ALWAYS SAYS ZERO (2026-07-13) ────────────────────────────
+             * MEASURED, and it is the whole reason this accelerant has never once fired on this
+             * machine: on WDDM, cudaMemGetInfo returns free = 0 FOR THIS PROCESS even when
+             * nvidia-smi shows 1,177 MiB free on the card and cudaMalloc goes on succeeding.
+             * I freed 820 MB (fp16'ing the SWA ring AND the globals) and THE NUMBER DID NOT
+             * MOVE — still 0. A quantity that does not respond to being handed 820 MB is not
+             * measuring free memory.
+             *
+             * So the veto was never a safety check. It was a PERMANENT NO, and every "batched
+             * scratch would oversubscribe VRAM" message this daemon has ever printed was the
+             * guard vetoing itself on a number that is structurally zero here.
+             *
+             * Same lesson as nvidia-smi's 100%-on-an-idle-card, as the kill-regex that matched
+             * my own probe, as summing shared memory across every process on the box: MEASURE
+             * THE THING, NOT A PROXY FOR IT. This time the engine did it, in 2026-07, and it has
+             * been quietly refusing its own 5-7x accelerant ever since.
+             *
+             * freeb == 0 means "I do not know", not "there is none". And we do not have to know:
+             * the batched path allocates through BA(), which fails CLEANLY and goto's bdone —
+             * the caller then falls back to the per-token path, which is slow and never wrong.
+             * So when the oracle is unusable, ATTEMPT IT. A failed malloc costs a fallback. A
+             * permanent veto costs 5-7x on every judge call, forever. */
+            if (freeb == 0) {
+                static int said = 0;
+                if (!said) { fprintf(stderr,
+                    "    [g4-kv] BATCH-PREFILL: cudaMemGetInfo reports free=0 (WDDM per-process budget) — "
+                    "the VRAM veto is unusable on this platform. Attempting the batched path; a failed "
+                    "alloc falls back to per-token cleanly.\n"); said = 1; }
+            } else if (need + margin > freeb) {
+                /* SAY WHY, WITH THE NUMBERS. The old message was "batched scratch would
+                 * oversubscribe VRAM" — true, unfalsifiable, and it sent me to the wrong fix
+                 * twice. A diagnostic that will not print the quantity it is complaining about
+                 * is a diagnostic that wastes your afternoon. */
+                static char msg[192];
+                snprintf(msg, sizeof(msg),
+                         "gemma4_kv_prefill_batched: declined — scratch %zu MiB + margin %ld MiB > free %zu MiB "
+                         "(lower kv.batch_vram_margin_mb)",
+                         need/(1024u*1024u), margin_mb, freeb/(1024u*1024u));
+                sp_set_error(msg);
                 return -1;                                  /* clean decline → per-token fallback */
             }
         }
@@ -5136,7 +5188,7 @@ extern "C" int gemma4_kv_prefill_batched(sp_g4_kv *s, const int32_t *toks, int n
      * (open_scratch forces ring_W=0) AND fp16 — and that is precisely the configuration the judge
      * call uses, so it is the one that must not be missed. Without this the sharer layers would
      * read a NULL and the whole point of the exercise would fail on its most important caller. */
-    if (ring_on || s->kv_fp16) {         /* retained shared-owner K/V (contiguous, n positions) */
+    if (ring_on || s->kv_fp16 || s->kv_fp16_g) {         /* retained shared-owner K/V (contiguous, n positions) */
         BA(dKg,(size_t)n*KVDmax); BA(dVg,(size_t)n*KVDmax);
         BA(dKs,(size_t)n*KVDmax); BA(dVs,(size_t)n*KVDmax);
     }
@@ -5227,7 +5279,7 @@ extern "C" int gemma4_kv_prefill_batched(sp_g4_kv *s, const int32_t *toks, int n
              * to work hardest, because the one-shot judge depends on it) needs no new kernel.
              * The retained copies cost n*kvd floats for exactly two layers; the alternative was a
              * second batched-attention kernel, i.e. a second implementation that could drift. */
-            if (ring_on || s->kv_fp16) {     /* retain the two SHARED owners contiguously */
+            if (ring_on || s->kv_fp16 || s->kv_fp16_g) {     /* retain the two SHARED owners contiguously */
                 if (L == kvfs-1) { cudaMemcpyAsync(dKg,dk,(size_t)n*kvd*sizeof(float),cudaMemcpyDeviceToDevice,st);
                                    cudaMemcpyAsync(dVg,dv,(size_t)n*kvd*sizeof(float),cudaMemcpyDeviceToDevice,st); }
                 if (L == kvfs-2) { cudaMemcpyAsync(dKs,dk,(size_t)n*kvd*sizeof(float),cudaMemcpyDeviceToDevice,st);
@@ -5240,7 +5292,7 @@ extern "C" int gemma4_kv_prefill_batched(sp_g4_kv *s, const int32_t *toks, int n
             }
         } else {                                         /* SHARER: reuse owner's K/V */
             const int src=kvfs-(global?1:2);
-            if (ring_on || s->kv_fp16) {     /* contiguous retained copies (the cache can't serve n) */
+            if (ring_on || s->kv_fp16 || s->kv_fp16_g) {     /* contiguous retained copies (the cache can't serve n) */
                 Kuse = global ? dKg : dKs; Vuse = global ? dVg : dVs;
             } else {
                 Kuse=s->dKc[src]; Vuse=s->dVc[src];
@@ -5959,7 +6011,7 @@ extern "C" int gemma4_kv_ctx_dump(sp_g4_kv *s, float *kg, float *vg, float *ks, 
     /* ADR-012 CONTAINMENT: this dump was never taught fp16. It REFUSES BY NAME rather than read a
      * NULL SWA pointer or quietly hand back a stale float buffer. A diagnostic that lies is worse
      * than one that is switched off — it is the thing you reach for when you are already confused. */
-    if (s->kv_fp16) { sp_set_error("gemma4_kv_ctx_dump: not supported with SP_CUDA_KV_FP16 (SWA cache is __half)"); return -1; }
+    if (s->kv_fp16 || s->kv_fp16_g) { sp_set_error("gemma4_kv_ctx_dump: not supported with SP_CUDA_KV_FP16 (SWA cache is __half)"); return -1; }
     const int gl = s->kvfs - 1, sl = s->kvfs - 2;
     if (gl < 0 || sl < 0) { sp_set_error("gemma4_kv_ctx_dump: kvfs<2"); return -1; }
     const int kg_d = s->g_nkv * s->g_hd, ks_d = s->s_nkv * s->s_hd, P = s->dpos_host;
@@ -6073,7 +6125,7 @@ static int gemma4_kv_inject_tokens_impl(sp_g4_kv *s, const int32_t *toks, int n,
     if (!s || !toks || n <= 0) { sp_set_error("gemma4_kv_inject_tokens: bad args"); return -1; }
     /* ADR-012 CONTAINMENT: the residual-seam inject scales rows in s->dKc[L] directly and was
      * never taught fp16. REFUSE BY NAME. (Default-off: SP_SINGLE_ENTRY / the audio+memory seam.) */
-    if (s->kv_fp16) { sp_set_error("gemma4_kv_inject_tokens: not supported with SP_CUDA_KV_FP16 (SWA cache is __half)"); return -1; }
+    if (s->kv_fp16 || s->kv_fp16_g) { sp_set_error("gemma4_kv_inject_tokens: not supported with SP_CUDA_KV_FP16 (SWA cache is __half)"); return -1; }
     if (s->dpos_host + n > s->Pmax) { sp_set_error("gemma4_kv_inject_tokens: exceeds Pmax"); return -1; }
     if (!s->dinj) { if (cudaMalloc(&s->dinj, (size_t)s->E*sizeof(float)) != cudaSuccess) {
         sp_set_error("gemma4_kv_inject_tokens: dinj OOM"); return -1; } }
@@ -6175,7 +6227,7 @@ extern "C" long gemma4_kv_devfree_mib(void) {
 extern "C" int gemma4_kv_replay(sp_g4_kv *s, const char *epdir, int npos, int zero) {
     /* ADR-012 CONTAINMENT: this path was never taught fp16. It must REFUSE BY NAME, not read a
      * NULL and not quietly use a stale float buffer. Nothing here guesses. */
-    if (s->kv_fp16) { sp_set_error("gemma4_kv_replay: not supported with SP_CUDA_KV_FP16 (fp32 SWA cache required)"); return -1; }
+    if (s->kv_fp16 || s->kv_fp16_g) { sp_set_error("gemma4_kv_replay: not supported with SP_CUDA_KV_FP16 (fp32 SWA cache required)"); return -1; }
     if (!s || !epdir || npos <= 0) { sp_set_error("gemma4_kv_replay: bad args"); return -1; }
     if (s->dpos_host + npos > s->Pmax) { sp_set_error("gemma4_kv_replay: exceeds Pmax"); return -1; }
     /* WEIGHTED REFERENCE INJECTION (B3-v9): SP_REPLAY_ALPHA in [0,1] attenuates the injected
@@ -6536,7 +6588,27 @@ extern "C" int gemma4_kv_read_global_k(const sp_g4_kv *s, float *out, int npos) 
         if (!global) continue;
         /* globals are full-cache: slot==pos, contiguous [pos*g_kvd]. Copy [0,npos). */
         float *dst = out + (size_t)gi * npos * g_kvd;
-        if (cudaMemcpy(dst, s->dKc[L], (size_t)npos * g_kvd * sizeof(float),
+        if (G4_KV_FP16_LAYER(s, L)) {
+            /* ADR-012b: the C2 RECALL SIGNATURE PATH. This is the one consumer of the global
+             * cache that is not attention, and it is the memory system: the 256-bit LSH
+             * signature is the sign of a ±1 projection of these very rows, and every episode in
+             * the registry was keyed off them. WIDEN, DO NOT REINTERPRET — a __half array
+             * memcpy'd into a float array is not a lossy read, it is GARBAGE, and it would not
+             * crash: it would quietly return the wrong signature, she would recall the wrong
+             * memory, and it would look like the model being vague.
+             *
+             * fp16 -> fp32 is EXACT (every half is representable as a float), so the widened
+             * rows are the same numbers the sign projection would have seen, to fp16 precision.
+             * What the signature loses is what fp16 lost on the way IN, once, at the store. */
+            const size_t n = (size_t)npos * g_kvd;
+            __half *tmp = (__half *)malloc(n * sizeof(__half));
+            if (!tmp) { sp_set_error("gemma4_kv_read_global_k: host tmp OOM"); return -1; }
+            if (cudaMemcpy(tmp, s->dKh[L], n * sizeof(__half), cudaMemcpyDeviceToHost) != cudaSuccess) {
+                free(tmp); sp_set_error("gemma4_kv_read_global_k: D2H (fp16)"); return -1;
+            }
+            for (size_t i = 0; i < n; i++) dst[i] = __half2float(tmp[i]);
+            free(tmp);
+        } else if (cudaMemcpy(dst, s->dKc[L], (size_t)npos * g_kvd * sizeof(float),
                        cudaMemcpyDeviceToHost) != cudaSuccess) {
             sp_set_error("gemma4_kv_read_global_k: D2H"); return -1;
         }

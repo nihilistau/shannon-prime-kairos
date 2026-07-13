@@ -55,6 +55,16 @@ prefill_batch = true     # G-PERF: the n-wide forward. Was default-off and the p
 # the regime where confusable digit embeddings collapse (the G-VERBATIM failure mode).
 # fp32 remains the null floor: set fp16 = false and nothing about the engine changes.
 fp16 = true
+fp16_globals = true   # ADR-012b: the 2 global owners too (+213 MiB). Separate flag: these rows also mint the C2 recall signatures. Gate: G-RECALL-PRECISION.
+# ── THE 512 MB VETO (2026-07-13) ───────────────────────────────────────────────
+# The batched prefill estimates its own O(n) f32 activation scratch and declines unless
+# need + margin fits free VRAM. MEASURED for the 520-token judge: need ~161 MB, free ~350 MB.
+# IT FITS. It was refused anyway, by a 512 MB default margin that serve.py never mapped.
+# THE CARD HAD THE MEMORY; IT DID NOT HAVE PERMISSION.
+# 128 leaves real slack over the ~161 MB the scratch actually wants. If a big cold prompt ever
+# needs more than is free, the engine still declines CLEANLY and falls back to per-token --
+# slow, never wrong. Raise it if that ever bites.
+batch_vram_margin_mb = 128
 autofit = false
 autofit_margin_mb = 256
 # P1c-2 SHEAR: DISARMED 2026-07-11 23:30 (live-play regression, operator).
