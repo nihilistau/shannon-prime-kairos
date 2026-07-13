@@ -17,7 +17,8 @@ os.environ["SP_DAEMON_URL"] = "http://127.0.0.1:59999"  # unreachable -> remembe
 open(REG, "w").close()
 
 from harness.skills.memory import (remember, provenance, verify_registry,
-                                   compact_registry, list_memories, count_memories)
+                                   compact_registry, list_memories, count_memories,
+                                   _load, _text)
 
 
 def check(name, ok):
@@ -36,11 +37,30 @@ def main() -> int:
     pr2 = provenance("favorite color")
     res.append(check("provenance recites the right fact", "teal" in pr2 and "user turn" in pr2))
 
-    # §M2 near-dup guard: a paraphrase of an existing fact is NOT stored again.
+    # §M2 near-dup: a paraphrase does not make a second ROW — it REINFORCES the first.
+    #
+    # THIS GATE WAS ASSERTING THE OLD BUG (found 2026-07-14). It read:
+    #
+    #     res.append(check("near-dup paraphrase rejected",
+    #                      after == before and "paraphrase" in r.lower()))
+    #
+    # and it had been failing since e967fd0 without anyone looking, because task #11 deliberately
+    # changed the answer: A REPEAT IS NOT A DUPLICATE, IT IS A SECOND DATA POINT. The old code
+    # said "already in memory" and threw the event away — proud of not duplicating a row while
+    # discarding the fact that HE SAID IT AGAIN, which is the entire basis of salience.
+    #
+    # The row count assertion was always right and stays. What changed is the MEANING of the
+    # second telling, so that is what is checked now: the store must not grow, and `mentions`
+    # must. (Same lesson as G-SALIENCE and G-REFLECT: a gate left pointing at retired doctrine
+    # does not fail loudly — it just quietly certifies the past.)
     before = int(count_memories())
     r = remember("Knack is the user's name.")     # paraphrase of fact #1
     after = int(count_memories())
-    res.append(check("near-dup paraphrase rejected", after == before and "paraphrase" in r.lower()))
+    hit = next((e for e in _load() if "name is Knack" in _text(e)), {})
+    res.append(check("near-dup paraphrase reinforces, does not duplicate",
+                     after == before
+                     and "reinforced" in r.lower()
+                     and int(hit.get("mentions", 1)) >= 2))
 
     # A genuinely new fact IS stored.
     r2 = remember("The user lives in Australia.", source="user turn")

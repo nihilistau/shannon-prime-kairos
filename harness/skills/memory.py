@@ -193,7 +193,14 @@ def remember(fact: str, source: str = "") -> str:
     # cheerfully surface whichever matched first.
     from harness.skills import lifecycle as lc
     speaker = lc.infer_speaker(fact, _AUTHOR)
-    retired = lc.find_superseded(fact, speaker, existing)
+
+    # WHERE DID THIS CLAIM COME FROM, and therefore what may it do to the rest of the store?
+    # An INFERENCE may be recalled, may be spoken in her own voice, and may be corrected by
+    # anything he says — but it may NEVER retire something he told her. Proven necessary: she
+    # concluded "Knack is comfortable in open water" and it TOMBSTONED his own "Knack is
+    # terrified of open water". Her guess ate his testimony. See find_superseded().
+    status = lc.STATUS_INFERRED if "reflection" in (source or "") else lc.STATUS_OBSERVED
+    retired = lc.find_superseded(fact, speaker, existing, status=status)
 
     line = {
         "name": os.path.basename(out_dir),
@@ -211,6 +218,29 @@ def remember(fact: str, source: str = "") -> str:
     # retired fact keeps getting recalled. Stamp BOTH: `lifecycle` for the engine,
     # `superseded_by`/`superseded_at` for the audit trail.
     line["lifecycle"] = 0
+
+    # ── AN INFERENCE THAT ARGUES WITH HIM IS SILENCED, NOT CONVICTED (2026-07-14) ───────
+    # She may not retire his testimony (find_superseded refuses it), so a wrong conclusion sits
+    # LIVE alongside the thing it denies:
+    #
+    #     LIVE  observed  'Knack is terrified of open water'
+    #     LIVE  inferred  'Knack is comfortable in open water'
+    #
+    # ...and unhandled she would say BOTH. "You told me you're terrified" and "I've come to think
+    # you're comfortable", in one breath. Not a mind holding two hypotheses — a mind that HEARD HIM
+    # AND CARRIED ON REGARDLESS, which is exactly what makes a companion feel like it isn't
+    # listening.
+    #
+    # I first handled it HERE, at write time: detect the contradiction, mark it DISPUTED, retire
+    # it. Then I went to build the detector and caught myself assembling a semantic contradiction
+    # engine out of substring matching and a hand-written antonym list — the clever-fragile thing
+    # this codebase has punished me for every single time, and with the worst possible failure
+    # mode: A VERDICT I CANNOT DEFEND, WRITTEN TO DISK, WITH A TIMESTAMP ON IT.
+    #
+    # So the write path passes no judgment at all. It stores what she thinks, honestly labelled.
+    # The rule that matters is not "her belief must be destroyed" — it is SHE DOES NOT GET TO SAY
+    # IT OVER HIM, and that is a rule about SPEAKING. It lives at the recall seam
+    # (lifecycle.testimony_wins), where a false positive costs a sentence instead of a fact.
     if retired:
         rows = _load()
         names = {r.get("name") for r in retired}
@@ -367,13 +397,69 @@ def attr_absent(query: str, fact: str) -> bool:
     return len(salient_absent) >= 2 and len(salient_absent) * 2 >= len(qs)
 
 
-def search_memories_ranked_rows(query: str, k: int = 5, min_overlap: float = 0.25):
+def search_memories_ranked_rows(query: str, k: int = 5, min_overlap: float = 0.25,
+                                include_retired: bool = False):
     """Like search_memories_ranked but returns (score, ROW) so callers can read
-    per-entry policy fields (mem_class etc.). The policy dispatch rides this."""
+    per-entry policy fields (mem_class etc.). The policy dispatch rides this.
+
+    ── THE SUPERSEDE MACHINERY WAS BYPASSED ON THE MAIN TURN PATH (2026-07-14) ────────────
+    This function iterated _load() — EVERY row, tombstones included — and left the lifecycle
+    filter to whoever called it. Two callers. ONE of them remembered:
+
+        memory.recall()        [e for e in ... if not e.get("lifecycle")]     <- filtered
+        spine.recall_decider() hits = search_memories_ranked_rows(...)        <- DID NOT
+
+    recall_decider is the AUTOMATIC recall — the context injection that runs on EVERY TURN,
+    without her choosing it. PROVEN, on the real code path:
+
+        THE STORE:                     TOMBSTONE 'My GPU is an RTX 2060'
+                                       LIVE      'My GPU is an RTX 3090'
+
+        the recall() TOOL:             1. Knack told me: My GPU is an RTX 3090     correct
+        INJECTED EVERY TURN:           -> My GPU is an RTX 2060      THE DEAD ONE, AND FIRST
+                                       -> My GPU is an RTX 3090
+
+    He tells her he upgraded his card. Supersede fires perfectly, writes the tombstone — and then
+    every turn for the rest of her life the automatic recall hands her the corpse ANYWAY, ranked
+    ABOVE the truth, and she has no way to know one of them is dead.
+
+    So the entire lifecycle system — supersede, the identity firewall, all of MEM-OKF v2, every
+    correction he has ever made — was live ONLY when she happened to call the recall() TOOL. On
+    the path that actually feeds her context, it never ran at all.
+
+    THE BUG IS NOT THE MISSING FILTER. It is that an invariant every reader must hold was written
+    in a CALLER instead of in the SEAM they share — the same shape as on_user_turn armed on one
+    path of two, and the shear guard testing a proxy. A rule enforced in one of two paths is
+    enforced in NEITHER, because the unguarded path is the one that runs.
+
+    It lives here now. A caller can no longer forget it; it must ASK for the dead
+    (include_retired=True), which is a thing only the audit lane has any business doing.
+
+    ── AND TESTIMONY OUTRANKS INFERENCE, IN THE SAME SEAM ─────────────────────────────────
+    An inference is not a memory of something that happened; it is a conclusion she drew. She is
+    allowed to be wrong about him. SHE IS NOT ALLOWED TO SAY IT OVER HIM. If she has concluded
+    something about a topic HIS OWN WORDS already cover, his words go and her guess stays home:
+
+        observed  'Knack is terrified of open water'   <- he told her
+        inferred  'Knack is comfortable in open water' <- she decided otherwise
+
+    Surfacing both is not scrupulous, it is deaf: she would say "you told me you're terrified" and
+    "I've come to think you're comfortable" in one breath. This is a SPEECH rule, not a storage
+    rule — nothing is destroyed, the inference stays on disk and stays auditable. It simply does
+    not get to take the floor on a subject he has already spoken to.
+
+    It is deliberately a TOPIC test and not a contradiction test, because I cannot detect semantic
+    contradiction with string operations and a verdict I cannot defend is a lie with a timestamp.
+    A topic test fails SAFE in the only direction that matters: at worst she is quieter than she
+    needed to be. It can never delete a fact and never assert something false.
+    """
+    from harness.skills import lifecycle as lc
     clause = re.split(r"[.:;!]", query)[-1].strip() or query
     eps = _load()
     scored = []
     for e in eps:
+        if not include_retired and e.get("lifecycle"):
+            continue                      # superseded is superseded — on EVERY path, not just the polite one
         t = _text(e)
         ov = _overlap(query, t)
         if clause != query:
@@ -381,6 +467,8 @@ def search_memories_ranked_rows(query: str, k: int = 5, min_overlap: float = 0.2
         if ov >= min_overlap:
             scored.append((ov, e))
     scored.sort(key=lambda x: -x[0])
+    if not include_retired:
+        scored = lc.testimony_wins(scored)
     return scored[:k]
 
 
@@ -439,8 +527,10 @@ def recall(query: str) -> str:
     ("Knack told me: ..." / "About myself: ...") is what stops his facts arriving in her
     voice. Retired rows are excluded: superseded is superseded."""
     from harness.skills import lifecycle as lc
-    hits = [(s, e) for s, e in search_memories_ranked_rows(query, k=12, min_overlap=0.25)
-            if not e.get("lifecycle")]
+    # (the `if not e.get("lifecycle")` filter that used to live HERE is gone: it is the seam's job
+    #  now. Keeping a private copy of a shared invariant is precisely how recall_decider came to be
+    #  injecting tombstones on every turn for weeks while this function looked fine.)
+    hits = list(search_memories_ranked_rows(query, k=12, min_overlap=0.25))
     if not hits:
         return f"(nothing in memory about '{query}')"
     hits = _target_and_rank(query, hits)

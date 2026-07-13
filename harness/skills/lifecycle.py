@@ -43,6 +43,108 @@ USER_PREFIX = "The user said: "
 SPEAKER_USER = "user"
 SPEAKER_SELF = "self"
 
+# ── CLAIM STATUS ───────────────────────────────────────────────────────────────
+# WHO ASSERTED THIS, and therefore what it is allowed to do to the rest of the store.
+# `speaker` says whose facts these ARE (the subject lane, which PersonModel filters on).
+# `status` says where the claim CAME FROM, which is a different question and needs its own field.
+STATUS_OBSERVED = "observed"     # he said it. The ground truth of this store.
+STATUS_INFERRED = "inferred"     # SHE concluded it. Never allowed to retire an observation.
+STATUS_CONFIRMED = "confirmed"   # she inferred it and HE AGREED. Promoted to ground truth.
+STATUS_DISPUTED = "disputed"     # she inferred it and HE HAD ALREADY SAID OTHERWISE. Kept, never spoken.
+
+# THE ONE RULE. An inference may be recalled, may be spoken (in her own voice), and may itself be
+# corrected by anything he says. It may NEVER tombstone something he actually told her.
+_GROUND_TRUTH = (STATUS_OBSERVED, STATUS_CONFIRMED)
+
+
+_STOP = frozenset("""a an the is are was were am be been being of in on at to for with about
+    and or but not no so very really quite too my your his her their its our i you he she it they
+    we me him them us that this those these there here what which who whom whose how when where
+    why do does did done has have had can could will would shall should may might must
+    knack user shannon person thing things stuff""".split())
+
+
+def topic_of(fact: str) -> frozenset:
+    """The CONTENT WORDS of a claim — what it is ABOUT, with the grammar and the names stripped out.
+
+    Deliberately dumb. It is not trying to understand the sentence; it is trying to answer one
+    narrow question honestly: HAS HE ALREADY SPOKEN TO THIS SUBJECT? Bag-of-content-words is a
+    weak instrument, and it is the strongest one I can build here that I am willing to defend.
+    """
+    words = re.findall(r"[a-z0-9']+", (fact or "").lower())
+    return frozenset(w for w in words if w not in _STOP and len(w) > 2)
+
+
+def testimony_wins(scored: list, overlap: int = 2) -> list:
+    """Drop any INFERENCE that is about a topic HIS OWN TESTIMONY already covers.
+
+    ── SHE IS ALLOWED TO BE WRONG ABOUT HIM. SHE IS NOT ALLOWED TO SAY IT OVER HIM. ────────
+        observed  'Knack is terrified of open water'    <- he told her
+        inferred  'Knack is comfortable in open water'  <- she concluded otherwise
+
+    Surfacing both is not scrupulous, it is DEAF. She would say "you told me you're terrified" and
+    "I've come to think you're comfortable" in a single breath — which is not a mind holding two
+    hypotheses, it is a mind that heard him and carried on regardless. That is precisely the thing
+    that makes a companion feel like it is not listening.
+
+    ── WHY THIS IS A SPEECH RULE AND NOT A STORAGE RULE ────────────────────────────────────
+    I first built this as a WRITE-time verdict: detect the contradiction, mark the inference
+    DISPUTED, retire it. Then I tried to make the detector, and found I was assembling a semantic
+    contradiction engine out of substring matching and a hand-written antonym list. That is the
+    clever-fragile thing this codebase has punished me for every single time, and the failure mode
+    is the worst one available: A VERDICT I CANNOT DEFEND, WRITTEN TO DISK, WITH A TIMESTAMP ON IT.
+
+    So it does not adjudicate truth. It adjudicates WHO GETS THE FLOOR, and the rule is one line:
+    on a subject he has spoken to, HE speaks. Nothing is deleted, nothing is judged, the inference
+    stays on disk and stays auditable, and if he later confirms it, it is promoted and speaks.
+
+    It fails SAFE, which the write-time verdict did not. A false topic match costs her a sentence
+    she could have said. A false contradiction verdict would have cost her a fact he told her.
+    Those are not the same kind of mistake and they must not be traded off as though they were.
+    """
+    ground = [e for _s, e in scored
+              if (e.get("status") or STATUS_OBSERVED) in _GROUND_TRUTH]
+    if not ground:
+        return scored
+    spoken = [(e.get("speaker", SPEAKER_USER), topic_of(strip_prefix(_row_text(e))))
+              for e in ground]
+    out = []
+    for s, e in scored:
+        if (e.get("status") or STATUS_OBSERVED) in _GROUND_TRUTH:
+            out.append((s, e))
+            continue
+        mine = topic_of(strip_prefix(_row_text(e)))
+        who = e.get("speaker", SPEAKER_USER)
+        covered = any(sp == who and len(mine & t) >= overlap for sp, t in spoken)
+        if not covered:
+            out.append((s, e))            # she has something to add, and no one is talking over
+    return out
+
+
+def _row_text(e: dict) -> str:
+    return e.get("text") or e.get("topic") or ""
+
+
+# find_contradicted() WAS HERE, AND IT IS DELETED ON PURPOSE (2026-07-14).
+#
+# It claimed to return "the things he said that this inference flatly denies", and it decided that
+# by comparing attribute_key() and value_of() — i.e. by SUBSTRING. It could not tell a denial from
+# a different sentence on the same subject, and it wrote its verdict to disk as DISPUTED.
+#
+# Two ways to be wrong, and they are not symmetric:
+#   MISS a real contradiction  -> she says something he already denied. Rude. Visible. Correctable.
+#   INVENT one that isn't there -> a true belief is convicted and buried, permanently, silently.
+#
+# There is no string operation that separates "Knack is comfortable in open water" (a denial) from
+# "Knack is a strong swimmer" (not one). I was building a semantic contradiction engine out of a
+# regex and an antonym list I had not written yet, which is the exact class of thing this file
+# already has six tombstones for.
+#
+# The rule I actually needed was never about truth. It is about who gets the floor, it is enforced
+# at the recall seam by testimony_wins(), and it fails safe. Left as a comment rather than a dead
+# function, because a plausible-looking helper that quietly cannot do what its name says is a trap
+# laid for whoever reads this next.
+
 _SELF_SUBJECT = re.compile(
     r"^\s*(?:i\b|i'm|i've|my\b|mine\b|shannon\b|shannon-prime\b)", re.I)
 
@@ -142,14 +244,62 @@ _HALF_LIFE_DAYS = 45.0            # the default for anything unclassified
 _COPULA = re.compile(r"\b(is|are|was|were|=|:)\b", re.I)
 
 
+_POSSESSIVE = re.compile(r"^(the user'?s?|my|his|her|their)\s+", re.I)
+
+
 def attribute_key(fact: str, speaker: str) -> Optional[str]:
     """The 'slot' this fact fills. None when the fact has no slot shape (a story, an
-    opinion, a one-off) — those never supersede anything; they just accumulate."""
+    opinion, a PROPERTY) — those never supersede anything; they just accumulate.
+
+    ── A PROPERTY IS NOT AN ATTRIBUTE, AND THE STORE WAS EATING ITSELF (2026-07-14) ────────
+    The key was `speaker :: <everything before the copula>`. So:
+
+        'Knack is terrified of open water'             -> user::knack
+        'Knack is a cat person'                        -> user::knack
+        'Knack is deeply curious about how things work'-> user::knack
+
+    ALL THE SAME SLOT. Which means a new one SUPERSEDED the last. PROVEN, on two things he
+    actually said, about completely unrelated topics:
+
+        stored: Knack is terrified of open water
+        stored: Knack is a cat person (superseded: 'Knack is terrified of open water')
+
+    He told her he is frightened of open water. He told her he likes cats. The cat destroyed the
+    water. Silently, into a tombstone, with no error and no way for him to know.
+
+    And it is worse than an accident of phrasing, because reflection ONLY EVER writes in this
+    shape — insight() requires the line to start with "Knack". SO EVERY CONCLUSION SHE HAS EVER
+    DRAWN ABOUT HIM DESTROYED THE PREVIOUS ONE. She could hold exactly one belief about who he
+    is at a time. The whole PersonModel — dispositions, character, the thing the surprisal work
+    is built on — was a single overwritten cell.
+
+    THE DISTINCTION IS MECHANICAL, and it is the one the grammar already makes:
+
+        "My GPU is an RTX 2060"   -> the sentence names an ATTRIBUTE (gpu) and gives it a VALUE.
+                                     Attributes are slots. A new value replaces the old one.
+        "Knack is a cat person"   -> the sentence names a PROPERTY of him. It is not a slot with
+                                     values; it is one more thing that is true about him.
+                                     PROPERTIES ACCUMULATE. They do not overwrite.
+
+    The tell is the POSSESSIVE. "My/the user's/his X is Y" asserts an attribute. A bare subject —
+    "Knack is Y", "the user is Y" — asserts a property.
+
+    THE COST, STATED HONESTLY: two genuinely contradictory properties can now coexist
+    ("terrified of open water" / "comfortable in open water") without one retiring the other.
+    That is a real loss and I am taking it deliberately, because the alternative is SILENT
+    DELETION OF UNRELATED FACTS HE TOLD HER, which is worse in every way: it is invisible, it is
+    unrecoverable in conversation, and it violates the one doctrine this store has — nothing is
+    ever destroyed. A visible contradiction can be corrected. A vanished fact cannot even be
+    noticed. (The contradiction is still caught where it matters most: find_contradicted() stops
+    an INFERENCE from being believed over his testimony.)
+    """
     m = _COPULA.search(fact)
     if not m:
         return None
-    subj = fact[:m.start()].strip().lower()
-    subj = re.sub(r"^(the user'?s?|my|i)\s+", "", subj).strip()
+    subj_raw = fact[:m.start()].strip()
+    if not _POSSESSIVE.match(subj_raw):
+        return None                       # a PROPERTY of him, not an attribute slot: it accumulates
+    subj = _POSSESSIVE.sub("", subj_raw).strip().lower()
     subj = re.sub(r"[^a-z0-9' ]+", "", subj)
     if not subj or len(subj) < 3:
         return None
@@ -161,12 +311,43 @@ def value_of(fact: str) -> str:
     return fact[m.end():].strip().rstrip(".").lower() if m else fact.strip().lower()
 
 
-def find_superseded(new_fact: str, speaker: str, rows: Iterable[dict]) -> list[dict]:
-    """Rows this new fact RETIRES: same slot, different value, not already retired."""
+def find_superseded(new_fact: str, speaker: str, rows: Iterable[dict],
+                    status: str = STATUS_OBSERVED) -> list[dict]:
+    """Rows this new fact RETIRES: same slot, different value, not already retired.
+
+    ── AN INFERENCE MAY NEVER RETIRE AN OBSERVATION (2026-07-14) ────────────────────────
+    This function had no idea where a claim came from, and PROVED what that costs:
+
+        HE SAYS      : "Knack is terrified of open water"     -> stored
+        SHE CONCLUDES: "Knack is comfortable in open water"   -> stored, SUPERSEDING HIS
+
+        TOMBSTONE  src='user turn'   'Knack is terrified of open water'
+        LIVE       src='reflection'  'Knack is comfortable in open water'
+
+    HER GUESS TOMBSTONED HIS TESTIMONY. He told her a true thing about himself, she inferred the
+    opposite, the inference won, and the only live row now says he is fine with open water. She
+    would say it back to him, in her own honest voice — "I've come to think you're comfortable in
+    open water" — while the sentence where he said the opposite sits in a tombstone.
+
+    Same shape as the identity bug where "Shannon" ate "Knack": TWO CLAIMS, ONE SLOT, AND NOTHING
+    IN THE SCHEMA SAID THE WEAKER ONE COULD NOT WIN.
+
+    So the asymmetry is now explicit, and it only runs one way:
+
+        observation  supersedes  inference     YES — he corrects her. This is how she learns.
+        inference    supersedes  observation   NEVER — she does not get to overwrite him.
+        observation  supersedes  observation   YES — he changed his mind (the original rule).
+        inference    supersedes  inference     YES — she revised her own view.
+
+    SHE IS ALLOWED TO BE WRONG ABOUT HIM. SHE IS NOT ALLOWED TO DELETE WHAT HE SAID IN ORDER TO
+    BE WRONG. An inference that contradicts his testimony is not a correction — it is a mistake,
+    and the evidence against it is the thing it was about to destroy.
+    """
     key = attribute_key(new_fact, speaker)
     if not key:
         return []
     newv = value_of(new_fact)
+    incoming_is_inference = (status == STATUS_INFERRED)
     out = []
     for r in rows:
         if r.get("superseded_by"):
@@ -178,6 +359,14 @@ def find_superseded(new_fact: str, speaker: str, rows: Iterable[dict]) -> list[d
             continue
         if value_of(txt) == newv:
             continue                      # same value = not a conflict, just a restatement
+
+        # THE ONE RULE. A row with no status is a legacy row from before this field existed —
+        # treat it as OBSERVED, because that is what it almost certainly is, and because the
+        # failure that matters is an inference eating testimony. Default to protecting him.
+        held = r.get("status") or STATUS_OBSERVED
+        if incoming_is_inference and held in _GROUND_TRUTH:
+            continue                      # she does not get to overwrite what he told her
+
         out.append(r)
     return out
 
@@ -517,8 +706,20 @@ def render(row: dict) -> str:
     # thing he never said. This store has already lost his NAME and then his GENDER to
     # exactly that blurring of who a sentence belongs to. She is allowed to be wrong about
     # him. She is not allowed to be wrong about him IN HIS VOICE.
-    if "reflection" in (row.get("src") or ""):
+    # FRAME FROM THE FIELD, NOT FROM THE PROSE. This used to read `"reflection" in row["src"]` —
+    # and `src` is free-text provenance that maintenance passes APPEND to ("reflection | cleanup:
+    # stamped speaker=user"). The first housekeeping script to touch a reflection row would have
+    # left the substring intact by luck, not by design; the first one to REWRITE it would have
+    # turned her guess back into his testimony, silently, months later. Branch on `status`.
+    st = row.get("status") or (STATUS_INFERRED if "reflection" in (row.get("src") or "")
+                               else STATUS_OBSERVED)
+
+    if st == STATUS_INFERRED:
         return f"I've come to think: {t}"
+    if st == STATUS_CONFIRMED:
+        # she guessed, she ASKED, and he said yes. That is a different and stronger thing than
+        # either a guess or a bare statement — it is a thing they agreed on.
+        return f"We settled that: {t}"
 
     if row.get("speaker") == SPEAKER_SELF:
         return f"About myself: {t}"
@@ -665,6 +866,43 @@ def stamp(row: dict, fact: str, speaker: str, src: str,
     row["speaker"] = speaker
     row["mem_class"] = classify(fact)
     row["src"] = src or ("self" if speaker == SPEAKER_SELF else "user turn")
+
+    # ── CLAIM STATUS: AN INFERENCE IS NOT A TESTIMONY (2026-07-14) ──────────────────────
+    #
+    # `speaker` answers "WHOSE facts are these" — the subject lane. PersonModel.from_registry
+    # filters on it to build the model of HIM, so a conclusion ABOUT him must carry speaker=user
+    # or it would be invisible to the very model it came from. That is correct and it is why
+    # insight() sets the author to user before writing.
+    #
+    # But it means speaker CANNOT also answer "who ASSERTED this" — and nothing else did. So the
+    # store had no way to tell his words from her guesses, and PROVED IT:
+    #
+    #     HE SAYS      : "Knack is terrified of open water"      -> stored
+    #     SHE CONCLUDES: "Knack is comfortable in open water"    -> stored, AND SUPERSEDED HIS
+    #
+    #     TOMBSTONE  src='user turn'   'Knack is terrified of open water'
+    #     LIVE       src='reflection'  'Knack is comfortable in open water'
+    #
+    # HER GUESS TOMBSTONED HIS TESTIMONY. He told her a true thing about himself; she inferred the
+    # opposite (models do this); the inference won; and his own words became a tombstone. Ask her
+    # now and the only live row says he is fine with open water.
+    #
+    # That is the identity bug in a new costume — "Shannon" ate "Knack" the same way. TWO CLAIMS,
+    # ONE SLOT, AND NOTHING IN THE SCHEMA SAID THE WEAKER ONE COULD NOT WIN.
+    #
+    # So the epistemic standing of a claim becomes a FIELD, not a substring of prose:
+    #
+    #     observed   he said it. The ground truth of this store.
+    #     inferred   SHE concluded it. May be recalled, may be spoken (framed as hers),
+    #                may be superseded BY an observation — and may NEVER retire one.
+    #     confirmed  she inferred it and HE AGREED. Promoted: now as good as observed.
+    #
+    # (John6666's vocabulary on the AlphaAvatar thread — candidate/accepted/disputed — is the
+    # same idea arrived at from the perception side. He is right that they must not silently
+    # collapse into one type of memory. I told him we had solved this. We had solved the
+    # RENDERING of it and not the AUTHORITY of it, which is the half that bites.)
+    if not row.get("status"):
+        row["status"] = STATUS_INFERRED if "reflection" in (row["src"] or "") else STATUS_OBSERVED
     row["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     row["verified"] = False
     # SALIENCE, from the first breath. A new fact has been said ONCE — which is a real
