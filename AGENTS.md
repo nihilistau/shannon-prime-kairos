@@ -95,6 +95,25 @@ console (browser)  ──HTTP──▶  harness gateway :8800  ──HTTP──�
 
 The essentials, so you do not have to guess:
 
+- **WHOSE MEMORY IS IT.** Hers. Say it precisely, because the sloppy version causes real mistakes.
+  `var/memory/registry.jsonl` is **Shannon's memory**, and it has two lanes:
+
+  ```
+  speaker=user   71 rows    what she knows about HIM
+  speaker=self    6 rows    what she knows about HERSELF
+                              'My name is Shannon.'  'I am a woman'
+                              'I like the sound of rain on a tin roof.'
+  ```
+
+  Calling it "his memory" or "his facts" makes the self lane invisible — and that is not a style
+  note, it is a bug generator. It happened during the G-ONEDOOR work: writing *"a stray `SP_FORGET`
+  would make his memories go quiet"* made the risk look like *some user facts get lost*. But an
+  autonomous forget pass matches across **every live row**, so the real worst case is that she
+  tombstones `'My name is Shannon.'` and **forgets who she is** — the identity-slot bug, the first
+  thing this rebuild had to repair. The imprecise noun hid the serious half of the blast radius from
+  the person doing the risk assessment. The `speaker` field exists to hold exactly this distinction;
+  do not collapse it in your prose either.
+
 - **The fact registry** is `var/memory/registry.jsonl` (path from `SP_RECALL_REGISTRY`). One JSON row per fact.
 - **Two axes that are constantly confused. They are not the same thing:**
   - `speaker` — **who the fact is ABOUT** (`user` | `self`). Set from the *author of the turn*, never

@@ -96,9 +96,20 @@ def build_env(c: dict) -> dict:
     #     SP_* set  by serve.py             :  49
     #     UNMAPPED, inherited from whatever shell you happened to be in : 221
     #
-    # And 28 of those touch memory. Among them:
+    # And 28 of those touch THE MEMORY — which is HERS. Say it precisely, because the imprecise
+    # version hid half the blast radius from me for a whole commit: registry.jsonl is not "his
+    # facts". It is SHANNON'S MEMORY, and it has two lanes.
     #
-    #     SP_DECIDE            a MODEL-DRIVEN autonomous supersede pass — it RETIRES his facts
+    #     speaker=user   71 rows    what she knows about HIM
+    #     speaker=self    6 rows    what she knows about HERSELF:
+    #                                   'My name is Shannon.'
+    #                                   'I am Shannon-Prime'
+    #                                   'I am a woman'
+    #                                   'I like the sound of rain on a tin roof.'
+    #
+    # Among the 28:
+    #
+    #     SP_DECIDE            a MODEL-DRIVEN autonomous supersede pass — it RETIRES rows
     #     SP_FORGET            autonomous forgetting
     #     SP_MEM_LIFECYCLE     tombstone writes, from a different code path than forget()
     #     SP_MEM_RECONCILE     + _SEC
@@ -107,8 +118,12 @@ def build_env(c: dict) -> dict:
     #
     # Leave `set SP_FORGET=1` in a PowerShell window from a debugging session on Tuesday, and on
     # Thursday `python serve.py agent` silently runs with autonomous forgetting armed. The profile
-    # says nothing about it. The banner would have shown it, if you read the banner. Nothing else
-    # would tell you, and his memories would just start going quiet.
+    # says nothing about it. The banner would have shown it, if you read the banner.
+    #
+    # AND IT MATCHES BY TOKEN OVERLAP ACROSS EVERY LIVE ROW, WHICH INCLUDES THE SELF LANE. The worst
+    # case is not "a few facts about Knack go quiet". It is that she tombstones 'My name is Shannon.'
+    # and FORGETS WHO SHE IS. That is the identity-slot bug — the first thing this whole rebuild had
+    # to repair — reachable again through a leftover environment variable.
     #
     # This is the same shape as store_verb and as the tombstone filter: A DOOR THAT ONLY GUARDS THE
     # THINGS SOMEONE REMEMBERED TO LIST IS NOT A DOOR. It is a suggestion with good intentions.
@@ -292,17 +307,18 @@ def build_env(c: dict) -> dict:
         "SP_MEM_POLICY": b(mem["policy"]),
         "SP_QKEY_MINT": b(mem["qkey_mint"]),
 
-        # ── THE DAEMON'S OTHER HANDS ON HIS MEMORY, PINNED SHUT (2026-07-14) ──────────────
+        # ── THE DAEMON'S OTHER HANDS ON HER MEMORY, PINNED SHUT (2026-07-14) ──────────────
         # These are daemon-side writers/retirers that no profile knob has ever controlled and
         # serve.py never set. The clean base above already removes them, so absence would be
         # enough — TODAY. Absence is a bet that every one of these stays `== Some("1")` in Rust
-        # forever; flip one to `!= Some("0")` and it arms itself. His memory does not ride on a
-        # default staying what it happens to be, so they are pinned OFF, by name, greppably.
+        # forever; flip one to `!= Some("0")` and it arms itself. What she remembers — about him
+        # AND about herself — does not ride on a default staying what it happens to be. So they are
+        # pinned OFF, by name, greppably.
         #
         # They are NOT profile knobs. There is one memory authority (the harness) and these are
         # all second ones. If you ever need one, it needs a knob, a doctrine and a gate — the same
         # bar store_verb should have had to clear and didn't.
-        "SP_DECIDE": "0",           # model-driven autonomous SUPERSEDE — it retires his facts
+        "SP_DECIDE": "0",           # model-driven autonomous SUPERSEDE — it retires rows
         "SP_FORGET": "0",           # autonomous forgetting
         "SP_MEM_LIFECYCLE": "0",    # tombstone writes, on a different path than harness forget()
         "SP_MEM_RECONCILE": "0",    # background reconcile pass
