@@ -30,7 +30,35 @@ _STOP = {"the", "a", "an", "is", "are", "of", "to", "in", "on", "and", "or",
          # ally (the audit gates re-ran GREEN after this change).
          "what", "who", "where", "when", "why", "how", "which",
          "did", "does", "do", "can", "could", "would", "should", "will",
-         "had", "these", "those", "there", "here", "just", "please"}
+         "had", "these", "those", "there", "here", "just", "please",
+         # ── ASKING ABOUT MEMORY IS NOT A MEMORY (2026-07-14) ────────────────────
+         # From the live transcript. He asked:
+         #
+         #     "do you REMEMBER what sex you are?"
+         #
+         # and the ranker handed her:
+         #
+         #     0.50  "then we can REMEMBER our idea's like this!"
+         #     0.50  "REMEMBER my GPU is an RTX 2060."
+         #     0.50  "REMEMBER this about me: my workshop is called Forge966733."
+         #     0.00  'I am a woman'     <- speaker=self, identity, THE ACTUAL ANSWER
+         #
+         # THE VERB OF THE QUESTION MATCHED THE VERB OF THE JUNK. Her whole content vocabulary
+         # for that question was {remember, sex}, so a row sharing the single word "remember"
+         # scored 0.50 — while the row that answers it shares nothing lexically, because "sex"
+         # is not "woman".
+         #
+         # And the junk rows contain "Remember" because they ARE captured instructions: the
+         # store_verb bypass wrote "Remember my GPU is an RTX 2060." verbatim, instruction verb
+         # and all. Junk begat junk. She was handed a GPU and a workshop when asked what she is,
+         # and then confabulated the right answer from her persona — by luck, not memory.
+         #
+         # These words are how you ASK ABOUT the store. They are never what is IN it. Stopped on
+         # BOTH sides, which also makes the fossil rows behave like the facts they were meant to
+         # be ("Remember my GPU is an RTX 2060" -> {gpu, rtx, 2060}).
+         "remember", "remembers", "remembered", "recall", "recalls", "know", "knows",
+         "knew", "tell", "tells", "told", "say", "says", "said", "memory", "memories",
+         "forget", "forgets", "forgot", "mention", "mentions", "mentioned", "stored"}
 
 
 def _reg_path() -> str:
@@ -172,9 +200,35 @@ def _text(e: dict) -> str:
     return e.get("text") or e.get("topic") or ""
 
 
+def _depluralise(w: str) -> str:
+    """cats -> cat, names -> name, sensors -> sensor.
+
+    ── HE ASKED ABOUT HIS "CATS NAME" AND GOT HIS OWN (2026-07-14) ─────────────────────
+    From the live transcript, after the ownership fix landed and the question correctly scoped
+    to HIM — it still answered with the wrong row:
+
+        "do you remember my CATS name?"  ->  "The user's name is Knack"
+
+    Because the tokenizer strips punctuation, so the STORE holds cat's -> {cat}, while the
+    QUESTION holds cats -> {cats}. The possessive and the plural never touch, so the only token
+    left in common with any row was `name` — and every name row matched it equally.
+
+    The relationship penalty missed for the same reason: _REL_NOUN is \\bcat\\b, and "cats" is not
+    "cat", so the cat row was never even recognised as being about a cat.
+
+    Crude, deliberately: a real stemmer is a dependency and a new failure surface, and this is a
+    bag-of-words matcher, not a linguist. It only has to be applied IDENTICALLY to both sides,
+    which is the one property that actually matters. 'glass' -> 'glas' on both sides still matches
+    'glass' -> 'glas'.
+    """
+    if len(w) > 3 and w.endswith("s") and not w.endswith(("ss", "us", "is")):
+        return w[:-1]
+    return w
+
+
 def _toks(s: str) -> set:
     words = "".join(c.lower() if c.isalnum() else " " for c in s).split()
-    return {w for w in words if len(w) >= 3 and w not in _STOP}
+    return {_depluralise(w) for w in words if len(w) >= 3 and w not in _STOP}
 
 
 def _overlap(query: str, target: str) -> float:
@@ -211,6 +265,14 @@ def remember(fact: str, source: str = "") -> str:
     # invariant guarded in only ONE of the paths into memory is not guarded. Every path
     # enforces it now.
     from harness.skills import lifecycle as lc
+
+    # THE PACKAGING COMES OFF AT THE DOOR (2026-07-14). "Remember my GPU is an RTX 2060." is a
+    # FACT WEARING AN IMPERATIVE. Stored whole, the verb becomes content (it retrieved itself on
+    # "do you REMEMBER what sex you are?") and the slot is wrong ("remember my gpu", not
+    # "user::gpu", so it never superseded the real GPU row). Every guard below must see the CLAIM,
+    # not the wrapper. See lifecycle.normalize_fact.
+    fact = lc.normalize_fact(fact)
+
     ok, why = lc.is_memorable(fact)
     if not ok:
         return f"not stored — {why}"
@@ -630,6 +692,28 @@ def search_memories_ranked_rows(query: str, k: int = 5, min_overlap: float = 0.2
     scored.sort(key=lambda x: -x[0])
     if not include_retired:
         scored = lc.testimony_wins(scored)
+        # ── AND THE OWNERSHIP SCOPING LIVES HERE NOW, FOR THE SAME REASON (2026-07-14) ────
+        #
+        # _target_and_rank() — the pronoun scoping, the relationship penalty, the identity
+        # boost, the salience prior — was called by recall(). THE TOOL. Not by the seam.
+        #
+        # So spine.recall_decider(), the AUTOMATIC per-turn injection, never ran any of it, and
+        # the live transcript is what that costs:
+        #
+        #     you: "what is your NAME?"
+        #     recall: ["The user said: My cat's NAME is Tuffy.", "The user's NAME is Knack",
+        #              "My NAME is Shannon."]
+        #     her: "Your cat's named Tuffy? I was wondering why you kept calling him that."
+        #
+        # She answered a question about HER NAME with HIS CAT'S NAME. The query token was {name};
+        # the cat row contains "name"; it scored 1.00. _target_and_rank would have caught it
+        # THREE WAYS — "your" scopes to speaker=self, the cat is a relationship noun the question
+        # never mentioned (-0.40), and the identity row gets +0.30 — and its own comment says so,
+        # in as many words. It just was not on the path that runs.
+        #
+        # Third time in this one file: the lifecycle filter, the twin ranker, and now this. The
+        # polite path had every guard; the automatic one had none of them.
+        scored = _target_and_rank(query, scored)
     return scored[:k]
 
 
@@ -695,11 +779,13 @@ def recall(query: str) -> str:
     # (the `if not e.get("lifecycle")` filter that used to live HERE is gone: it is the seam's job
     #  now. Keeping a private copy of a shared invariant is precisely how recall_decider came to be
     #  injecting tombstones on every turn for weeks while this function looked fine.)
-    hits = list(search_memories_ranked_rows(query, k=12, min_overlap=0.25))
+    # The ownership scoping and the salience rerank used to be applied HERE, and only here —
+    # which is why the automatic per-turn injection answered "what is your name?" with the cat's.
+    # The seam does it now, for every reader. This function keeps no private copy of anything.
+    hits = list(search_memories_ranked_rows(query, k=5, min_overlap=0.25))
     if not hits:
         return f"(nothing in memory about '{query}')"
-    hits = _target_and_rank(query, hits)
-    top = hits[:5]
+    top = hits
 
     # SHE USED THESE. Counted — but into `recalled`, NEVER into `mentions`. `mentions` is
     # evidence about what matters TO HIM; her own lookups say nothing about that. She
@@ -746,9 +832,52 @@ def recall(query: str) -> str:
 # question that was not asked.
 _ASKS_SELF = re.compile(r"\b(your|yours|you|you're|youre)\b", re.I)
 _ASKS_USER = re.compile(r"\b(my|mine|me|i|i'm|im)\b", re.I)
+
+# ── "DO YOU" IS NOT A QUESTION ABOUT YOU (2026-07-14) ─────────────────────────────────
+# Caught replaying the live transcript after the first fix. He asks:
+#
+#     "do YOU remember my cat's name?"
+#
+# _ASKS_SELF matches the bare word `you`, and it is checked first — so the question scoped to
+# SPEAKER_SELF and she answered HIS CAT'S NAME with "My name is Shannon."
+#
+# The `you` in "do you remember ..." is the ADDRESSEE. It is who he is TALKING TO, not who he is
+# ASKING ABOUT. And it is in front of practically every memory question a person actually asks:
+# "do you remember", "do you know", "can you tell me", "do you recall". So the ownership resolver
+# was reading the wrong pronoun on nearly every real question, and the only reason it ever worked
+# is that people also say "what is my name?" with no framing at all.
+#
+# Same shape as the _STOP fix one function up: THE FRAMING OF A QUESTION IS NOT THE QUESTION.
+# There it made the verb into content; here it made the addressee into the subject. Strip the
+# frame, THEN read the pronouns — after which a bare `you` is meaningful again ("what sex are
+# YOU" -> hers) because the only `you` left is the one he actually asked about.
+_ASK_FRAME = re.compile(
+    r"^\s*(?:"
+    r"(?:hey|hi|ok|okay|so|and|well|but)\b[\s,]*"
+    r"|(?:do|did|can|could|would|will|does)\s+you\b"
+    r"|(?:do|did)\s+you\s+(?:still\s+)?(?:remember|recall|know|have)\b"
+    r"|(?:can|could|would)\s+you\s+(?:please\s+)?(?:tell|remind|say)\s+me\b"
+    r"|(?:tell|remind)\s+me\b"
+    r"|(?:what|which)\s+do\s+you\s+(?:remember|know)\b"
+    r"|please\b"
+    r")[\s,:]*", re.I)
+
+
+def _unframe(q: str) -> str:
+    """Peel the conversational wrapper off a question until only the question is left."""
+    t = (q or "").strip()
+    prev = None
+    while t != prev:
+        prev = t
+        t = _ASK_FRAME.sub("", t, count=1).strip()
+    return t or (q or "").strip()
+# The trailing `s?` is load-bearing and I got it wrong once: I depluralised the RESULT of findall
+# instead of what it SEARCHES, so `\bcat\b` still did not match "cats", q_rel stayed empty, and the
+# cat row kept taking the -0.40 "you never asked about a pet" penalty on a question that was
+# literally about his cat. Match the plural at the source; the group still yields the singular.
 _REL_NOUN = re.compile(
     r"\b(wife|husband|partner|girlfriend|boyfriend|brother|sister|mother|father|mum|mom|"
-    r"dad|son|daughter|friend|cat|dog|pet)\b", re.I)
+    r"dad|son|daughter|friend|cat|dog|pet)s?\b", re.I)
 
 
 # THE USER'S ACTUAL WORDS THIS TURN. The gateway sets this before the agent runs.
@@ -773,9 +902,12 @@ def set_question(text: str) -> None:
 
 def _query_target(query: str):
     """Whose fact is this question asking for? Resolved from HIS sentence, not from her
-    paraphrase of it — see _QUESTION. 'your' -> hers. 'my' -> his."""
+    paraphrase of it — see _QUESTION. 'your' -> hers. 'my' -> his.
+
+    UNFRAMED FIRST: "do YOU remember MY cat's name" has both pronouns in it, and the `you` is the
+    addressee. Peel the frame and only the pronoun he is actually asking about survives."""
     from harness.skills import lifecycle as lc
-    src = _QUESTION or query          # his words if we have them; hers only as a fallback
+    src = _unframe(_QUESTION or query)   # his words if we have them; hers only as a fallback
     if _ASKS_SELF.search(src):
         return lc.SPEAKER_SELF
     if _ASKS_USER.search(src):
@@ -792,7 +924,10 @@ def _target_and_rank(query: str, hits):
         if owned:                      # only narrow when the person HAS a matching fact
             hits = owned
 
-    q_rel = set(m.lower() for m in _REL_NOUN.findall(query))
+    # Depluralised on BOTH sides, for the same reason the tokens are: _REL_NOUN is \bcat\b, so a
+    # question about his "cats name" did not register as being about a cat at all, and the row
+    # that answered it took the -0.40 penalty for mentioning a pet he supposedly never asked about.
+    q_rel = set(_depluralise(m.lower()) for m in _REL_NOUN.findall(query))
     qt = _toks(query)
 
     def adjust(s, e):

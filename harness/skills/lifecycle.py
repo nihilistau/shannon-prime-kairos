@@ -228,9 +228,30 @@ _SECRET = re.compile(
     r"ssn|social[\s-]security(?:[\s-]number)?|"
     r"credit[\s-]?card|cvv|routing[\s-]?number|account[\s-]?number|licen[cs]e[\s-]?key"
     r")\b", re.I)
-# `secret` bare is far too common in speech ("the secret to good pasta is salt"), so it only
-# counts when it is HIS: a possessive makes it a thing he holds, not a turn of phrase.
-_SECRET_POSS = re.compile(r"\b(?:my|our|his|her|their|the user'?s)\s+secret\b", re.I)
+# `secret` and `code` bare are far too common in speech ("the secret to good pasta is salt", "I
+# write code"), so they only count when POSSESSED — a possessive makes it a thing he HOLDS rather
+# than a turn of phrase or a job description.
+#
+# `code` was added 2026-07-14 after the live transcript surfaced this row, live, unclassified:
+#
+#     "My code is 4471 and my GPU is an RTX 2060."
+#
+# The qualified forms (access code, door code, PIN code) were all covered. Bare "my code" was not,
+# and bare "my code" is exactly how a person says it. It is also a COMPOUND row — two facts welded
+# together by the old capture — so a credential is riding along inside a sentence about a graphics
+# card. Splitting compounds is a separate job; classifying this one as a secret is not.
+#
+# AND "the" IS NOT A POSSESSIVE — I put it in this list, and the live store immediately produced:
+#
+#     "the system is actually already created, I really just need to ... the code ..."
+#           -> private-secret
+#
+# "the code" is how a developer says "the code". It is not a credential. It has to be HIS: a
+# first-person possessive is what turns the noun into a thing he HOLDS. The qualified forms
+# ("the garage door code") are already matched by _SECRET above and do not need this rule.
+# Exactly the false positive I said this design would avoid, reintroduced by widening one word.
+_SECRET_POSS = re.compile(
+    r"\b(?:my|our|his|her|their|the user'?s)\s+(?:secret|code|combination)\b", re.I)
 
 _CLASS_RULES = (
     ("relationship", re.compile(r"\b(wife|husband|partner|girlfriend|boyfriend|brother|sister|"
@@ -759,6 +780,64 @@ def admit_to_user_store(fact: str, self_values: Iterable[str]) -> tuple[bool, st
 # ── framing ────────────────────────────────────────────────────────────────────
 def strip_prefix(text: str) -> str:
     return text[len(USER_PREFIX):] if text.startswith(USER_PREFIX) else text
+
+
+# ── A FACT WRAPPED IN AN INSTRUCTION IS STILL A FACT (2026-07-14) ──────────────────────
+#
+# From the live transcript. These three rows are in the store, live, and they are what she was
+# handed when he asked "do you remember what sex you are?":
+#
+#     "Remember my GPU is an RTX 2060."
+#     "Remember this about me: my workshop is called Forge966733."
+#     "then we can remember our idea's like this!"
+#
+# The first two are FACTS WEARING AN IMPERATIVE. The daemon's store_verb bypass captured the
+# whole utterance verbatim — instruction verb and all — so the stored "fact" begins with the word
+# "Remember". Two things follow, and both of them bit:
+#
+#   1. THE VERB BECOMES CONTENT. "do you REMEMBER what sex you are?" shares the token `remember`
+#      with the row, scores 0.50, and beats 'I am a woman' (which shares nothing: "sex" is not
+#      "woman"). The question's own verb retrieved the junk. See _STOP in memory.py.
+#
+#   2. THE SLOT IS WRONG. attribute_key("Remember my GPU is an RTX 2060") keys on everything
+#      before the copula — "remember my gpu" — NOT "user::gpu". So it never superseded the real
+#      GPU row. It sat beside it as a second, competing answer, forever.
+#
+# Refusing these outright would be wrong: HE IS TELLING HER SOMETHING TRUE. The wrapper is not the
+# claim. So the wrapper comes off at the door and the payload goes through every normal guard —
+# admission, classification, the identity firewall, supersede — on its actual content:
+#
+#     "Remember my GPU is an RTX 2060."   ->  "my GPU is an RTX 2060"   -> slot user::gpu
+#     "The user said: My cat's name..."   ->  "My cat's name is Tuffy"  -> slot user::cat's name
+#
+# This runs on the WRITE path, so the store holds the claim and not the packaging. The store_verb
+# bypass that minted these is dead (G-ONEWRITER), but the model's own remember() tool is still fed
+# by a human who says "remember that ..." like a human does — and the fossils are still on disk.
+_STORE_VERB = re.compile(
+    r"^\s*(?:"
+    r"(?:please\s+)?(?:remember|note|store|save|keep in mind|make a note)"
+    r"(?:\s+(?:that|this|it))?"
+    r"(?:\s+(?:about|for)\s+me)?"
+    r"(?:\s+in\s+your\s+memory)?"
+    r"(?:\s+(?:that|this|it))?"
+    r"|(?:add|store)\s+(?:this\s+)?(?:to|in)\s+your\s+memory(?:\s+that)?"
+    r")\s*[:,]?\s+", re.I)
+
+
+_BULLET = re.compile(r"^\s*[-*•–]\s+")    # "- My cat's name is Tuffy." — a list fossil
+
+
+def normalize_fact(text: str) -> str:
+    """Strip the packaging so the store holds the CLAIM. Idempotent; safe to call twice."""
+    t = strip_prefix((text or "").strip())          # legacy "The user said: " fossils
+    prev = None
+    while t != prev:                                # "remember that" + "note that" both, if nested
+        prev = t
+        t = _BULLET.sub("", t).strip()
+        t = _STORE_VERB.sub("", t, count=1).strip()
+        t = strip_prefix(t)
+    return t or (text or "").strip()                # never return empty: a bare "remember that" is
+                                                    #   not a fact, and is_memorable will refuse it
 
 
 def render(row: dict) -> str:
