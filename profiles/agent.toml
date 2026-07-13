@@ -45,7 +45,17 @@ pmax = 13000
 jmax = 64            # the journal costs ~320 KB/position across the SWA owners at ring 2048.
 rewind_bound = 63    # jmax-1: FREE (the journal is already allocated). 32 -> 63 costs nothing.
 prefill_batch = true     # G-PERF: the n-wide forward. Was default-off and the profile never set it.
-autofit = false   # operator: verbatim 2048/20k. autofit would clamp it; he asked for the real number.
+# ── ADR-012: fp16 SWA K/V (2026-07-13) ─────────────────────────────────────────
+# The SWA ring is 1.54 GB and it is what starves this card: no room for the one-shot scratch
+# session or the batched prefill's activation scratch, so both fail and the daemon spills to
+# host RAM. PROVEN by the q4b smoke test: 2.14 GB lighter weights, ZERO code changed, spill
+# gone, judge 113,475 ms -> 6,422 ms. The design was never broken -- it was starved.
+# fp16 halves the ring (frees ~770 MB; we need ~535) on the weights he actually wants.
+# NOT int8: that frees 4x more than we need and buys it with an 8-bit integer grid, which is
+# the regime where confusable digit embeddings collapse (the G-VERBATIM failure mode).
+# fp32 remains the null floor: set fp16 = false and nothing about the engine changes.
+fp16 = true
+autofit = false
 autofit_margin_mb = 256
 # P1c-2 SHEAR: DISARMED 2026-07-11 23:30 (live-play regression, operator).
 # The shear sets commit_pos = P, which REDEFINES the SWA undo-journal baseline

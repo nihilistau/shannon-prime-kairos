@@ -668,7 +668,7 @@ k_attn_decode_win_bx_T(const float *q, const KV *Kc, const KV *Vc,
         if (d_bx_probe & 4) {                          /* PROBE: float p·V (timing only) */
             float accf = 0.f;
             for (int s = s0; s < ctx; s++)
-                accf += (float)shl[s] * Vc[(size_t)s * KVD + (size_t)kvh * HD + i];
+                accf += (float)shl[s] * kv_ld(Vc, (size_t)s * KVD + (size_t)kvh * HD + i);
             ao[(size_t)h * HD + i] = accf / ((float)S * (float)(1 << BX_DSH));
             continue;
         }
@@ -2295,6 +2295,10 @@ __global__ void k_rope_dyn(float *base, int n_heads, int d, int rowstride,
 template <typename KV>
 __global__ void k_kv_store_T(KV *Kc, KV *Vc, const float *dk, const float *dv,
                            const int *dpos, size_t layer_off, int KVD);
+/* ADR-012: the ring-slot row write. The ONE place a cached value is narrowed. */
+template <typename KV>
+__global__ void k_kv_rowwrite_T(KV *Kc, KV *Vc, const float *dk, const float *dv,
+                                size_t off, int KVD);
 __global__ void k_argmax_at(const float *logits, int n, int *dseq, const int *dpos);
 __global__ void k_incr_pos(int *dpos);
 __global__ void k_nll(const float *lg, int n, const int *dtarget, double *nll);  /* ETA.5b PPL */
@@ -4145,6 +4149,20 @@ struct sp_g4_kv {
    * daemon, including the judge/reflect calls that have nothing whatsoever to continue.
    * The invariant belongs to the SESSION, not to the process. */
   int   one_shot;
+  /* ── ADR-012: fp16 SWA cache (SP_CUDA_KV_FP16=1). Default 0 = fp32, the null floor. ──
+   * When on, the SWA OWNER layers' K/V (and their undo journal, which holds overwritten ring
+   * rows and must match the cache type) live in __half, and s->dKc[L]/dVc[L] are NULL for
+   * those layers. The 2 GLOBAL owners stay fp32: they are only 0.43 GB, and
+   * gemma4_kv_read_global_k mints the C2 recall signatures off them — leaving them alone keeps
+   * that whole subsystem byte-identical and out of the blast radius.
+   *
+   * THE CONTAINMENT RULE: a consumer that meets a NULL dKc[L] under fp16 must REFUSE BY NAME.
+   * Nothing guesses, nothing silently reads NULL, nothing quietly falls back to a stale float
+   * buffer. A dtype refactor that "mostly works" is the worst possible outcome here, because
+   * the failure is not a crash — it is a plausible sentence with the wrong number in it. */
+  int      kv_fp16;
+  __half **dKh, **dVh;      /* SWA owner cache, fp16 (NULL when kv_fp16 == 0) */
+  __half **jKh, **jVh;      /* SWA undo journal, fp16 (must match the cache it rewinds) */
     float **jK, **jV;
     /* ADR-011 CPU FFN OFFLOAD: cpu_tail = number of trailing layers whose FFN runs on the CPU
      * (their FFN weights are NOT uploaded to VRAM; build_weights skips them). cpu_x = a host
@@ -4264,6 +4282,55 @@ extern "C" int gemma4_kv_steer(sp_g4_kv *s, const float *vec, float alpha) {
  * reads the DEVICE dpos pointer, so a graph captured at one position replays
  * bit-identically at any later position (the same invariant gemma4_decode_cuda's
  * one-shot graph relies on). do_head: run out_norm+tied head+softcap+argmax. */
+/* ADR-012: the decode attention launch, ONE body, instantiated per the layer's cache type.
+ * Extracted verbatim from g4_kv_launch_full so the fp32 and fp16 paths cannot pick different
+ * kernels, different shared-memory sizes, or different windows — there is exactly one place
+ * that decides any of it. The <float> instantiation is the code that was here before. */
+template <typename KV>
+static void g4_attn_launch(sp_g4_kv *s, const KV *Kuse, const KV *Vuse,
+                           int nh, int hd, int kvd, int grp, int win, int global,
+                           const int *dpos, size_t attn_shm, cudaStream_t st) {
+    int bd = hd > 256 ? hd : 256; if (bd > 1024) bd = 1024;
+    if (s->ring_W > 0 && !global) {            /* KAI-1c: ring attention (slot=(s0+j)%Wring) */
+        const int ctx = s->dpos_host + 1;
+        const int s0 = (win >= 0 && ctx - win > 0) ? ctx - win : 0;
+        const int wl = ctx - s0;
+        if (s->bx_on) {                        /* B2 RING-FIX: byte-exact ring (build-deterministic;
+            * keeps S1's FP-reorder immunity on the SWA layers when the ring is armed). */
+            int bdb = hd > wl ? hd : wl; if (bdb > 1024) bdb = 1024;
+            k_attn_decode_ring_bx_T<KV><<<nh, bdb, (size_t)wl*sizeof(long long), st>>>(
+                s->dq, Kuse, Vuse, ctx, kvd, hd, grp, 1.0f, win, s->ring_W, s->dao);
+        } else {
+            k_attn_decode_ring_T<KV><<<nh, bd, (size_t)wl*sizeof(float), st>>>(
+                s->dq, Kuse, Vuse, ctx, kvd, hd, grp, 1.0f, win, s->ring_W, s->dao);
+        }
+    } else if (s->bx_on) {                     /* B1: byte-exact (auditable) decode attention. */
+        const int ctx = s->dpos_host + 1;
+        int bdb = hd > ctx ? hd : ctx; if (bdb > 1024) bdb = 1024;
+        size_t bx_shm = (size_t)ctx * sizeof(long long);
+        { static int pshm = -1;
+          if (pshm < 0) { const char *pe = getenv("SP_BX_PROBE"); pshm = pe ? atoi(pe) : 0; }
+          if ((pshm & 16) && bx_shm < 48u*1024u) bx_shm = 48u*1024u;
+          if (pshm & 32) bx_shm = ((bx_shm + 16383u) / 16384u) * 16384u; }
+        k_attn_decode_win_bx_T<KV><<<nh, bdb, bx_shm, st>>>(
+            s->dq, Kuse, Vuse, ctx, kvd, hd, grp, 1.0f, win, s->dao);
+        { static int warned = 0;
+          if (!warned) { cudaError_t le = cudaGetLastError();
+            if (le != cudaSuccess) { fprintf(stderr, "[g4-kv] BX ATTN LAUNCH FAILED: %s (nh=%d bd=%d shm=%zu ctx=%d)\n",
+                cudaGetErrorName(le), nh, bdb, bx_shm, ctx); warned = 1; } } }
+    } else {
+        k_attn_decode_win_dyn_T<KV><<<nh, bd, attn_shm, st>>>(
+            s->dq, Kuse, Vuse, dpos, kvd, hd, grp, 1.0f, win, s->dao);
+        /* G-12B-SERVE: at PMAX=20000 attn_shm > Turing's 64KB max and the launch fails
+         * cudaErrorInvalidConfiguration SILENTLY — ao keeps stale data and the "float path
+         * garbage" is born. Print ONCE so the failure is never silent again. */
+        { static int warned = 0;
+          if (!warned) { cudaError_t le = cudaGetLastError();
+            if (le != cudaSuccess) { fprintf(stderr, "[g4-kv] FLOAT ATTN LAUNCH FAILED: %s (nh=%d bd=%d attn_shm=%zu) — output is INVALID from here\n",
+                cudaGetErrorName(le), nh, bd, attn_shm); warned = 1; } } }
+    }
+}
+
 static int g4_kv_launch_full(sp_g4_kv *s, int do_head) {
     const qwen3_model *m = s->m;
     cublasHandle_t cb = g_w.cublas; cudaStream_t st = g_w.stream;
@@ -4513,6 +4580,7 @@ static int g4_kv_step(sp_g4_kv *s, int do_head) {
         const float *ffac = global ? g_w.rope_freqs : NULL;
         const int win = global ? -1 : SW;
         const int ffL = g_w.Wgate[L].out;
+        int kl = L;   /* ADR-012: the layer that OWNS the cache we read (L, or `src` for a sharer) */
         k_rmsnorm<<<1, 256, 0, st>>>(s->dx, g_w.attn_norm[L], E, eps, s->dnx);
         KMMD(&g_w.Wq[L], s->dnx, s->dq);
         k_rmsnorm_head<<<nh, 256, 0, st>>>(s->dq, g_w.q_norm[L], nh, hd, nh*hd, eps);
@@ -4539,19 +4607,39 @@ static int g4_kv_step(sp_g4_kv *s, int do_head) {
                 const size_t ws = (size_t)(s->dpos_host % s->ring_W);
                 const size_t j  = (size_t)(s->dpos_host - s->commit_pos);   /* journal index for this step */
                 if (j >= (size_t)s->Jmax) { sp_set_error("g4_kv ring: uncommitted tick span exceeds Jmax"); return -1; }
-                /* save the slot's pre-write K/V (the clobbered live-window position) BEFORE overwrite */
-                cudaMemcpyAsync(s->jK[L] + j*kvd, dKc[L] + ws*kvd, (size_t)kvd*sizeof(float), cudaMemcpyDeviceToDevice, st);
-                cudaMemcpyAsync(s->jV[L] + j*kvd, dVc[L] + ws*kvd, (size_t)kvd*sizeof(float), cudaMemcpyDeviceToDevice, st);
-                cudaMemcpyAsync(dKc[L] + ws*kvd, s->dk, (size_t)kvd*sizeof(float), cudaMemcpyDeviceToDevice, st);
-                cudaMemcpyAsync(dVc[L] + ws*kvd, s->dv, (size_t)kvd*sizeof(float), cudaMemcpyDeviceToDevice, st);
+                if (G4_KV_FP16_LAYER(s, L)) {
+                    /* ADR-012: the journal copy stays a raw D2D memcpy — it moves ring rows to
+                     * journal rows and BOTH are __half, so it is the same bytes. Only the WRITE
+                     * of the freshly-minted K/V narrows, and it needs a converting kernel, not a
+                     * memcpy: s->dk / s->dv are float. THIS IS THE ONE PLACE A VALUE IS NARROWED. */
+                    cudaMemcpyAsync(s->jKh[L] + j*kvd, s->dKh[L] + ws*kvd, (size_t)kvd*sizeof(__half), cudaMemcpyDeviceToDevice, st);
+                    cudaMemcpyAsync(s->jVh[L] + j*kvd, s->dVh[L] + ws*kvd, (size_t)kvd*sizeof(__half), cudaMemcpyDeviceToDevice, st);
+                    k_kv_rowwrite_T<__half><<<(unsigned)((kvd+255)/256), 256, 0, st>>>(
+                        s->dKh[L], s->dVh[L], s->dk, s->dv, ws*(size_t)kvd, kvd);
+                } else {
+                    /* save the slot's pre-write K/V (the clobbered live-window position) BEFORE overwrite */
+                    cudaMemcpyAsync(s->jK[L] + j*kvd, dKc[L] + ws*kvd, (size_t)kvd*sizeof(float), cudaMemcpyDeviceToDevice, st);
+                    cudaMemcpyAsync(s->jV[L] + j*kvd, dVc[L] + ws*kvd, (size_t)kvd*sizeof(float), cudaMemcpyDeviceToDevice, st);
+                    cudaMemcpyAsync(dKc[L] + ws*kvd, s->dk, (size_t)kvd*sizeof(float), cudaMemcpyDeviceToDevice, st);
+                    cudaMemcpyAsync(dVc[L] + ws*kvd, s->dv, (size_t)kvd*sizeof(float), cudaMemcpyDeviceToDevice, st);
+                }
+            } else if (G4_KV_FP16_LAYER(s, L)) {
+                /* ring OFF (a one-shot SCRATCH session) but still an fp16 SWA owner */
+                k_kv_store_T<__half><<<(unsigned)((kvd+255)/256), 256, 0, st>>>(s->dKh[L], s->dVh[L], s->dk, s->dv, dpos, 0, kvd);
             } else {
                 k_kv_store_T<float><<<(unsigned)((kvd+255)/256), 256, 0, st>>>(dKc[L], dVc[L], s->dk, s->dv, dpos, 0, kvd);
             }
-            Kuse = dKc[L]; Vuse = dVc[L];
+            Kuse = dKc[L]; Vuse = dVc[L];   /* NULL for fp16 SWA owners — the launch branches below */
+            kl = L;
         } else {
             const int src = kvfs - (global ? 1 : 2);
             Kuse = dKc[src]; Vuse = dVc[src];
-            if (!Kuse || !Vuse) { sp_set_error("g4_kv: sharer before owner"); return -1; }
+            kl = src;   /* ADR-012: a SHARER reads the OWNER's cache, so the dtype question is
+                         * about `src`, not about L. Getting this wrong would have a sharer of an
+                         * fp16 owner read a NULL float pointer — and the containment rule turns
+                         * that into a named error instead of a fault, but it would still be MY
+                         * bug. The owner decides the type. */
+            if (!G4_KV_FP16_LAYER(s, src) && (!Kuse || !Vuse)) { sp_set_error("g4_kv: sharer before owner"); return -1; }
         }
         /* G-BX-PROF SP_BX_KTIME=1 (diagnostic): CUDA-event-time the attention
          * launch per layer; accumulate + print every 1000. Forces a per-layer
@@ -4561,54 +4649,20 @@ static int g4_kv_step(sp_g4_kv *s, int do_head) {
         static double g4_kt_ms = 0.0; static long g4_kt_n = 0;
         cudaEvent_t g4_e0 = NULL, g4_e1 = NULL;
         if (g4_ktime) { cudaEventCreate(&g4_e0); cudaEventCreate(&g4_e1); cudaEventRecord(g4_e0, st); }
-        {   int bd = hd > 256 ? hd : 256; if (bd > 1024) bd = 1024;
-            if (s->ring_W > 0 && !global) {           /* KAI-1c: ring attention (slot=(s0+j)%Wring) */
-                const int ctx = s->dpos_host + 1;
-                const int s0 = (win >= 0 && ctx - win > 0) ? ctx - win : 0;
-                const int wl = ctx - s0;
-                if (s->bx_on) {                       /* B2 RING-FIX: byte-exact ring (build-deterministic;
-                    * keeps S1's FP-reorder immunity on the 40 SWA layers when the ring is armed). Shared
-                    * = wl*int64; widen the block to cover the window like the non-ring bx path. */
-                    int bdb = hd > wl ? hd : wl; if (bdb > 1024) bdb = 1024;
-                    k_attn_decode_ring_bx_T<float><<<nh, bdb, (size_t)wl*sizeof(long long), st>>>(
-                        s->dq, Kuse, Vuse, ctx, kvd, hd, grp, 1.0f, win, s->ring_W, s->dao);
-                } else {
-                    k_attn_decode_ring_T<float><<<nh, bd, (size_t)wl*sizeof(float), st>>>(
-                        s->dq, Kuse, Vuse, ctx, kvd, hd, grp, 1.0f, win, s->ring_W, s->dao);
-                }
-            } else if (s->bx_on) {                    /* B1: byte-exact (auditable) decode attention.
-                * The exact-integer kernel takes a HOST ctx (= dpos_host+1) — this is the
-                * per-step (non-graph) path, so dpos_host is the live position. Shared mem
-                * is ctx*int64 (the dual-prime score lane). Windowing handled inside via win. */
-                const int ctx = s->dpos_host + 1;
-                int bdb = hd > ctx ? hd : ctx; if (bdb > 1024) bdb = 1024;
-                /* G-BX-PROF probe bit4: fixed 48KB dynamic shared (carveout-transition test).
-                 * probe bit5: BUCKET the shm to 16KB steps (constant across ~2048-position
-                 * spans) — tests whether PER-LAUNCH-VARYING dynamic shared is the stall. */
-                size_t bx_shm = (size_t)ctx * sizeof(long long);
-                { static int pshm = -1;
-                  if (pshm < 0) { const char *pe = getenv("SP_BX_PROBE"); pshm = pe ? atoi(pe) : 0; }
-                  if ((pshm & 16) && bx_shm < 48u*1024u) bx_shm = 48u*1024u;
-                  if (pshm & 32) bx_shm = ((bx_shm + 16383u) / 16384u) * 16384u; }
-                k_attn_decode_win_bx_T<float><<<nh, bdb, bx_shm, st>>>(
-                    s->dq, Kuse, Vuse, ctx, kvd, hd, grp, 1.0f, win, s->dao);
-                { static int warned = 0;
-                  if (!warned) { cudaError_t le = cudaGetLastError();
-                    if (le != cudaSuccess) { fprintf(stderr, "[g4-kv] BX ATTN LAUNCH FAILED: %s (nh=%d bd=%d shm=%zu ctx=%d)\n",
-                        cudaGetErrorName(le), nh, bdb, bx_shm, ctx); warned = 1; } } }
-            } else {
-                k_attn_decode_win_dyn_T<float><<<nh, bd, attn_shm, st>>>(
-                    s->dq, Kuse, Vuse, dpos, kvd, hd, grp, 1.0f, win, s->dao);
-                /* G-12B-SERVE root-cause telemetry (2026-07-03): at PMAX=20000 attn_shm =
-                 * 78KB > Turing's 64KB max — the launch fails cudaErrorInvalidConfiguration
-                 * SILENTLY (launch-time errors don't surface at stream sync), ao keeps stale
-                 * data, and the "float path garbage" is born. Print ONCE so the failure is
-                 * never silent again. */
-                { static int warned = 0;
-                  if (!warned) { cudaError_t le = cudaGetLastError();
-                    if (le != cudaSuccess) { fprintf(stderr, "[g4-kv] FLOAT ATTN LAUNCH FAILED: %s (nh=%d bd=%d attn_shm=%zu) — output is INVALID from here\n",
-                        cudaGetErrorName(le), nh, bd, attn_shm); warned = 1; } } }
-            } }
+        /* ADR-012: ONE launch body, instantiated for the layer's actual cache type. The fp32 and
+         * fp16 paths cannot pick different kernels, different shared-memory sizes or different
+         * windows, because there is only one place that decides any of it. */
+        /* `kl` is the layer whose CACHE we read: L for an owner, `src` for a sharer. The dtype
+         * belongs to the owner of the bytes, not to the layer doing the reading. */
+        if (G4_KV_FP16_LAYER(s, kl)) {
+            if (!s->dKh[kl] || !s->dVh[kl]) { sp_set_error("g4_kv: fp16 SWA owner has no half cache"); return -1; }
+            g4_attn_launch<__half>(s, s->dKh[kl], s->dVh[kl], nh, hd, kvd, grp, win, global,
+                                   dpos, attn_shm, st);
+        } else {
+            if (!Kuse || !Vuse) { sp_set_error("g4_kv: fp32 layer has no float cache (fp16 containment: a consumer met a NULL and refused rather than guess)"); return -1; }
+            g4_attn_launch<float>(s, Kuse, Vuse, nh, hd, kvd, grp, win, global,
+                                  dpos, attn_shm, st);
+        }
         if (g4_ktime) {
             cudaEventRecord(g4_e1, st); cudaEventSynchronize(g4_e1);
             float kt_ms = 0.f; cudaEventElapsedTime(&kt_ms, g4_e0, g4_e1);
@@ -4897,16 +4951,49 @@ extern "C" sp_g4_kv *gemma4_kv_open(const qwen3_model *m, int Pmax) {
      * host CPU call, so CPU-tail (either mode) forces the per-step path (graph disabled). */
     s->graph_mode = (s->cpu_tail > 0 || s->cpu_tail_full > 0) ? 0 : -1; s->graph_ready = 0; s->gcap = NULL; s->gexec = NULL;
     /* the JAGGED cache — owners only, per-layer width. */
+    /* ADR-012: fp16 for the SWA owners. The ring is 46 layers x 2048 slots x 2048 kvd x 2 x 4 B
+     * = 1.54 GB, and it is what leaves this card with ~0.1 GB free — too little for the one-shot
+     * scratch session or the batched prefill's activation scratch, so both are starved and the
+     * daemon spills to host memory. Halving it frees 770 MB; we need ~535. Globals stay fp32. */
+    { const char *fe = getenv("SP_CUDA_KV_FP16");
+      s->kv_fp16 = (fe && fe[0]=='1') ? 1 : 0; }
     s->dKc=(float**)calloc((size_t)s->NL,sizeof(float*));
     s->dVc=(float**)calloc((size_t)s->NL,sizeof(float*));
     if (!s->dKc||!s->dVc) ok=0;
-    if (s->ring_W>0){ s->jK=(float**)calloc((size_t)s->NL,sizeof(float*)); s->jV=(float**)calloc((size_t)s->NL,sizeof(float*)); if(!s->jK||!s->jV) ok=0; }
-    for (int L=0; ok && L<s->kvfs && L<s->NL; L++){
+    if (s->kv_fp16){
+        s->dKh=(__half**)calloc((size_t)s->NL,sizeof(__half*));
+        s->dVh=(__half**)calloc((size_t)s->NL,sizeof(__half*));
+        if(!s->dKh||!s->dVh) ok=0;
+    }
+    if (s->ring_W>0){ s->jK=(float**)calloc((size_t)s->NL,sizeof(float*)); s->jV=(float**)calloc((size_t)s->NL,sizeof(float*)); if(!s->jK||!s->jV) ok=0;
+        if (s->kv_fp16){ s->jKh=(__half**)calloc((size_t)s->NL,sizeof(__half*)); s->jVh=(__half**)calloc((size_t)s->NL,sizeof(__half*)); if(!s->jKh||!s->jVh) ok=0; } }
+    { size_t saved = 0;
+      for (int L=0; ok && L<s->kvfs && L<s->NL; L++){
         const int global=((L%s->period)==s->period-1);
         const int kvd=(global?s->g_nkv:s->s_nkv)*(global?s->g_hd:s->s_hd);
         const size_t slots=(s->ring_W>0 && !global)?(size_t)s->ring_W:(size_t)Pmax;
-        KA(s->dKc[L],slots*kvd); KA(s->dVc[L],slots*kvd);
-        if (s->ring_W>0 && !global){ KA(s->jK[L],(size_t)s->Jmax*kvd); KA(s->jV[L],(size_t)s->Jmax*kvd); }
+        if (G4_KV_FP16_LAYER(s,L)) {
+            /* fp16 SWA owner: dKc[L]/dVc[L] stay NULL ON PURPOSE. Any consumer that has not
+             * been taught fp16 will meet a NULL and must refuse by name — see the containment
+             * rule on s->kv_fp16. A silent fallback to a stale float buffer is the one outcome
+             * worse than a crash. */
+            size_t nb = slots*(size_t)kvd*sizeof(__half);
+            if (cudaMalloc(&s->dKh[L], nb)!=cudaSuccess || cudaMalloc(&s->dVh[L], nb)!=cudaSuccess){ ok=0; break; }
+            cudaMemset(s->dKh[L], 0, nb); cudaMemset(s->dVh[L], 0, nb);
+            saved += 2*slots*(size_t)kvd*(sizeof(float)-sizeof(__half));
+            if (s->ring_W>0){
+                size_t jb = (size_t)s->Jmax*(size_t)kvd*sizeof(__half);
+                if (cudaMalloc(&s->jKh[L], jb)!=cudaSuccess || cudaMalloc(&s->jVh[L], jb)!=cudaSuccess){ ok=0; break; }
+                cudaMemset(s->jKh[L], 0, jb); cudaMemset(s->jVh[L], 0, jb);
+            }
+        } else {
+            KA(s->dKc[L],slots*kvd); KA(s->dVc[L],slots*kvd);
+            if (s->ring_W>0 && !global){ KA(s->jK[L],(size_t)s->Jmax*kvd); KA(s->jV[L],(size_t)s->Jmax*kvd); }
+        }
+      }
+      if (ok && s->kv_fp16)
+        fprintf(stderr,"    [g4-kv] KV-FP16: SWA owners in __half (globals stay fp32); freed %.2f GB\n",
+                (double)saved/1073741824.0);
     }
     if (s->ring_W>0) fprintf(stderr,"    [g4-kv] RING mode: Wring=%d Jmax=%d (SWA owners ring+journal; globals full-cache)\n",s->ring_W,s->Jmax);
     #undef KA
@@ -4932,13 +5019,23 @@ extern "C" sp_g4_kv *gemma4_kv_open(const qwen3_model *m, int Pmax) {
  * p % Wring — the exact per-token mapping, ws = dpos % ring_W). Cold prefill only:
  * positions older than n-Wring have fallen out of the ring by definition. One block per
  * kept position; threads stride the kvd row. */
-__global__ void k_ring_sink(const float *src, float *dst, int n, int Wring, int kvd) {
+/* ADR-012: templated. <float> is the kernel this replaces; <__half> narrows on the way in. */
+template <typename KV>
+__global__ void k_ring_sink_T(const float *src, KV *dst, int n, int Wring, int kvd) {
     const int start = (n > Wring) ? (n - Wring) : 0;
     const int p = start + blockIdx.x;
     if (p >= n) return;
-    float *drow = dst + (size_t)(p % Wring) * kvd;
+    KV *drow = dst + (size_t)(p % Wring) * kvd;
     const float *srow = src + (size_t)p * kvd;
-    for (int i = threadIdx.x; i < kvd; i += blockDim.x) drow[i] = srow[i];
+    for (int i = threadIdx.x; i < kvd; i += blockDim.x) kv_st(drow, (size_t)i, srow[i]);
+}
+
+/* ADR-012: bulk float -> cache-dtype convert (the ring-OFF batched store: slot == pos, so the
+ * contiguous n-token scratch IS the cache layout). */
+template <typename KV>
+__global__ void k_kv_bulk_T(KV *dst, const float *src, size_t n) {
+    size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) kv_st(dst, i, src[i]);
 }
 
 extern "C" int gemma4_kv_prefill_batched(sp_g4_kv *s, const int32_t *toks, int n) {
@@ -5035,7 +5132,11 @@ extern "C" int gemma4_kv_prefill_batched(sp_g4_kv *s, const int32_t *toks, int n
     BA(dg,(size_t)n*FFmax); BA(dup,(size_t)n*FFmax); BA(ddn,(size_t)n*E);
     if (g_w.scratch_n) BA(dscr, g_w.scratch_n);
     if (PL) { BA(dipl,(size_t)n*NL*PL); BA(dple,(size_t)n*NL*PL); BA(dpg,(size_t)n*PL); BA(dpp,(size_t)n*E); }
-    if (ring_on) {                       /* retained shared-owner K/V (contiguous, n positions) */
+    /* ADR-012: fp16 needs these too, ring or no ring. A one-shot SCRATCH session runs ring-OFF
+     * (open_scratch forces ring_W=0) AND fp16 — and that is precisely the configuration the judge
+     * call uses, so it is the one that must not be missed. Without this the sharer layers would
+     * read a NULL and the whole point of the exercise would fail on its most important caller. */
+    if (ring_on || s->kv_fp16) {         /* retained shared-owner K/V (contiguous, n positions) */
         BA(dKg,(size_t)n*KVDmax); BA(dVg,(size_t)n*KVDmax);
         BA(dKs,(size_t)n*KVDmax); BA(dVs,(size_t)n*KVDmax);
     }
@@ -5095,33 +5196,51 @@ extern "C" int gemma4_kv_prefill_batched(sp_g4_kv *s, const int32_t *toks, int n
             if (ffac) k_rope_freqs<<<n*nkv,hd/2,0,st>>>(dk,nkv,hd,kvd,rbase,ffac);
             else      k_rope<<<n*nkv,hd/2,0,st>>>(dk,nkv,hd,kvd,rbase);
             k_rmsnorm_head_noweight<<<n*nkv,256,0,st>>>(dv,nkv,hd,kvd,eps);
+            const int h16 = G4_KV_FP16_LAYER(s, L);
             if (!ring_on || global) {
-                /* SINK full-cache: slot==pos ⇒ dKc[L][0..n*kvd) IS the per-token layout.
+                /* SINK full-cache: slot==pos ⇒ the cache[0..n*kvd) IS the per-token layout.
                  * (Globals stay full-cache under the ring too, same as the per-token path.) */
-                cudaMemcpyAsync(s->dKc[L], dk,(size_t)n*kvd*sizeof(float),cudaMemcpyDeviceToDevice,st);
-                cudaMemcpyAsync(s->dVc[L], dv,(size_t)n*kvd*sizeof(float),cudaMemcpyDeviceToDevice,st);
+                if (h16) {
+                    const unsigned nb = (unsigned)(((size_t)n*kvd + 255) / 256);
+                    k_kv_bulk_T<__half><<<nb, 256, 0, st>>>(s->dKh[L], dk, (size_t)n*kvd);
+                    k_kv_bulk_T<__half><<<nb, 256, 0, st>>>(s->dVh[L], dv, (size_t)n*kvd);
+                } else {
+                    cudaMemcpyAsync(s->dKc[L], dk,(size_t)n*kvd*sizeof(float),cudaMemcpyDeviceToDevice,st);
+                    cudaMemcpyAsync(s->dVc[L], dv,(size_t)n*kvd*sizeof(float),cudaMemcpyDeviceToDevice,st);
+                }
             } else {
                 /* wave-6 SWA owner under the RING: sink the last min(n,W) positions into the
                  * ring layout (p → p%W); older positions have fallen out of the window. */
                 const int keep = n < s->ring_W ? n : s->ring_W;
-                k_ring_sink<<<(unsigned)keep, 256, 0, st>>>(dk, s->dKc[L], n, s->ring_W, kvd);
-                k_ring_sink<<<(unsigned)keep, 256, 0, st>>>(dv, s->dVc[L], n, s->ring_W, kvd);
+                if (h16) {
+                    k_ring_sink_T<__half><<<(unsigned)keep, 256, 0, st>>>(dk, s->dKh[L], n, s->ring_W, kvd);
+                    k_ring_sink_T<__half><<<(unsigned)keep, 256, 0, st>>>(dv, s->dVh[L], n, s->ring_W, kvd);
+                } else {
+                    k_ring_sink_T<float><<<(unsigned)keep, 256, 0, st>>>(dk, s->dKc[L], n, s->ring_W, kvd);
+                    k_ring_sink_T<float><<<(unsigned)keep, 256, 0, st>>>(dv, s->dVc[L], n, s->ring_W, kvd);
+                }
             }
-            if (ring_on) {                   /* retain the two SHARED owners contiguously */
+            /* ADR-012: under fp16, take the SAME retained-contiguous-copy route the ring already
+             * takes. THIS layer's batched attention then reads the float scratch it just built
+             * (dk/dv) instead of the cache — so the batched prefill's attention never has to know
+             * the cache dtype at all, and the ring-off SCRATCH session (which is where fp16 has
+             * to work hardest, because the one-shot judge depends on it) needs no new kernel.
+             * The retained copies cost n*kvd floats for exactly two layers; the alternative was a
+             * second batched-attention kernel, i.e. a second implementation that could drift. */
+            if (ring_on || s->kv_fp16) {     /* retain the two SHARED owners contiguously */
                 if (L == kvfs-1) { cudaMemcpyAsync(dKg,dk,(size_t)n*kvd*sizeof(float),cudaMemcpyDeviceToDevice,st);
                                    cudaMemcpyAsync(dVg,dv,(size_t)n*kvd*sizeof(float),cudaMemcpyDeviceToDevice,st); }
                 if (L == kvfs-2) { cudaMemcpyAsync(dKs,dk,(size_t)n*kvd*sizeof(float),cudaMemcpyDeviceToDevice,st);
                                    cudaMemcpyAsync(dVs,dv,(size_t)n*kvd*sizeof(float),cudaMemcpyDeviceToDevice,st); }
-                /* THIS layer's attention reads the contiguous scratch (ring layout is only
-                 * for the resident cache the DECODE reads later). Safe: dk/dv are not
-                 * overwritten until the next owner layer, stream-ordered after k_attn. */
+                /* Safe: dk/dv are not overwritten until the next owner layer, stream-ordered
+                 * after k_attn. */
                 Kuse=dk; Vuse=dv;
             } else {
                 Kuse=s->dKc[L]; Vuse=s->dVc[L];
             }
         } else {                                         /* SHARER: reuse owner's K/V */
             const int src=kvfs-(global?1:2);
-            if (ring_on) {                   /* contiguous retained copies (ring can't serve n) */
+            if (ring_on || s->kv_fp16) {     /* contiguous retained copies (the cache can't serve n) */
                 Kuse = global ? dKg : dKs; Vuse = global ? dVg : dVs;
             } else {
                 Kuse=s->dKc[src]; Vuse=s->dVc[src];
@@ -5442,8 +5561,15 @@ extern "C" int gemma4_kv_rewind(sp_g4_kv *s, int delta) {
             for (int L = 0; L < s->kvfs && L < s->NL; L++) {
                 if (((L % s->period) == s->period - 1)) continue;   /* globals: full-cache, no journal */
                 const int kvd = s->s_nkv * s->s_hd;
-                cudaMemcpyAsync(s->dKc[L] + ws*kvd, s->jK[L] + j*kvd, (size_t)kvd*sizeof(float), cudaMemcpyDeviceToDevice, st);
-                cudaMemcpyAsync(s->dVc[L] + ws*kvd, s->jV[L] + j*kvd, (size_t)kvd*sizeof(float), cudaMemcpyDeviceToDevice, st);
+                /* ADR-012: the journal holds the SAME dtype as the cache it rewinds, so this stays
+                 * a raw D2D copy — only the byte count and the pointers change. */
+                if (G4_KV_FP16_LAYER(s, L)) {
+                    cudaMemcpyAsync(s->dKh[L] + ws*kvd, s->jKh[L] + j*kvd, (size_t)kvd*sizeof(__half), cudaMemcpyDeviceToDevice, st);
+                    cudaMemcpyAsync(s->dVh[L] + ws*kvd, s->jVh[L] + j*kvd, (size_t)kvd*sizeof(__half), cudaMemcpyDeviceToDevice, st);
+                } else {
+                    cudaMemcpyAsync(s->dKc[L] + ws*kvd, s->jK[L] + j*kvd, (size_t)kvd*sizeof(float), cudaMemcpyDeviceToDevice, st);
+                    cudaMemcpyAsync(s->dVc[L] + ws*kvd, s->jV[L] + j*kvd, (size_t)kvd*sizeof(float), cudaMemcpyDeviceToDevice, st);
+                }
             }
         }
         cudaStreamSynchronize(st);
@@ -5502,11 +5628,27 @@ extern "C" int gemma4_kv_reset_cold(sp_g4_kv *s) {
         const int global = ((L % s->period) == s->period - 1);
         const int kvd = (global ? s->g_nkv : s->s_nkv) * (global ? s->g_hd : s->s_hd);
         const size_t slots = (s->ring_W > 0 && !global) ? (size_t)s->ring_W : (size_t)s->Pmax;
-        if (s->dKc && s->dKc[L]) cudaMemsetAsync(s->dKc[L], 0, slots * (size_t)kvd * sizeof(float), st);
-        if (s->dVc && s->dVc[L]) cudaMemsetAsync(s->dVc[L], 0, slots * (size_t)kvd * sizeof(float), st);
-        if (s->ring_W > 0 && !global) {
-            if (s->jK && s->jK[L]) cudaMemsetAsync(s->jK[L], 0, (size_t)s->Jmax * (size_t)kvd * sizeof(float), st);
-            if (s->jV && s->jV[L]) cudaMemsetAsync(s->jV[L], 0, (size_t)s->Jmax * (size_t)kvd * sizeof(float), st);
+        /* ADR-012: THE MOST DANGEROUS SITE IN THE WHOLE CHANGE. These memsets are guarded by
+         * `if (s->dKc[L])` — and for an fp16 SWA owner that pointer is deliberately NULL. So the
+         * ORIGINAL CODE WOULD HAVE SILENTLY SKIPPED THE RESET on 46 of 48 layers, leaving the
+         * previous conversation's K/V sitting in the cache while dpos said 0. She would have
+         * answered the next turn fluently, out of somebody else's memory, and NOTHING would have
+         * errored. A guard that means "does this exist?" and a guard that means "is this the
+         * float one?" are not the same guard, and they looked identical. */
+        if (G4_KV_FP16_LAYER(s, L)) {
+            if (s->dKh && s->dKh[L]) cudaMemsetAsync(s->dKh[L], 0, slots * (size_t)kvd * sizeof(__half), st);
+            if (s->dVh && s->dVh[L]) cudaMemsetAsync(s->dVh[L], 0, slots * (size_t)kvd * sizeof(__half), st);
+            if (s->ring_W > 0) {
+                if (s->jKh && s->jKh[L]) cudaMemsetAsync(s->jKh[L], 0, (size_t)s->Jmax * (size_t)kvd * sizeof(__half), st);
+                if (s->jVh && s->jVh[L]) cudaMemsetAsync(s->jVh[L], 0, (size_t)s->Jmax * (size_t)kvd * sizeof(__half), st);
+            }
+        } else {
+            if (s->dKc && s->dKc[L]) cudaMemsetAsync(s->dKc[L], 0, slots * (size_t)kvd * sizeof(float), st);
+            if (s->dVc && s->dVc[L]) cudaMemsetAsync(s->dVc[L], 0, slots * (size_t)kvd * sizeof(float), st);
+            if (s->ring_W > 0 && !global) {
+                if (s->jK && s->jK[L]) cudaMemsetAsync(s->jK[L], 0, (size_t)s->Jmax * (size_t)kvd * sizeof(float), st);
+                if (s->jV && s->jV[L]) cudaMemsetAsync(s->jV[L], 0, (size_t)s->Jmax * (size_t)kvd * sizeof(float), st);
+            }
         }
     }
     cudaError_t e = cudaStreamSynchronize(st);
@@ -5814,6 +5956,10 @@ extern "C" int gemma4_draft_body(sp_g4_kv *s, const float *feat_host, int token,
 extern "C" int gemma4_kv_ctx_dump(sp_g4_kv *s, float *kg, float *vg, float *ks, float *vs,
                                   int *kvd_g, int *kvd_s, int *npos) {
     if (!s) { sp_set_error("gemma4_kv_ctx_dump: null s"); return -1; }
+    /* ADR-012 CONTAINMENT: this dump was never taught fp16. It REFUSES BY NAME rather than read a
+     * NULL SWA pointer or quietly hand back a stale float buffer. A diagnostic that lies is worse
+     * than one that is switched off — it is the thing you reach for when you are already confused. */
+    if (s->kv_fp16) { sp_set_error("gemma4_kv_ctx_dump: not supported with SP_CUDA_KV_FP16 (SWA cache is __half)"); return -1; }
     const int gl = s->kvfs - 1, sl = s->kvfs - 2;
     if (gl < 0 || sl < 0) { sp_set_error("gemma4_kv_ctx_dump: kvfs<2"); return -1; }
     const int kg_d = s->g_nkv * s->g_hd, ks_d = s->s_nkv * s->s_hd, P = s->dpos_host;
@@ -5925,6 +6071,9 @@ extern "C" int gemma4_kv_inject_seq(sp_g4_kv *s, const float *embs, int n_frames
  * HIJACK). The thin gemma4_kv_inject_tokens / _atten wrappers below pin the flag. */
 static int gemma4_kv_inject_tokens_impl(sp_g4_kv *s, const int32_t *toks, int n, int atten) {
     if (!s || !toks || n <= 0) { sp_set_error("gemma4_kv_inject_tokens: bad args"); return -1; }
+    /* ADR-012 CONTAINMENT: the residual-seam inject scales rows in s->dKc[L] directly and was
+     * never taught fp16. REFUSE BY NAME. (Default-off: SP_SINGLE_ENTRY / the audio+memory seam.) */
+    if (s->kv_fp16) { sp_set_error("gemma4_kv_inject_tokens: not supported with SP_CUDA_KV_FP16 (SWA cache is __half)"); return -1; }
     if (s->dpos_host + n > s->Pmax) { sp_set_error("gemma4_kv_inject_tokens: exceeds Pmax"); return -1; }
     if (!s->dinj) { if (cudaMalloc(&s->dinj, (size_t)s->E*sizeof(float)) != cudaSuccess) {
         sp_set_error("gemma4_kv_inject_tokens: dinj OOM"); return -1; } }
@@ -6024,6 +6173,9 @@ extern "C" long gemma4_kv_devfree_mib(void) {
  * in SWA-ring mode each clobbered ring slot is journaled before overwrite so rewind reconstructs the
  * window; globals stay full-cache (slot==pos, no journal). Returns 0 on success. */
 extern "C" int gemma4_kv_replay(sp_g4_kv *s, const char *epdir, int npos, int zero) {
+    /* ADR-012 CONTAINMENT: this path was never taught fp16. It must REFUSE BY NAME, not read a
+     * NULL and not quietly use a stale float buffer. Nothing here guesses. */
+    if (s->kv_fp16) { sp_set_error("gemma4_kv_replay: not supported with SP_CUDA_KV_FP16 (fp32 SWA cache required)"); return -1; }
     if (!s || !epdir || npos <= 0) { sp_set_error("gemma4_kv_replay: bad args"); return -1; }
     if (s->dpos_host + npos > s->Pmax) { sp_set_error("gemma4_kv_replay: exceeds Pmax"); return -1; }
     /* WEIGHTED REFERENCE INJECTION (B3-v9): SP_REPLAY_ALPHA in [0,1] attenuates the injected
@@ -6264,7 +6416,13 @@ extern "C" long gemma4_kv_prefix_bytes(const sp_g4_kv *s, int P) {
         const int global = ((L % s->period) == s->period - 1);
         const int kvd = (global ? s->g_nkv : s->s_nkv) * (global ? s->g_hd : s->s_hd);
         const size_t slots = (s->ring_W > 0 && !global) ? (size_t)s->ring_W : (size_t)P;
-        bytes += 2L * (long)(slots * (size_t)kvd * sizeof(float));
+        /* ADR-012: DTYPE-AWARE, and this is not optional. The prefix snapshot copies RAW BYTES;
+         * if this returns the fp32 size for an fp16 layer, the restore writes 2x the bytes the
+         * buffer holds — a heap smash on the device — or, worse, the sizes happen to line up and
+         * it silently restores garbage into a live conversation. THE FIRST THING fp16 BREAKS IS
+         * MY OWN CODE FROM THIS MORNING, and it breaks it quietly. */
+        const size_t esz = G4_KV_FP16_LAYER(s, L) ? sizeof(__half) : sizeof(float);
+        bytes += 2L * (long)(slots * (size_t)kvd * esz);
     }
     return bytes;
 }
@@ -6283,11 +6441,17 @@ extern "C" long gemma4_kv_snapshot_prefix(const sp_g4_kv *s, void *host, long ca
         const int global = ((L % s->period) == s->period - 1);
         const int kvd = (global ? s->g_nkv : s->s_nkv) * (global ? s->g_hd : s->s_hd);
         const size_t slots = (s->ring_W > 0 && !global) ? (size_t)s->ring_W : (size_t)P;
-        const size_t nb = slots * (size_t)kvd * sizeof(float);
-        if (cudaMemcpy(p, s->dKc[L], nb, cudaMemcpyDeviceToHost) != cudaSuccess) {
+        /* ADR-012: copy the layer's ACTUAL bytes — half for fp16 SWA owners, float otherwise.
+         * The blob is opaque to the caller and only ever restored into the same session shape. */
+        const int h16 = G4_KV_FP16_LAYER(s, L);
+        const size_t nb = slots * (size_t)kvd * (h16 ? sizeof(__half) : sizeof(float));
+        const void *srcK = h16 ? (const void *)s->dKh[L] : (const void *)s->dKc[L];
+        const void *srcV = h16 ? (const void *)s->dVh[L] : (const void *)s->dVc[L];
+        if (!srcK || !srcV) { sp_set_error("kv_snapshot_prefix: layer has no cache (fp16 containment)"); return -1; }
+        if (cudaMemcpy(p, srcK, nb, cudaMemcpyDeviceToHost) != cudaSuccess) {
             sp_set_error("kv_snapshot_prefix: K D2H"); return -1; }
         p += nb;
-        if (cudaMemcpy(p, s->dVc[L], nb, cudaMemcpyDeviceToHost) != cudaSuccess) {
+        if (cudaMemcpy(p, srcV, nb, cudaMemcpyDeviceToHost) != cudaSuccess) {
             sp_set_error("kv_snapshot_prefix: V D2H"); return -1; }
         p += nb;
     }
@@ -6307,11 +6471,15 @@ extern "C" int gemma4_kv_restore_prefix(sp_g4_kv *s, const void *host, long cap,
         const int global = ((L % s->period) == s->period - 1);
         const int kvd = (global ? s->g_nkv : s->s_nkv) * (global ? s->g_hd : s->s_hd);
         const size_t slots = (s->ring_W > 0 && !global) ? (size_t)s->ring_W : (size_t)P;
-        const size_t nb = slots * (size_t)kvd * sizeof(float);
-        if (cudaMemcpy(s->dKc[L], p, nb, cudaMemcpyHostToDevice) != cudaSuccess) {
+        const int h16 = G4_KV_FP16_LAYER(s, L);
+        const size_t nb = slots * (size_t)kvd * (h16 ? sizeof(__half) : sizeof(float));
+        void *dstK = h16 ? (void *)s->dKh[L] : (void *)s->dKc[L];
+        void *dstV = h16 ? (void *)s->dVh[L] : (void *)s->dVc[L];
+        if (!dstK || !dstV) { sp_set_error("kv_restore_prefix: layer has no cache (fp16 containment)"); return -1; }
+        if (cudaMemcpy(dstK, p, nb, cudaMemcpyHostToDevice) != cudaSuccess) {
             sp_set_error("kv_restore_prefix: K H2D"); return -1; }
         p += nb;
-        if (cudaMemcpy(s->dVc[L], p, nb, cudaMemcpyHostToDevice) != cudaSuccess) {
+        if (cudaMemcpy(dstV, p, nb, cudaMemcpyHostToDevice) != cudaSuccess) {
             sp_set_error("kv_restore_prefix: V H2D"); return -1; }
         p += nb;
     }
@@ -6450,6 +6618,14 @@ extern "C" void gemma4_kv_close(sp_g4_kv *s) {
     if (s->dVc) { for (int L=0;L<s->NL;L++) if (s->dVc[L]) cudaFree(s->dVc[L]); free(s->dVc); }
     if (s->jK) { for (int L=0;L<s->NL;L++) if (s->jK[L]) cudaFree(s->jK[L]); free(s->jK); }   /* KAI-1c undo-journal */
     if (s->jV) { for (int L=0;L<s->NL;L++) if (s->jV[L]) cudaFree(s->jV[L]); free(s->jV); }
+    /* ADR-012: the fp16 buffers. A one-shot SCRATCH session is opened and CLOSED on every judge
+     * call, so leaking these would not be a slow drip — it would be hundreds of MB every time she
+     * looks at the world, and it would present as "the daemon got slow", which is precisely the
+     * bug class this entire day has been about. */
+    if (s->dKh) { for (int L=0;L<s->NL;L++) if (s->dKh[L]) cudaFree(s->dKh[L]); free(s->dKh); }
+    if (s->dVh) { for (int L=0;L<s->NL;L++) if (s->dVh[L]) cudaFree(s->dVh[L]); free(s->dVh); }
+    if (s->jKh) { for (int L=0;L<s->NL;L++) if (s->jKh[L]) cudaFree(s->jKh[L]); free(s->jKh); }
+    if (s->jVh) { for (int L=0;L<s->NL;L++) if (s->jVh[L]) cudaFree(s->jVh[L]); free(s->jVh); }
     if (s->dinj) cudaFree(s->dinj);   /* KAI-2 inject staging */
     if (s->cpu_x) free(s->cpu_x);   /* ADR-011 CPU-tail host staging buffer */
     /* ADR-012 full-layer CPU-tail: residual staging + per-layer host KV caches */
@@ -8778,6 +8954,18 @@ __global__ void k_kv_store_T(KV *Kc, KV *Vc, const float *dk, const float *dv,
         size_t off = layer_off + (size_t)(*dpos) * KVD + i;
         kv_st(Kc, off, dk[i]); kv_st(Vc, off, dv[i]);
     }
+}
+
+/* ADR-012: write a freshly-minted K/V row into the cache at a HOST-computed offset (the ring
+ * slot). The fp32 path does this with a raw cudaMemcpyAsync because the types already match;
+ * fp16 cannot, because s->dk / s->dv are float. THIS KERNEL IS THE ONE PLACE IN THE SYSTEM WHERE
+ * A CACHED VALUE IS NARROWED. Reads are pure widening (__half2float is exact), so every loss of
+ * precision this feature can possibly cause happens on this line, once per token per layer. */
+template <typename KV>
+__global__ void k_kv_rowwrite_T(KV *Kc, KV *Vc, const float *dk, const float *dv,
+                                size_t off, int KVD) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < KVD) { kv_st(Kc, off + i, dk[i]); kv_st(Vc, off + i, dv[i]); }
 }
 
 /* Single-query GQA over [0..*dpos+1). Identical math to k_attn_decode; ctx comes

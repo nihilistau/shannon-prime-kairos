@@ -115,6 +115,20 @@ def build_env(c: dict) -> dict:
         # launcher could not ask it to.
         #
         # It only ever clamps DOWN, never up. Gate: harness_tests/g_vram.py.
+        # ── ADR-012: fp16 SWA K/V cache. DEFAULT OFF — fp32 is the null floor. ──────────
+        # The SWA ring is 46 layers x 2048 slots x 2048 kvd x 2 x 4 B = 1.54 GB, and it is what
+        # leaves this 12 GB card with ~0.1 GB free: too little for the one-shot scratch session or
+        # the batched prefill's activation scratch, so BOTH ARE STARVED and the daemon spills into
+        # host memory. PROVEN by his own idea — swap to q4b (2.14 GB lighter), change NOT ONE LINE
+        # of code, and the spill goes to zero while the judge drops from 113,475 ms to 6,422 ms.
+        # The design was never broken. It was starved. fp16 halves the ring (frees ~770 MB; we
+        # need ~535) and gives the b1-reason weights the same room q4b proved is enough.
+        #
+        # fp16 and NOT int8: int8 frees 4x more than we need and buys it with per-head scale
+        # arrays on an 8-bit INTEGER grid — the regime where confusable digit embeddings collapse.
+        # That is the G-VERBATIM failure mode. fp16 has a 10-bit mantissa and no scales.
+        # Gate: harness_tests/g_kvfp16.py. THE ONE THAT MATTERS IS "4471" -> "4471".
+        "SP_CUDA_KV_FP16": b(kv.get("fp16", False)),
         "SP_G4_KV_AUTOFIT": b(kv.get("autofit", True)),
         "SP_G4_KV_AUTOFIT_MARGIN_MB": str(kv.get("autofit_margin_mb", 512)),
         "SP_PERSIST_KV": b(kv["persist"]),
