@@ -4082,6 +4082,13 @@ struct sp_g4_kv {
    * by a rewind. The shear used to infer this from the current dpos and was wrong in exactly
    * the case that corrupted the KV (P1c-2). Set once, cleared only by a true reset to 0. */
   int   ring_wrapped;
+  /* ONE-SHOT (2026-07-13). This session will be decoded once and thrown away: nothing will
+   * ever try to CONTINUE it. That is the precondition gemma4_kv_prefill_batched actually
+   * needs — and it was testing getenv("SP_PERSIST_KV") instead, A PROCESS-WIDE FLAG, so the
+   * chat path's need for persistence disqualified the batched path for EVERY caller in the
+   * daemon, including the judge/reflect calls that have nothing whatsoever to continue.
+   * The invariant belongs to the SESSION, not to the process. */
+  int   one_shot;
     float **jK, **jV;
     /* ADR-011 CPU FFN OFFLOAD: cpu_tail = number of trailing layers whose FFN runs on the CPU
      * (their FFN weights are NOT uploaded to VRAM; build_weights skips them). cpu_x = a host
@@ -4632,13 +4639,19 @@ static int g4_kv_step(sp_g4_kv *s, int do_head) {
     return 0;
 }
 
+/* Set only across a gemma4_kv_open_scratch() call. See the note at s->ring_W below: a
+ * short-lived one-shot cache must not be handed the process's 2048-slot SWA ring (~490 MB it
+ * will never read), which on a full card spills into host memory and slows down EVERY caller,
+ * including the conversation the one-shot route exists to protect. */
+static int g_scratch_ring_off = 0;
+
 extern "C" sp_g4_kv *gemma4_kv_open(const qwen3_model *m, int Pmax) {
     if (!m || m->cfg.arch != SP_ARCH_GEMMA4 || Pmax <= 0) { sp_set_error("gemma4_kv_open: bad args"); return NULL; }
     if (g_w.key != m) { free_weights(&g_w); if (build_weights(m, &g_w)) return NULL; }
     const qwen3_config *c = &m->cfg;
     sp_g4_kv *s = (sp_g4_kv *)calloc(1, sizeof(sp_g4_kv));
     if (!s) { sp_set_error("gemma4_kv_open: host OOM"); return NULL; }
-    s->m = m; s->Pmax = Pmax; s->dpos_host = 0; s->ring_wrapped = 0;
+    s->m = m; s->Pmax = Pmax; s->dpos_host = 0; s->ring_wrapped = 0; s->one_shot = 0;
     s->E=(int)c->n_embd; s->NL=(int)c->n_layers; s->V=(int)c->n_vocab; s->SW=(int)c->sliding_window;
     s->period=(int)c->g4_swa_period?(int)c->g4_swa_period:6;
     s->kvfs=(int)c->g4_n_kv_from_start?(int)c->g4_n_kv_from_start:s->NL;
@@ -4764,7 +4777,22 @@ extern "C" sp_g4_kv *gemma4_kv_open(const qwen3_model *m, int Pmax) {
     /* KAI-1c ring config (env-gated; unset = full cache = KAI-1b base). SWA owners
      * shrink to a ring_W-slot ring (the X-R2 space win) + a Jmax-deep undo-journal;
      * globals stay full-cache (no window ⇒ no alias). */
-    s->ring_W = getenv("SP_G4_KV_RING_W") ? atoi(getenv("SP_G4_KV_RING_W")) : 0;
+    /* ── SCRATCH SESSIONS MUST NOT PAY FOR A RING (2026-07-13) ──────────────────────────
+     * MEASURED, and it was my own bug: /v1/oneshot opens a scratch session sized to its own
+     * prompt (~620 slots) — and this line gave it the PROCESS's ring_W of 2048 anyway. A
+     * 2048-slot SWA ring across the owners costs ~490 MB. On a card with ~100 MB free, every
+     * judge call allocated half a gigabyte of ring it would never read, and the daemon spilled
+     * 860 MiB into host memory: 218 ms/tok, everything crawling. I FIXED THE EVICTION AND PAID
+     * FOR IT WITH A SPILL.
+     *
+     * A short-lived cache does not want a sliding window. It wants a FULL cache at its own
+     * small Pmax — cheaper (620 slots, not 2048), simpler (slot == pos), and it is precisely
+     * the "ring-off, full cache" precondition the BATCHED prefill was built for. The ring is
+     * an optimisation for LONG conversations; a 620-token one-shot is not one.
+     *
+     * g_scratch_ring_off is set for the duration of the open() by gemma4_kv_open_scratch. */
+    s->ring_W = g_scratch_ring_off ? 0
+              : (getenv("SP_G4_KV_RING_W") ? atoi(getenv("SP_G4_KV_RING_W")) : 0);
     s->Jmax   = getenv("SP_G4_KV_JMAX")   ? atoi(getenv("SP_G4_KV_JMAX"))   : 64;
     if (s->ring_W < 0 || s->ring_W > Pmax) s->ring_W = 0;
     if (s->Jmax < 1) s->Jmax = 1;
@@ -4876,9 +4904,26 @@ extern "C" int gemma4_kv_prefill_batched(sp_g4_kv *s, const int32_t *toks, int n
      * only for genuinely single-shot cold prefills (non-persist configs / fresh sessions),
      * where it is correct + ~5-7× faster. A persist-continuation-compatible batch (journal
      * init) is future work. */
+    /* ── THE INVARIANT BELONGS TO THE SESSION, NOT THE PROCESS (2026-07-13) ──────────────
+     * This read a PROCESS-WIDE getenv("SP_PERSIST_KV") into a static and declined batching for
+     * EVERY caller in the daemon. The comment above is exactly right about WHY the guard has to
+     * exist — a batched-ring prefill is not a valid base for a persist CONTINUATION — but it
+     * asked the wrong question. It asked "does this PROCESS use persistence anywhere?" when the
+     * question is "will THIS CACHE be continued?".
+     *
+     * The chat path is continued. The watch judge, the reflection and the memory classifier are
+     * NOT: they answer once and the session is thrown away. Because the chat path needs
+     * persistence, those calls — which have nothing whatsoever to continue — were forced down
+     * the per-token path: ~1450 tokens at 60 ms/tok = 78 SECONDS to produce one YES/NO token.
+     * The engine's own comment promised them "correct + ~5-7x faster" and the flag they needed
+     * was never asked for.
+     *
+     * A one-shot session sets one_shot=1 and takes the accelerant. Everything else is unchanged,
+     * so the persist path keeps its byte-identical null floor. */
     { static int persist = -1;
       if (persist < 0) { const char *e = getenv("SP_PERSIST_KV"); persist = (e && *e=='1') ? 1 : 0; }
-      if (persist) { sp_set_error("gemma4_kv_prefill_batched: declined (SP_PERSIST_KV continuation)"); return -1; } }
+      if (persist && !s->one_shot) {
+          sp_set_error("gemma4_kv_prefill_batched: declined (SP_PERSIST_KV continuation)"); return -1; } }
     /* ADR-011: the batched path uses g_w.Wgate/Wup/Wdown[L] (GPU), which are NOT resident for the
      * CPU-tail layers — decline so the per-token path (which routes those FFNs to the CPU) runs. */
     if (s->cpu_tail > 0) { sp_set_error("gemma4_kv_prefill_batched: declined (CPU-tail offload)"); return -1; }
@@ -6128,6 +6173,34 @@ extern "C" int gemma4_kv_shear(sp_g4_kv *s, int P) {
  * refuted was BUILDING this with capture_batched (10+ min at 100% GPU) — not the memcpy. The
  * instrument was thrown out because the wrong tool was used to make it.
  */
+/* Declare a session ONE-SHOT: it will be decoded once and released, never continued. That is
+ * the precondition gemma4_kv_prefill_batched actually needs, and it is a property of THIS
+ * CACHE, not of the process. Callers that intend to reuse a cache must never set this. */
+/* Open a SCRATCH session: small, short-lived, RING-OFF, and it will never be continued.
+ *
+ * The ring is an optimisation for LONG conversations. A one-shot judge call is ~620 tokens; a
+ * 2048-slot SWA ring costs it ~490 MB it will never read, and on a full 12 GB card that spills
+ * into host memory and makes EVERY caller slow — including the conversation this route exists
+ * to protect. Ring-off is also the batched prefill's happiest precondition (full cache,
+ * slot == pos), so this is the same decision twice over.
+ *
+ * The override is process-global and set only across the open() call. That is safe because
+ * gemma4_kv_open is already serialised behind the session mutex the callers hold — and if that
+ * ever stops being true, the ring simply comes back, which is slow, not wrong. */
+extern "C" sp_g4_kv *gemma4_kv_open_scratch(const qwen3_model *m, int Pmax) {
+    g_scratch_ring_off = 1;
+    sp_g4_kv *s = gemma4_kv_open(m, Pmax);
+    g_scratch_ring_off = 0;
+    if (s) s->one_shot = 1;   /* it says what it is: nothing will continue this cache */
+    return s;
+}
+
+extern "C" int gemma4_kv_set_oneshot(sp_g4_kv *s, int on) {
+    if (!s) { sp_set_error("gemma4_kv_set_oneshot: NULL session"); return -1; }
+    s->one_shot = on ? 1 : 0;
+    return 0;
+}
+
 extern "C" long gemma4_kv_prefix_bytes(const sp_g4_kv *s, int P) {
     if (!s || P <= 0 || P > s->Pmax) return -1;
     long bytes = 0;

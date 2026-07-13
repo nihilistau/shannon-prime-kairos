@@ -57,9 +57,19 @@ def _keys_from(text: str, fallback: str = "conversation") -> str:
 
 
 def _chat(prompt: str, client=None, max_tokens: int = 160) -> str:
+    """ONE-SHOT. Summarising a conversation is a question with an answer; nothing continues it.
+
+    Through chat() this landed in the ONE RESIDENT KV SLOT — the one holding his live
+    conversation — and evicted it, so his very next turn re-prefilled from token 0. A
+    summariser that costs the thing it is summarising is not a summariser.
+    """
     from harness.inference.client import get_client
-    from harness.inference.inference_config import InferenceConfig
     client = client or get_client()
+    if hasattr(client, "oneshot"):
+        return (client.oneshot([{"role": "user", "content": prompt}],
+                               max_tokens=max_tokens, temperature=0.0) or "").strip()
+    # test doubles / older clients keep the old path
+    from harness.inference.inference_config import InferenceConfig
     cfg = InferenceConfig(temperature=0.0, max_tokens=max_tokens, auto_recall=False)
     return client.chat(messages=[{"role": "user", "content": prompt}], config=cfg).text.strip()
 

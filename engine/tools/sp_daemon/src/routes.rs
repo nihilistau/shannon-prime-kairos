@@ -1180,6 +1180,167 @@ pub fn load_and_mint_okf_store(app: &Arc<AppState>, root: &str) -> usize {
 /// LM-B3 adaptive classification: classify a memory's text into a mem_class via ONE model
 /// micro-forward (accurate, off the hot path — used by the idle NIGHTSHIFT refine pass). The
 /// heuristic classify_mem_class runs at capture (instant); this CORRECTS it on idle. Returns a
+// ── /v1/oneshot — A CALL THAT IS NEVER CONTINUED SHOULD NOT COST A CONVERSATION ──────
+//
+// THE BUG, MEASURED: the watch judge, the reflection and the summariser each send a ~1450-token
+// prompt down the ONE RESIDENT KV SLOT — the same slot holding his conversation. Two things
+// followed, and both were invisible:
+//
+//   1. THE CALL ITSELF WAS ABSURD. Its prompt shares almost nothing with the persona preamble,
+//      so the LCP collapses and it pays a full per-token prefill: ~1450 tokens x 60 ms/tok =
+//      78 SECONDS, to produce a single YES/NO token. The batched accelerant — "correct + ~5-7x
+//      faster", by the engine's own comment — was DECLINED, because its guard tested a
+//      PROCESS-WIDE SP_PERSIST_KV. The chat path needs persistence, so the judge (which has
+//      nothing whatsoever to continue) was disqualified along with it. THE INVARIANT BELONGED TO
+//      THE SESSION AND WAS BEING ASKED OF THE PROCESS.
+//
+//   2. IT EVICTED HIS CONVERSATION. The aux prompt becomes KV_COMMITTED, so his NEXT turn is no
+//      longer a strict extension of anything and re-prefills from token 0.
+//
+// A one-shot call has no continuation to protect. It gets its OWN scratch session, sized to its
+// own prompt, marked one_shot (which legalises the batched prefill), decoded, and released. The
+// resident cache is not read, not written, and not evicted. This is ADR-009's rule, finally
+// applied to the callers that needed it: "a batched forward on a scratch cache — NEVER the
+// resident session."
+#[cfg(feature = "wire_cuda_backend")]
+#[derive(serde::Deserialize)]
+pub struct OneshotRequest {
+    pub messages: Vec<Message>,
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
+    /// 0.0 (default) = greedy. The aux callers are judges and classifiers; they want the
+    /// most likely token, not a personality.
+    #[serde(default)]
+    pub temperature: f32,
+}
+
+#[cfg(feature = "wire_cuda_backend")]
+#[derive(serde::Serialize)]
+pub struct OneshotResponse {
+    pub text: String,
+    pub prompt_tokens: usize,
+    pub batched: bool,
+    pub ms: u128,
+}
+
+#[cfg(feature = "wire_cuda_backend")]
+pub async fn v1_oneshot(
+    axum::extract::State(app): axum::extract::State<Arc<AppState>>,
+    axum::Json(req): axum::Json<OneshotRequest>,
+) -> Result<axum::Json<OneshotResponse>, (axum::http::StatusCode, String)> {
+    use sp_daemon::cuda_kvdecode_dispatch as kv;
+    let t0 = std::time::Instant::now();
+
+    let toks = app.tokenizer.apply_template_ids(&req.messages)
+        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("template: {e}")))?;
+    if toks.len() < 2 {
+        return Err((axum::http::StatusCode::BAD_REQUEST, "prompt too short".into()));
+    }
+    let vocab = app.vocab_size;
+    let max_new = req.max_tokens.clamp(1, 512) as usize;
+
+    let qm = {
+        let mut sg = app.session.as_ref()
+            .ok_or((axum::http::StatusCode::SERVICE_UNAVAILABLE, "no session".to_string()))?
+            .lock().unwrap();
+        let sraw = sg.raw_ptr() as *mut sp_daemon::ffi_l1::sp_session;
+        (unsafe { sp_daemon::ffi_l1::sp_session_qwen3_model(sraw) }) as *const std::ffi::c_void
+    };
+    if qm.is_null() {
+        return Err((axum::http::StatusCode::SERVICE_UNAVAILABLE, "no model".into()));
+    }
+
+    // Its OWN cache, sized to its OWN prompt, RING-OFF, and marked one-shot.
+    //
+    // The ring-off part was a bug I shipped and then measured: opening this with plain open()
+    // handed a ~620-token judge call the PROCESS's 2048-slot SWA ring — ~490 MB it would never
+    // read — and on a full card the daemon spilled 860 MiB into host memory and ran at
+    // 218 ms/tok. THE EVICTION FIX WAS PAYING FOR ITSELF WITH A SPILL. A short-lived cache
+    // wants a full cache at its own small Pmax, which is cheaper AND is the batched prefill's
+    // happiest precondition. open_scratch() also sets one_shot, so the batched path is legal.
+    let need = (toks.len() + max_new + 8) as i32;
+    let scratch = unsafe { kv::open_scratch(qm, need) }
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("scratch open: {e}")))?;
+
+    let mut batched = false;
+    let out = (|| -> Option<String> {
+        let mut logits = vec![0.0f32; vocab];
+        let (head, last) = toks.split_at(toks.len() - 1);
+        if !head.is_empty() {
+            match unsafe { kv::prefill_batched(scratch, head) } {
+                Ok(()) => { batched = true; }
+                Err(e) => {
+                    // Never a hard failure: fall through to the per-token path, which is the
+                    // byte-identical floor. Slow is not wrong.
+                    tracing::info!("ONESHOT: batched prefill declined ({e}) — per-token floor");
+                    unsafe { kv::prefill(scratch, head) }.ok()?;
+                }
+            }
+        }
+        let mut t = last[0];
+        let stops = app.tokenizer.turn_stop_ids();
+        let suppress = app.tokenizer.suppress_token_ids();
+        let mut s = String::new();
+
+        // TEMPERATURE IS HONOURED, NOT DECORATIVE. My first cut took `temperature` in the
+        // request and then decoded pure argmax anyway. The watch judge wants greedy (0.0) —
+        // fine — but the REFLECTION runs at 0.4 precisely because a greedy "what have you
+        // concluded about him?" returns the same dull sentence forever. Silently ignoring the
+        // knob would have made her reflections deterministic and repetitive, and I would have
+        // shipped it as a speedup. A parameter you accept and discard is a lie with a schema.
+        let temp = req.temperature.clamp(0.0, 2.0);
+        let mut rng: u64 = 0x9E3779B97F4A7C15 ^ (toks.len() as u64);
+
+        for _ in 0..max_new {
+            unsafe { kv::decode_step(scratch, t, &mut logits) }.ok()?;
+            for &sid in suppress.iter() {
+                if (sid as usize) < logits.len() { logits[sid as usize] = f32::NEG_INFINITY; }
+            }
+            t = if temp <= 1e-4 {
+                // greedy
+                let mut bt = 0usize;
+                let mut bv = f32::NEG_INFINITY;
+                for (i, &v) in logits.iter().enumerate() {
+                    if v > bv { bv = v; bt = i; }
+                }
+                bt as i32
+            } else {
+                // softmax(logits / T), then inverse-CDF sample. xorshift keeps it dependency-free
+                // and reproducible per prompt length; this path is a reflection, not a receipt.
+                let maxv = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                let mut sum = 0.0f64;
+                for v in logits.iter_mut() {
+                    let p = (((*v - maxv) / temp) as f64).exp();
+                    *v = p as f32;
+                    sum += p;
+                }
+                rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17;
+                let mut r = (rng as f64 / u64::MAX as f64) * sum;
+                let mut pick = logits.len() - 1;
+                for (i, &p) in logits.iter().enumerate() {
+                    r -= p as f64;
+                    if r <= 0.0 { pick = i; break; }
+                }
+                pick as i32
+            };
+            if t == 1 || stops.contains(&t) { break; }
+            s.push_str(&String::from_utf8_lossy(app.tokenizer.decode_token(t)));
+        }
+        Some(s)
+    })();
+
+    // ALWAYS. A scratch session that outlives its turn is a VRAM leak that presents, days later,
+    // as "the daemon got slow" — which is exactly the kind of bug this file is full of.
+    unsafe { kv::release_for_model(scratch) };
+
+    let text = out.ok_or((axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                          "oneshot decode failed".to_string()))?;
+    let ms = t0.elapsed().as_millis();
+    tracing::info!("ONESHOT: {} prompt tok, {} batched, {} ms — the resident cache was not touched",
+                   toks.len(), if batched { "BATCHED" } else { "per-token" }, ms);
+    Ok(axum::Json(OneshotResponse { text, prompt_tokens: toks.len(), batched, ms }))
+}
+
 /// known class or None. Reuses the scratch-session decode pattern (canon suppress-mask).
 #[cfg(feature = "wire_cuda_backend")]
 fn model_classify(qm: *const std::ffi::c_void, tok: &crate::tokenizer::SptbTokenizer,

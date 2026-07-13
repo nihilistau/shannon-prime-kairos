@@ -155,10 +155,14 @@ def _judge(question: str, evidence: str):
         "or, only if a specific line above proves it:\n"
         "  YES: <quote the exact line that proves it>"
     )
-    txt = (get_client().chat(
-        messages=[{"role": "user", "content": prompt}],
-        config=InferenceConfig(temperature=0.0, max_tokens=90, auto_recall=False),
-    ).text or "").strip()
+    # ONE-SHOT. She answers this once and the session is thrown away — there is nothing here to
+    # continue. Through chat() this landed in THE RESIDENT KV SLOT, the one holding his
+    # conversation: ~1450 tokens of PER-TOKEN prefill (78 SECONDS, to produce one YES/NO token),
+    # and it EVICTED his chat on the way out, so his next turn re-prefilled from token 0.
+    # Its own scratch cache now; batched; released. The resident cache is not touched.
+    txt = (get_client().oneshot(
+        [{"role": "user", "content": prompt}], max_tokens=90, temperature=0.0,
+    ) or "").strip()
 
     head = txt.split("\n", 1)[0].strip()
     if head.upper().startswith("YES"):

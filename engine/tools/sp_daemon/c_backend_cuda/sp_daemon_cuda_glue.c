@@ -135,6 +135,15 @@ extern int   gemma4_kv_shear(sp_g4_kv *s, int P);   /* KAIROS P1c-2 prefix shear
  * preamble (2517 tok) is LONGER than ring_W (2048), so the ring wraps inside the preamble and
  * the shear can never fire at this config. Copying the bytes works regardless of wrapping,
  * because it does not reason about wrapping at all. ~540 MiB, ~90 ms, vs 164,000 ms. */
+/* ONE-SHOT: this session is decoded once and released, never continued. It is the precondition
+ * gemma4_kv_prefill_batched actually needs — and the guard was reading a PROCESS-WIDE
+ * SP_PERSIST_KV instead, so the chat path's need for persistence disqualified the batched path
+ * for the judge/reflect calls that have nothing to continue. 78 s to produce one YES/NO token. */
+extern int   gemma4_kv_set_oneshot(sp_g4_kv *s, int on);
+/* SCRATCH: ring-off, one-shot, sized to its own prompt. A judge call must not be handed the
+ * process's 2048-slot SWA ring (~490 MB it never reads) — on a full card that spills to host
+ * memory and slows EVERY caller, including the conversation this route exists to protect. */
+extern sp_g4_kv *gemma4_kv_open_scratch(const qwen3_model *m, int Pmax);
 extern long  gemma4_kv_prefix_bytes(const sp_g4_kv *s, int P);
 extern long  gemma4_kv_snapshot_prefix(const sp_g4_kv *s, void *host, long cap, int P);
 extern int   gemma4_kv_restore_prefix(sp_g4_kv *s, const void *host, long cap, int P);
@@ -319,6 +328,16 @@ int sp_daemon_cuda_kvdecode_shear(void *handle, int P) {
  *
  * The blob is host memory owned by the CALLER (Rust). The engine never allocates it,
  * so there is no hidden lifetime and nothing to leak on a session teardown. */
+void *sp_daemon_cuda_kvdecode_open_scratch(const void *qm, int Pmax) {
+    return (void *)gemma4_kv_open_scratch((const qwen3_model *)qm, Pmax);
+}
+
+int sp_daemon_cuda_kvdecode_set_oneshot(void *handle, int on) {
+    sp_g4_kv *s = (sp_g4_kv *)handle;
+    if (!s) { sp_set_error("cuda kvdecode set_oneshot: NULL handle"); return -1; }
+    return gemma4_kv_set_oneshot(s, on);
+}
+
 long sp_daemon_cuda_kvdecode_prefix_bytes(void *handle, int P) {
     sp_g4_kv *s = (sp_g4_kv *)handle;
     if (!s) { sp_set_error("cuda kvdecode prefix_bytes: NULL handle"); return -1; }

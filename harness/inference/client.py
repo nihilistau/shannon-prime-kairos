@@ -207,6 +207,68 @@ class SPDaemonClient:
         except StopIteration as stop:
             return stop.value  # type: ignore[return-value]
 
+    # ---- one-shot: a call that is never continued -------------------------
+    def oneshot(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        max_tokens: int = 160,
+        temperature: float = 0.0,
+        timeout: float = 300.0,
+    ) -> str:
+        """A model call that answers ONCE and is never continued. Its own scratch cache.
+
+        USE THIS FOR EVERY AUXILIARY CALL — the watch judge, the reflection, the summariser,
+        the classifier. Anything that asks the model a question and throws the session away.
+
+        WHY IT EXISTS, MEASURED
+        ───────────────────────
+        Those calls used to go through `chat()`, which lands in THE ONE RESIDENT KV SLOT — the
+        same slot holding his conversation. Two things followed, and both were invisible:
+
+          1. THE CALL ITSELF WAS ABSURD. Its ~1450-token prompt shares almost nothing with the
+             persona preamble, so the cache's longest-common-prefix collapses and it pays a full
+             PER-TOKEN prefill: 1450 x 60 ms = 78 SECONDS, to produce one YES/NO token. The
+             engine's batched prefill — its own comment promises "~5-7x faster" — was declined,
+             because the guard tested a PROCESS-WIDE SP_PERSIST_KV. The chat path needs
+             persistence, so the judge (which has nothing whatsoever to continue) was
+             disqualified along with it.
+
+          2. IT EVICTED HIS CONVERSATION. The aux prompt became the committed cache, so his next
+             turn was no longer a strict extension of anything and re-prefilled from token 0.
+
+        A one-shot has no continuation to protect. It gets its own scratch session, sized to its
+        own prompt, marked one_shot in the engine (which legalises the batched prefill), decoded,
+        and released. THE RESIDENT CACHE IS NOT READ, NOT WRITTEN, AND NOT EVICTED.
+
+        Falls back to `chat()` if the daemon is old and has no /v1/oneshot — slower and it will
+        evict, but it will never simply fail. An optimisation that can take the system down is
+        not an optimisation.
+        """
+        if self._client is None:
+            raise RuntimeError("client not connected")
+        try:
+            r = self._client.post(
+                f"{self.base_url}/v1/oneshot",
+                json={"messages": messages, "max_tokens": int(max_tokens),
+                      "temperature": float(temperature)},
+                timeout=timeout,
+            )
+            if r.status_code == 404:
+                raise FileNotFoundError("no /v1/oneshot on this daemon")
+            r.raise_for_status()
+            j = r.json()
+            logger.info("[oneshot] %d prompt tok, %s, %d ms — resident cache untouched",
+                        j.get("prompt_tokens", -1),
+                        "BATCHED" if j.get("batched") else "per-token",
+                        j.get("ms", -1))
+            return j.get("text", "")
+        except FileNotFoundError:
+            logger.warning("[oneshot] daemon has no /v1/oneshot — falling back to chat() "
+                           "(this WILL evict the conversation cache)")
+            cfg = InferenceConfig(max_tokens=max_tokens, temperature=temperature)
+            return self.chat(messages=messages, config=cfg).text
+
     # ---- control / health -----------------------------------------------
     def abort(self, chat_id: int) -> bool:
         """Cancel a running generation. Returns True on 204."""

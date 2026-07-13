@@ -328,12 +328,17 @@ def insight() -> dict[str, Any]:
         "exactly: NOTHING YET."
     )
 
-    from harness.inference import InferenceConfig
     from harness.inference.client import get_client
-    text = get_client().chat(
-        messages=[{"role": "user", "content": prompt}],
-        config=InferenceConfig(temperature=0.4, max_tokens=140, auto_recall=False),
-    ).text or ""
+    # ONE-SHOT. A reflection is a single question with a single answer; nothing continues it.
+    # Through chat() it landed in the resident KV slot — the one holding his conversation — and
+    # evicted it, so his next turn re-prefilled the whole thing from token 0. Own scratch cache.
+    #
+    # NOTE: this one is temperature 0.4, not 0.0 — a reflection is allowed to be a little
+    # imaginative, and greedy decoding on a "what have you concluded?" prompt gives the same
+    # dull sentence every time. The one-shot route honours the temperature it is given.
+    text = get_client().oneshot(
+        [{"role": "user", "content": prompt}], max_tokens=140, temperature=0.4,
+    ) or ""
 
     if "NOTHING YET" in text.upper():
         return {"insights": 0, "why": "she did not think the evidence supported one"}

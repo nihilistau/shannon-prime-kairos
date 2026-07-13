@@ -116,6 +116,11 @@ unsafe extern "C" {
     /// wrapped, and the operator's 2517-token preamble is longer than ring_W=2048, so it
     /// wraps inside the preamble and the shear is dead code at his config. Copying the
     /// bytes works regardless of wrapping. Blob is host memory OWNED BY RUST.
+    /// ONE-SHOT: this cache is decoded once and released, never continued. It unlocks the
+    /// batched prefill for callers that never needed persistence in the first place.
+    /// SCRATCH: ring-off, one-shot, sized to its own prompt. See `open_scratch`.
+    fn sp_daemon_cuda_kvdecode_open_scratch(qm: *const c_void, pmax: c_int) -> *mut c_void;
+    fn sp_daemon_cuda_kvdecode_set_oneshot(handle: *mut c_void, on: c_int) -> c_int;
     fn sp_daemon_cuda_kvdecode_prefix_bytes(handle: *mut c_void, p: c_int) -> i64;
     fn sp_daemon_cuda_kvdecode_snapshot_prefix(
         handle: *mut c_void, host: *mut c_void, cap: i64, p: c_int) -> i64;
@@ -417,6 +422,52 @@ pub unsafe fn shear(handle: *mut c_void, p: i32) -> Result<(), String> {
 // THE BLOB IS OWNED BY RUST. The engine never allocates it, so there is no hidden lifetime,
 // nothing to leak when a session dies, and the size is checked on BOTH sides against
 // prefix_bytes() — a blob from a different Pmax/ring_W cannot be restored into this session.
+
+/// Open a SCRATCH cache: RING-OFF, one-shot, sized to its own prompt.
+///
+/// MEASURED, and it was my own bug. `/v1/oneshot` opened its scratch session with plain
+/// `open()`, which reads the PROCESS's `SP_G4_KV_RING_W` — so a ~620-token judge call was
+/// handed a 2048-slot SWA ring costing ~490 MB IT WOULD NEVER READ. On a 12 GB card with
+/// ~100 MB free, the daemon spilled 860 MiB into host memory and everything crawled at
+/// 218 ms/tok. I FIXED THE EVICTION AND PAID FOR IT WITH A SPILL — a fix that makes the
+/// system slower in a different place is not a fix, it is a trade nobody agreed to.
+///
+/// A short-lived cache does not want a sliding window. It wants a FULL cache at its own small
+/// Pmax: cheaper (620 slots, not 2048), simpler (slot == pos), and it is exactly the
+/// "cold, ring-off, full cache" precondition the BATCHED prefill was built for. One decision,
+/// two wins.
+///
+/// # Safety
+/// `qm` must be the live `qwen3_model*` from the session.
+pub unsafe fn open_scratch(qm: *const c_void, pmax: i32) -> Result<*mut c_void, String> {
+    if qm.is_null() || pmax <= 0 {
+        return Err("kvdecode open_scratch: NULL model or Pmax<=0".to_string());
+    }
+    let h = unsafe { sp_daemon_cuda_kvdecode_open_scratch(qm, pmax) };
+    if h.is_null() { Err(last_error()) } else { Ok(h) }
+}
+
+/// Declare this cache ONE-SHOT: decoded once, released, never continued.
+///
+/// This is the precondition `gemma4_kv_prefill_batched` actually needs. The guard used to test
+/// a PROCESS-WIDE `SP_PERSIST_KV`, so the chat path's need for persistence disqualified the
+/// batched accelerant for the judge / reflect / classify calls — which have nothing whatsoever
+/// to continue, and were paying ~78 s of per-token prefill to produce one YES/NO token.
+///
+/// NEVER set this on a cache anyone intends to reuse. A batched-ring prefill does not build the
+/// incremental undo-journal the per-token path builds tick by tick, so a NEXT turn that tried to
+/// reuse it would come back EMPTY (measured: G-PK2-BATCHRING). That is why the guard exists —
+/// it just asked the wrong question.
+///
+/// # Safety
+/// `handle` must be a live `sp_g4_kv*` from [`open`].
+pub unsafe fn set_oneshot(handle: *mut c_void, on: bool) -> Result<(), String> {
+    if handle.is_null() {
+        return Err("kvdecode set_oneshot: NULL handle".to_string());
+    }
+    let rc = unsafe { sp_daemon_cuda_kvdecode_set_oneshot(handle, on as c_int) };
+    if rc == 0 { Ok(()) } else { Err(last_error()) }
+}
 
 /// Bytes a prefix snapshot at `p` needs for THIS session's geometry.
 ///

@@ -8,6 +8,10 @@ use crate::routes::{
     v1_dsp_echo, v1_dsp_model_info, v1_events, v1_mesh_peers, v1_metrics, v1_node_telemetry,
     v1_pouw_ledger, v1_receipts,
 };
+// ONE-SHOT lives on the CUDA kvdecode path (it needs a scratch sp_g4_kv session), so it only
+// exists with the wire_cuda_backend feature — same as the resident cache it exists to protect.
+#[cfg(feature = "wire_cuda_backend")]
+use crate::routes::v1_oneshot;
 use crate::state::AppState;
 
 /// Locate the console static dir independently of the launch CWD:
@@ -43,6 +47,18 @@ fn kdiff_route() -> Router<Arc<AppState>> {
     Router::new()
 }
 
+/// ONE-SHOT: a call that is never continued must not cost a conversation.
+/// CUDA-only — it needs a scratch `sp_g4_kv` session, which is the same machinery as the
+/// resident cache it exists to protect.
+#[cfg(feature = "wire_cuda_backend")]
+fn oneshot_route() -> Router<Arc<AppState>> {
+    Router::new().route("/v1/oneshot", post(v1_oneshot))
+}
+#[cfg(not(feature = "wire_cuda_backend"))]
+fn oneshot_route() -> Router<Arc<AppState>> {
+    Router::new()
+}
+
 /// the routes are wired unconditionally and resolve per target.
 pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
@@ -72,6 +88,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // tell the two "4"s of "4471" apart — the observed copy failure. CUDA only;
         // on other backends the handler is absent and this route is not wired.
         .merge(kdiff_route())
+        // ONE-SHOT: a call that is never continued must not cost a conversation.
+        // The watch judge / reflection / classifier were sending ~1450-token prompts down the
+        // ONE RESIDENT KV SLOT — the same one holding his conversation. That cost 78 s of
+        // per-token prefill to produce a single YES/NO token, AND evicted his chat on the way
+        // out. They get their own scratch cache now, batched (legal: nothing will continue it),
+        // released at the end. The resident KV is not read, not written, and NOT EVICTED.
+        .merge(oneshot_route())
         // Console static files. ServeDir with a RELATIVE path resolves against the
         // process CWD, which depends on where the launcher ran (G-12B-SERVE aftermath:
         // engine-root launches 404'd the console). Resolve robustly: prefer the dir
