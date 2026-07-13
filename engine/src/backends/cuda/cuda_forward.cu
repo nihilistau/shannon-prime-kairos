@@ -40,6 +40,42 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+
+/* ── ADR-012: THE K/V CACHE ELEMENT TYPE ─────────────────────────────────────────────
+ *
+ * The SWA ring is 46 layers x 2048 slots x 2048 kvd x 2 (K,V) x 4 B = 1.54 GB, and it is what
+ * leaves a 12 GB card with ~0.1 GB free — too little for a second KV cache, so the one-shot
+ * scratch session cannot exist, the batched prefill's activation scratch cannot exist, and the
+ * daemon spills into host memory. MEASURED: with the q4b weights (2.14 GB lighter) and NOT ONE
+ * LINE OF CODE CHANGED, the spill went to zero and the judge went from 113,475 ms to 6,422 ms.
+ * The design was never broken. It was starved.
+ *
+ * fp16 halves the ring: 1.54 GB -> 0.77 GB. We need ~535 MB. It clears the bar with room.
+ *
+ * WHY fp16 AND NOT int8: int8 would free 1.48 GB — 4x we do not need — and it buys that with
+ * per-head scale arrays and an 8-bit INTEGER grid, which is precisely the regime where
+ * confusable digit embeddings collapse. That is the G-VERBATIM failure mode ("4471" -> "4417").
+ * Quantization was explicitly ELIMINATED as G-VERBATIM's cause (it was no_repeat_ngram,
+ * b227c74; see 5812939) — which is a reason not to FEAR fp16, not a licence to go and build the
+ * failure mode on purpose. fp16 has a 10-bit mantissa and NO scale factors: there is nothing to
+ * get wrong.
+ *
+ * THE KERNELS ARE TEMPLATED, NOT DUPLICATED. A hand-written half twin of an attention kernel is
+ * a second implementation that will drift from the first, silently, and the drift will look
+ * like a model quirk. One body, two instantiations. The <float> instantiation compiles to the
+ * same code it always did, so THE fp32 NULL FLOOR IS BYTE-UNTOUCHED — which is the only reason
+ * this is a safe change to make in the hottest code in the tree.
+ */
+__device__ __forceinline__ float kv_ld(const float  *p, size_t i) { return p[i]; }
+__device__ __forceinline__ float kv_ld(const __half *p, size_t i) { return __half2float(p[i]); }
+__device__ __forceinline__ void  kv_st(float  *p, size_t i, float v) { p[i] = v; }
+__device__ __forceinline__ void  kv_st(__half *p, size_t i, float v) { p[i] = __float2half(v); }
+
+/* Host-side: is this layer's cache fp16? Only the SWA owners are converted — the 2 global
+ * owners stay fp32 (they are 0.43 GB, and gemma4_kv_read_global_k mints the C2 recall
+ * signatures off them, so leaving them alone keeps that whole subsystem BYTE-IDENTICAL and out
+ * of the blast radius entirely). */
+#define G4_KV_FP16_LAYER(s, L) ((s)->kv_fp16 && ((L) % (s)->period) != (s)->period - 1)
 #include <malloc.h>   /* N6 diag: _heapchk() host-heap-corruption checkpoint */
 
 /* ADR-011 CPU LAYER OFFLOAD: the math-core CPU FFN residual block (core/forward/gemma4.c),
@@ -507,7 +543,11 @@ __global__ void k_rope_freqs_at(float *base, int n_heads, int d, float rbase,
  * (s0 = max(0, pos-win+1), matching sp_attn_head). One block per query head;
  * the cache is the OWNER's jagged buffer [ctx x KVD]. ascale is a parameter
  * (Gemma4 = 1.0). Shared = ctx floats. */
-__global__ void k_attn_decode_win(const float *q, const float *Kc, const float *Vc,
+/* ADR-012: templated on the cache element type. <float> is byte-identical to the kernel this
+ * replaces. This is the ring-OFF float path — which is what a one-shot SCRATCH session runs
+ * (open_scratch forces ring_W=0), so it must handle fp16 too. */
+template <typename KV>
+__global__ void k_attn_decode_win_T(const float *q, const KV *Kc, const KV *Vc,
                                   int ctx, int KVD, int HD, int group, float ascale,
                                   int win, float *ao) {
     extern __shared__ float sc[];
@@ -516,9 +556,9 @@ __global__ void k_attn_decode_win(const float *q, const float *Kc, const float *
     int s0 = (win >= 0 && pos - win + 1 > 0) ? pos - win + 1 : 0;
     const float *qh = q + (size_t)h * HD;
     for (int s = s0 + threadIdx.x; s < ctx; s += blockDim.x) {
-        const float *kh = Kc + (size_t)s * KVD + (size_t)kvh * HD;
+        const KV *kh = Kc + (size_t)s * KVD + (size_t)kvh * HD;
         float acc = 0.0f;
-        for (int i = 0; i < HD; i++) acc += qh[i] * kh[i];
+        for (int i = 0; i < HD; i++) acc += qh[i] * kv_ld(kh, i);
         sc[s] = acc * ascale;
     }
     __syncthreads();
@@ -535,7 +575,7 @@ __global__ void k_attn_decode_win(const float *q, const float *Kc, const float *
     for (int i = threadIdx.x; i < HD; i += blockDim.x) {
         float acc = 0.0f;
         for (int s = s0; s < ctx; s++)
-            acc += sc[s] * Vc[(size_t)s * KVD + (size_t)kvh * HD + i];
+            acc += sc[s] * kv_ld(Vc, (size_t)s * KVD + (size_t)kvh * HD + i);
         ao[(size_t)h * HD + i] = acc * inv;
     }
 }
@@ -553,8 +593,11 @@ __global__ void k_attn_decode_win(const float *q, const float *Kc, const float *
  * (scores, reused as softmax weights). One block per query head. */
 /* G-BX-ATTN-FAST: __launch_bounds__ caps the register allocation so the int64
  * paths cannot spill/serialize the launch (Turing: 64 regs at 1024 threads). */
+/* ADR-012: templated on the cache element type. The ring-OFF byte-exact path — which is what a
+ * one-shot SCRATCH session uses (open_scratch forces ring_W=0), so it must handle fp16 too. */
+template <typename KV>
 __global__ void __launch_bounds__(1024)
-k_attn_decode_win_bx(const float *q, const float *Kc, const float *Vc,
+k_attn_decode_win_bx_T(const float *q, const KV *Kc, const KV *Vc,
                                      int ctx, int KVD, int HD, int group, float ascale,
                                      int win, float *ao) {
     extern __shared__ long long shl[];                 /* [ctx]: D_s then e_s */
@@ -565,10 +608,10 @@ k_attn_decode_win_bx(const float *q, const float *Kc, const float *Vc,
     const float *qh = q + (size_t)h * HD;
     const float DSC = (float)(1 << BX_DSH);
     for (int s = s0 + threadIdx.x; s < ctx; s += blockDim.x) {
-        const float *kh = Kc + (size_t)s * KVD + (size_t)kvh * HD;
+        const KV *kh = Kc + (size_t)s * KVD + (size_t)kvh * HD;
         if (d_bx_probe & 1) {                          /* PROBE: float Q·K (timing only) */
             float d = 0.f;
-            for (int i = 0; i < HD; i++) d += qh[i] * kh[i];
+            for (int i = 0; i < HD; i++) d += qh[i] * kv_ld(kh, i);
             shl[s] = (long long)llrintf(d * DSC * DSC);
             continue;
         }
@@ -584,7 +627,7 @@ k_attn_decode_win_bx(const float *q, const float *Kc, const float *Vc,
         int cnt = 0;
         for (int i = 0; i < HD; i++) {
             long long ea = (long long)llrintf(qh[i] * DSC);
-            long long eb = (long long)llrintf(kh[i] * DSC);
+            long long eb = (long long)llrintf(kv_ld(kh, i) * DSC);
             acc += ea * eb;                            /* ~2^36 typ; chunk-bounded */
             if (++cnt == 64) {
                 a1 = ((a1 + acc) % BX_Q1 + BX_Q1) % BX_Q1;
@@ -636,7 +679,7 @@ k_attn_decode_win_bx(const float *q, const float *Kc, const float *Vc,
         long long a1 = 0, a2 = 0, acc = 0;
         int cnt = 0;
         for (int s = s0; s < ctx; s++) {
-            long long ev = (long long)llrintf(Vc[(size_t)s * KVD + (size_t)kvh * HD + i] * DSC);
+            long long ev = (long long)llrintf(kv_ld(Vc, (size_t)s * KVD + (size_t)kvh * HD + i) * DSC);
             acc += shl[s] * ev;                        /* ~2^48 typ; chunk-bounded */
             if (++cnt == 64) {
                 a1 = ((a1 + acc) % BX_Q1 + BX_Q1) % BX_Q1;
@@ -667,9 +710,13 @@ static int sp_byteexact_attn(void) {
  * thread softmax reduction are byte-for-byte identical to k_attn_decode_win over
  * a full cache (same scores, same max, same exp-sum order, same V-weighted sum).
  * Bit-exactness is the gate (G-P3-R2.b-2a). Shared = wl floats (the window len). */
-__global__ void k_attn_decode_ring(const float *q, const float *Kc, const float *Vc,
-                                   int ctx, int KVD, int HD, int group, float ascale,
-                                   int win, int Wring, float *ao) {
+/* ADR-012: templated on the cache element type. <float> is byte-identical to the kernel this
+ * replaces (kv_ld on a float* is p[i]); <__half> halves the SWA ring. ONE BODY — a hand-written
+ * half twin would drift from this one silently, and the drift would look like a model quirk. */
+template <typename KV>
+__global__ void k_attn_decode_ring_T(const float *q, const KV *Kc, const KV *Vc,
+                                     int ctx, int KVD, int HD, int group, float ascale,
+                                     int win, int Wring, float *ao) {
     extern __shared__ float sc[];
     int h = blockIdx.x, kvh = h / group;
     int pos = ctx - 1;
@@ -678,9 +725,9 @@ __global__ void k_attn_decode_ring(const float *q, const float *Kc, const float 
     const float *qh = q + (size_t)h * HD;
     for (int j = threadIdx.x; j < wl; j += blockDim.x) {
         int slot = (s0 + j) % Wring;                    /* position s0+j -> ring slot */
-        const float *kh = Kc + (size_t)slot * KVD + (size_t)kvh * HD;
+        const KV *kh = Kc + (size_t)slot * KVD + (size_t)kvh * HD;
         float acc = 0.0f;
-        for (int i = 0; i < HD; i++) acc += qh[i] * kh[i];
+        for (int i = 0; i < HD; i++) acc += qh[i] * kv_ld(kh, i);
         sc[j] = acc * ascale;
     }
     __syncthreads();
@@ -698,7 +745,7 @@ __global__ void k_attn_decode_ring(const float *q, const float *Kc, const float 
         float acc = 0.0f;
         for (int j = 0; j < wl; j++) {
             int slot = (s0 + j) % Wring;
-            acc += sc[j] * Vc[(size_t)slot * KVD + (size_t)kvh * HD + i];
+            acc += sc[j] * kv_ld(Vc, (size_t)slot * KVD + (size_t)kvh * HD + i);
         }
         ao[(size_t)h * HD + i] = acc * inv;
     }
@@ -713,9 +760,16 @@ __global__ void k_attn_decode_ring(const float *q, const float *Kc, const float 
  * coherent<->garbage across rebuilds is what byte-exact removes; the float ring kernel
  * would re-introduce it on 40/48 layers and break coherence). Shared = wl*int64
  * (scores -> softmax weights), wl = in-window length. One block per query head. */
-__global__ void k_attn_decode_ring_bx(const float *q, const float *Kc, const float *Vc,
-                                      int ctx, int KVD, int HD, int group, float ascale,
-                                      int win, int Wring, float *ao) {
+/* ADR-012: templated on the cache element type. <float> is byte-identical to the kernel this
+ * replaces. Note this path already collapses K and V onto a FIXED-POINT grid — llrintf(x*DSC),
+ * DSC = 2^BX_DSH — before the exact-integer dual-prime dot. So fp16 storage does not weaken the
+ * byte-exactness guarantee AT ALL: the decode stays deterministic and build-independent, which
+ * is the whole point of this kernel. What changes is the VALUE of x, by one fp16 rounding, and
+ * that is a quantization question (G-KVFP16), not an auditability one. Say the two apart. */
+template <typename KV>
+__global__ void k_attn_decode_ring_bx_T(const float *q, const KV *Kc, const KV *Vc,
+                                        int ctx, int KVD, int HD, int group, float ascale,
+                                        int win, int Wring, float *ao) {
     (void)ascale;                                          /* gemma4 scaling=1.0 (folded) */
     extern __shared__ long long shlr[];                    /* [wl]: D_j then e_j */
     int h = blockIdx.x, kvh = h / group;
@@ -726,7 +780,7 @@ __global__ void k_attn_decode_ring_bx(const float *q, const float *Kc, const flo
     const float DSC = (float)(1 << BX_DSH);
     for (int j = threadIdx.x; j < wl; j += blockDim.x) {
         int slot = (s0 + j) % Wring;                       /* position s0+j -> ring slot */
-        const float *kh = Kc + (size_t)slot * KVD + (size_t)kvh * HD;
+        const KV *kh = Kc + (size_t)slot * KVD + (size_t)kvh * HD;
         /* G-BX-ATTN-FAST (2026-07-03): chunked residue fold — identical residues
          * (mod is a ring homomorphism over int64 sums), 64x fewer int64 % ops.
          * Headroom: |ea*eb| <= 2^56, 64 terms <= 2^62 < 2^63. Same fold as
@@ -736,7 +790,7 @@ __global__ void k_attn_decode_ring_bx(const float *q, const float *Kc, const flo
         int cnt = 0;
         for (int i = 0; i < HD; i++) {
             long long ea = (long long)llrintf(qh[i] * DSC);
-            long long eb = (long long)llrintf(kh[i] * DSC);
+            long long eb = (long long)llrintf(kv_ld(kh, i) * DSC);
             acc += ea * eb;
             if (++cnt == 64) {
                 a1 = ((a1 + acc) % BX_Q1 + BX_Q1) % BX_Q1;
@@ -774,7 +828,7 @@ __global__ void k_attn_decode_ring_bx(const float *q, const float *Kc, const flo
         int cnt = 0;
         for (int j = 0; j < wl; j++) {
             int slot = (s0 + j) % Wring;
-            long long ev = (long long)llrintf(Vc[(size_t)slot * KVD + (size_t)kvh * HD + i] * DSC);
+            long long ev = (long long)llrintf(kv_ld(Vc, (size_t)slot * KVD + (size_t)kvh * HD + i) * DSC);
             acc += shlr[j] * ev;
             if (++cnt == 64) {
                 a1 = ((a1 + acc) % BX_Q1 + BX_Q1) % BX_Q1;
@@ -2238,7 +2292,8 @@ __global__ void k_argmax(const float *logits, int n, int *out_tok);
 /* BETA.2 position-indirect kernels reused by the ETA.5b graph path (defined below). */
 __global__ void k_rope_dyn(float *base, int n_heads, int d, int rowstride,
                            float rbase, const int *dpos);
-__global__ void k_kv_store(float *Kc, float *Vc, const float *dk, const float *dv,
+template <typename KV>
+__global__ void k_kv_store_T(KV *Kc, KV *Vc, const float *dk, const float *dv,
                            const int *dpos, size_t layer_off, int KVD);
 __global__ void k_argmax_at(const float *logits, int n, int *dseq, const int *dpos);
 __global__ void k_incr_pos(int *dpos);
@@ -2343,7 +2398,8 @@ __global__ void k_rope_freqs_dyn(float *base, int n_heads, int d, float rbase,
 /* windowed single-query GQA at the DEVICE position (k_attn_decode_win + *dpos).
  * ctx = *dpos+1; s0 = max(0, pos-win+1). Shared mem is FIXED at capture (P floats)
  * — slots below s0 / past ctx are simply untouched. */
-__global__ void k_attn_decode_win_dyn(const float *q, const float *Kc, const float *Vc,
+template <typename KV>
+__global__ void k_attn_decode_win_dyn_T(const float *q, const KV *Kc, const KV *Vc,
                                       const int *dpos, int KVD, int HD, int group,
                                       float ascale, int win, float *ao) {
     extern __shared__ float sc[];
@@ -2353,9 +2409,9 @@ __global__ void k_attn_decode_win_dyn(const float *q, const float *Kc, const flo
     int s0 = (win >= 0 && pos - win + 1 > 0) ? pos - win + 1 : 0;
     const float *qh = q + (size_t)h * HD;
     for (int s = s0 + threadIdx.x; s < ctx; s += blockDim.x) {
-        const float *kh = Kc + (size_t)s * KVD + (size_t)kvh * HD;
+        const KV *kh = Kc + (size_t)s * KVD + (size_t)kvh * HD;
         float acc = 0.0f;
-        for (int i = 0; i < HD; i++) acc += qh[i] * kh[i];
+        for (int i = 0; i < HD; i++) acc += qh[i] * kv_ld(kh, i);
         sc[s] = acc * ascale;
     }
     __syncthreads();
@@ -2372,7 +2428,7 @@ __global__ void k_attn_decode_win_dyn(const float *q, const float *Kc, const flo
     for (int i = threadIdx.x; i < HD; i += blockDim.x) {
         float acc = 0.0f;
         for (int s = s0; s < ctx; s++)
-            acc += sc[s] * Vc[(size_t)s * KVD + (size_t)kvh * HD + i];
+            acc += sc[s] * kv_ld(Vc, (size_t)s * KVD + (size_t)kvh * HD + i);
         ao[(size_t)h * HD + i] = acc * inv;
     }
 }
@@ -3219,10 +3275,10 @@ extern "C" int gemma4_decode_cuda(const qwen3_model *m, int32_t *seq,
                     {   const int ctx = pos + 1;
                         int bd = hd > ctx ? hd : ctx; if (bd > 1024) bd = 1024;
                         if (sp_byteexact_attn())
-                            k_attn_decode_win_bx<<<nh, bd, (size_t)ctx*sizeof(long long), st>>>(
+                            k_attn_decode_win_bx_T<float><<<nh, bd, (size_t)ctx*sizeof(long long), st>>>(
                                 dq, Kuse, Vuse, ctx, kvd, hd, grp, 1.0f, win, dao);
                         else
-                            k_attn_decode_win<<<nh, bd, (size_t)ctx*sizeof(float), st>>>(
+                            k_attn_decode_win_T<float><<<nh, bd, (size_t)ctx*sizeof(float), st>>>(
                                 dq, Kuse, Vuse, ctx, kvd, hd, grp, 1.0f, win, dao); }
                     MMD(&g_w.Wo[L], dao, dap);
                     k_rmsnorm<<<1, 256, 0, st>>>(dap, g_w.post_attn[L], E, eps, dnx);
@@ -3287,7 +3343,7 @@ extern "C" int gemma4_decode_cuda(const qwen3_model *m, int32_t *seq,
                     if (ffac) k_rope_freqs_dyn<<<nkv, hd/2, 0, st>>>(dk, nkv, hd, rbase, ffac, dpos);
                     else      k_rope_dyn<<<nkv, hd/2, 0, st>>>(dk, nkv, hd, kvd, rbase, dpos);
                     k_rmsnorm_head_noweight<<<nkv, 256, 0, st>>>(dv, nkv, hd, kvd, eps);
-                    k_kv_store<<<(unsigned)((kvd+255)/256), 256, 0, st>>>(dKc[L], dVc[L], dk, dv, dpos, 0, kvd);
+                    k_kv_store_T<float><<<(unsigned)((kvd+255)/256), 256, 0, st>>>(dKc[L], dVc[L], dk, dv, dpos, 0, kvd);
                     Kuse = dKc[L]; Vuse = dVc[L];
                 } else {
                     const int src = kvfs - (global ? 1 : 2);
@@ -3295,7 +3351,7 @@ extern "C" int gemma4_decode_cuda(const qwen3_model *m, int32_t *seq,
                     if (!Kuse || !Vuse) { sp_set_error("g4 sharer before owner"); goto done; }
                 }
                 {   int bd = hd > 256 ? hd : 256; if (bd > 1024) bd = 1024;
-                    k_attn_decode_win_dyn<<<nh, bd, attn_shm, st>>>(
+                    k_attn_decode_win_dyn_T<float><<<nh, bd, attn_shm, st>>>(
                         dq, Kuse, Vuse, dpos, kvd, hd, grp, 1.0f, win, dao); }
                 MMD(&g_w.Wo[L], dao, dap);
                 k_rmsnorm<<<1, 256, 0, st>>>(dap, g_w.post_attn[L], E, eps, dnx);
@@ -3663,15 +3719,15 @@ extern "C" int gemma4_decode_cuda(const qwen3_model *m, int32_t *seq,
                 } else if (swa_ring && !global && !xbar_recall_on) {   /* P3.2-b-2a: ring read, window-only */
                     const int wl = (ctx < ws) ? ctx : ws;       /* in-window length present in the ring */
                     int bd = hd > wl ? hd : wl; if (bd > 1024) bd = 1024;
-                    k_attn_decode_ring<<<nh, bd, (size_t)wl*sizeof(float), st>>>(
+                    k_attn_decode_ring_T<float><<<nh, bd, (size_t)wl*sizeof(float), st>>>(
                         dq, Kuse, Vuse, ctx, kvd, hd, grp, 1.0f, win, Wring, dao);
                 } else {
                     int bd = hd > ctx ? hd : ctx; if (bd > 1024) bd = 1024;
                     if (sp_byteexact_attn())
-                        k_attn_decode_win_bx<<<nh, bd, (size_t)ctx*sizeof(long long), st>>>(
+                        k_attn_decode_win_bx_T<float><<<nh, bd, (size_t)ctx*sizeof(long long), st>>>(
                             dq, Kuse, Vuse, ctx, kvd, hd, grp, 1.0f, win, dao);
                     else
-                        k_attn_decode_win<<<nh, bd, (size_t)ctx*sizeof(float), st>>>(
+                        k_attn_decode_win_T<float><<<nh, bd, (size_t)ctx*sizeof(float), st>>>(
                             dq, Kuse, Vuse, ctx, kvd, hd, grp, 1.0f, win, dao);
                 } }
             { static int _attn_diag = 0; cudaError_t _ae = cudaPeekAtLastError();   /* XBAR diag: name the failing attention launch (print-once) */
@@ -4259,7 +4315,7 @@ static int g4_kv_launch_full(sp_g4_kv *s, int do_head) {
             if (ffac) k_rope_freqs_dyn<<<nkv, hd/2, 0, st>>>(s->dk, nkv, hd, rbase, ffac, dpos);
             else      k_rope_dyn<<<nkv, hd/2, 0, st>>>(s->dk, nkv, hd, kvd, rbase, dpos);
             k_rmsnorm_head_noweight<<<nkv, 256, 0, st>>>(s->dv, nkv, hd, kvd, eps);
-            k_kv_store<<<(unsigned)((kvd+255)/256), 256, 0, st>>>(dKc[L], dVc[L], s->dk, s->dv, dpos, 0, kvd);
+            k_kv_store_T<float><<<(unsigned)((kvd+255)/256), 256, 0, st>>>(dKc[L], dVc[L], s->dk, s->dv, dpos, 0, kvd);
             Kuse = dKc[L]; Vuse = dVc[L];
         } else {
             const int src = kvfs - (global ? 1 : 2);
@@ -4267,7 +4323,7 @@ static int g4_kv_launch_full(sp_g4_kv *s, int do_head) {
             if (!Kuse || !Vuse) { sp_set_error("g4_kv: sharer before owner"); return -1; }
         }
         {   int bd = hd > 256 ? hd : 256; if (bd > 1024) bd = 1024;
-            k_attn_decode_win_dyn<<<nh, bd, attn_shm, st>>>(
+            k_attn_decode_win_dyn_T<float><<<nh, bd, attn_shm, st>>>(
                 s->dq, Kuse, Vuse, dpos, kvd, hd, grp, 1.0f, win, s->dao); }
         KMMD(&g_w.Wo[L], s->dao, s->dap);
         k_rmsnorm<<<1, 256, 0, st>>>(s->dap, g_w.post_attn[L], E, eps, s->dnx);
@@ -4489,7 +4545,7 @@ static int g4_kv_step(sp_g4_kv *s, int do_head) {
                 cudaMemcpyAsync(dKc[L] + ws*kvd, s->dk, (size_t)kvd*sizeof(float), cudaMemcpyDeviceToDevice, st);
                 cudaMemcpyAsync(dVc[L] + ws*kvd, s->dv, (size_t)kvd*sizeof(float), cudaMemcpyDeviceToDevice, st);
             } else {
-                k_kv_store<<<(unsigned)((kvd+255)/256), 256, 0, st>>>(dKc[L], dVc[L], s->dk, s->dv, dpos, 0, kvd);
+                k_kv_store_T<float><<<(unsigned)((kvd+255)/256), 256, 0, st>>>(dKc[L], dVc[L], s->dk, s->dv, dpos, 0, kvd);
             }
             Kuse = dKc[L]; Vuse = dVc[L];
         } else {
@@ -4514,10 +4570,10 @@ static int g4_kv_step(sp_g4_kv *s, int do_head) {
                     * keeps S1's FP-reorder immunity on the 40 SWA layers when the ring is armed). Shared
                     * = wl*int64; widen the block to cover the window like the non-ring bx path. */
                     int bdb = hd > wl ? hd : wl; if (bdb > 1024) bdb = 1024;
-                    k_attn_decode_ring_bx<<<nh, bdb, (size_t)wl*sizeof(long long), st>>>(
+                    k_attn_decode_ring_bx_T<float><<<nh, bdb, (size_t)wl*sizeof(long long), st>>>(
                         s->dq, Kuse, Vuse, ctx, kvd, hd, grp, 1.0f, win, s->ring_W, s->dao);
                 } else {
-                    k_attn_decode_ring<<<nh, bd, (size_t)wl*sizeof(float), st>>>(
+                    k_attn_decode_ring_T<float><<<nh, bd, (size_t)wl*sizeof(float), st>>>(
                         s->dq, Kuse, Vuse, ctx, kvd, hd, grp, 1.0f, win, s->ring_W, s->dao);
                 }
             } else if (s->bx_on) {                    /* B1: byte-exact (auditable) decode attention.
@@ -4534,14 +4590,14 @@ static int g4_kv_step(sp_g4_kv *s, int do_head) {
                   if (pshm < 0) { const char *pe = getenv("SP_BX_PROBE"); pshm = pe ? atoi(pe) : 0; }
                   if ((pshm & 16) && bx_shm < 48u*1024u) bx_shm = 48u*1024u;
                   if (pshm & 32) bx_shm = ((bx_shm + 16383u) / 16384u) * 16384u; }
-                k_attn_decode_win_bx<<<nh, bdb, bx_shm, st>>>(
+                k_attn_decode_win_bx_T<float><<<nh, bdb, bx_shm, st>>>(
                     s->dq, Kuse, Vuse, ctx, kvd, hd, grp, 1.0f, win, s->dao);
                 { static int warned = 0;
                   if (!warned) { cudaError_t le = cudaGetLastError();
                     if (le != cudaSuccess) { fprintf(stderr, "[g4-kv] BX ATTN LAUNCH FAILED: %s (nh=%d bd=%d shm=%zu ctx=%d)\n",
                         cudaGetErrorName(le), nh, bdb, bx_shm, ctx); warned = 1; } } }
             } else {
-                k_attn_decode_win_dyn<<<nh, bd, attn_shm, st>>>(
+                k_attn_decode_win_dyn_T<float><<<nh, bd, attn_shm, st>>>(
                     s->dq, Kuse, Vuse, dpos, kvd, hd, grp, 1.0f, win, s->dao);
                 /* G-12B-SERVE root-cause telemetry (2026-07-03): at PMAX=20000 attn_shm =
                  * 78KB > Turing's 64KB max — the launch fails cudaErrorInvalidConfiguration
@@ -5645,7 +5701,7 @@ extern "C" int gemma4_draft_step(sp_g4_kv *s, const float *feat_host, int token,
             k_rope_freqs_at<<<16, hd/2>>>(sq, 16, hd, rb, g_draft.rope_freqs, ctx);
         else
             k_rope_at<<<16, hd/2>>>(sq, 16, hd, qd, rb, ctx);          /* SWA: plain base-rope; query pos = ctx */
-        k_attn_decode_ring<<<16,256,(size_t)ctx*sizeof(float)>>>(sq, s->dKc[il_src], s->dVc[il_src],
+        k_attn_decode_ring_T<float><<<16,256,(size_t)ctx*sizeof(float)>>>(sq, s->dKc[il_src], s->dVc[il_src],
                                                                  ctx, KVD, HD, group, asc, win, Wring, sao);
         if (gemm(g_w.cublas, g_draft.wo[il], sao, satt, 1, qd, HID)) return -1;
         k_rmsnorm<<<1,256>>>(satt, g_draft.post_attn[il], HID, eps, snorm);
@@ -5728,7 +5784,7 @@ extern "C" int gemma4_draft_body(sp_g4_kv *s, const float *feat_host, int token,
             k_rope_freqs_at<<<16, hd/2>>>(bq, 16, hd, rb, g_draft.rope_freqs, ctx);
         else
             k_rope_at<<<16, hd/2>>>(bq, 16, hd, qd, rb, ctx);
-        k_attn_decode_ring<<<16,256,(size_t)ctx*sizeof(float)>>>(bq, s->dKc[il_src], s->dVc[il_src],
+        k_attn_decode_ring_T<float><<<16,256,(size_t)ctx*sizeof(float)>>>(bq, s->dKc[il_src], s->dVc[il_src],
                                                                  ctx, KVD, HD, group, asc, win, Wring, bao);
         if (gemv_t(g_w.cublas, g_draft.wo[il], bao, batt, qd, HID)) return -1;
         k_rmsnorm<<<1,256>>>(batt, g_draft.post_attn[il], HID, eps, bnorm);
@@ -8710,13 +8766,17 @@ __global__ void k_rope_dyn(float *base, int n_heads, int d, int rowstride,
     (void)n_heads; (void)rowstride;
 }
 
-/* Store the finalized single-token K/V into the persistent cache at (layer,*dpos). */
-__global__ void k_kv_store(float *Kc, float *Vc, const float *dk, const float *dv,
+/* Store the finalized single-token K/V into the persistent cache at (layer,*dpos).
+ * ADR-012: templated on the cache element type. <float> is byte-identical to what it replaces;
+ * <__half> is the ONE place a value is narrowed, and it happens exactly once per token per
+ * layer, on write. Reads are pure widening (__half2float is exact). */
+template <typename KV>
+__global__ void k_kv_store_T(KV *Kc, KV *Vc, const float *dk, const float *dv,
                            const int *dpos, size_t layer_off, int KVD) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < KVD) {
         size_t off = layer_off + (size_t)(*dpos) * KVD + i;
-        Kc[off] = dk[i]; Vc[off] = dv[i];
+        kv_st(Kc, off, dk[i]); kv_st(Vc, off, dv[i]);
     }
 }
 
@@ -8917,7 +8977,7 @@ extern "C" int qwen3_decode_cuda(const qwen3_model *m, int32_t *seq,
                 k_rmsnorm_head<<<NKV,HD,0,st>>>(dk, g_w.k_norm[L], NKV, HD, KVD, eps);
                 k_rope_dyn<<<NH,HD/2,0,st>>>(dq, NH, HD, QD, base, dpos);
                 k_rope_dyn<<<NKV,HD/2,0,st>>>(dk, NKV, HD, KVD, base, dpos);
-                k_kv_store<<<(unsigned)((KVD+255)/256),256,0,st>>>(dKc,dVc,dk,dv,dpos,loff,KVD);
+                k_kv_store_T<float><<<(unsigned)((KVD+255)/256),256,0,st>>>(dKc,dVc,dk,dv,dpos,loff,KVD);
                 int bd=HD>256?HD:256; if(bd>1024)bd=1024;
                 k_attn_decode_dyn<<<NH,bd,attn_shm,st>>>(dq,dKc,dVc,dpos,KVD,HD,group,ascale,loff,dao);
                 MM(&g_w.Wo[L],dao,dap);
