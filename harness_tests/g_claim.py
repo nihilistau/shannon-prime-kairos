@@ -175,6 +175,65 @@ check("find_contradicted() no longer exists (it could not do what its name said)
 check("nothing writes DISPUTED from a string comparison",
       all(r.get("status") != lc.STATUS_DISPUTED for r in M._load()))
 
+
+# ── 5. EVERY DOOR, NOT JUST THE ONE I HAPPENED TO FIX ─────────────────────────────────
+# I repaired search_memories_ranked_rows, wrote a commit message about how an invariant enforced
+# in one of two paths is enforced in neither — and its TWIN, search_memories_ranked, sat directly
+# below it doing the identical unfiltered _load(). It feeds the `search_memories` TOOL, which is
+# LIVE (MEMORY_TOOLS_EXTRA, wired into both the spine and agent toolsets). I found the class,
+# named the class, and then fixed the instance in front of me and stopped looking.
+#
+# So this section asserts the RULE AT EVERY DOOR SHE CAN SPEAK THROUGH, by enumerating them.
+print("\n5. no live tool can hand her a tombstone — every door, not just the fixed one")
+reset()
+M.remember("My GPU is an RTX 2060", source="user turn")
+M.remember("My GPU is an RTX 3090", source="user turn")
+
+check("recall() tool", "2060" not in M.recall("what GPU do I have"))
+check("search_memories() tool  [THE TWIN — this was live and broken]",
+      "2060" not in M.search_memories("GPU"))
+check("search_memories_ranked() (the twin's engine)",
+      all("2060" not in t for _s, t in M.search_memories_ranked("GPU", min_overlap=0.1)))
+check("provenance() tool", "2060" not in M.provenance("my GPU"))
+check("list_memories() tool", "2060" not in M.list_memories())
+check("the automatic per-turn injection", "My GPU is an RTX 2060" not in injected("what GPU do I have?"))
+
+
+# ── 6. FORGETTING IS NOT DESTROYING ───────────────────────────────────────────────────
+# forget() is in the LIVE core toolset (MEMORY_TOOLS) and it read:
+#     kept = [e for e in eps if _text(e) != victim]
+#     with open(p, "w") as f: ...        <- the registry, rewritten WITHOUT the row
+# The one doctrine this store has is that nothing is ever destroyed, and the whole lifecycle
+# system was built on top of a live tool that opens the file in "w" and drops a line. She could
+# call it herself, mid-conversation, on a 0.3 bag-of-words match.
+print("\n6. forget() retires. it does not erase.")
+reset()
+M.remember("Knack is terrified of open water", source="user turn")
+M.remember("My cat's name is Tuffy", source="user turn")
+before = len(M._load())
+r = M.forget("the open water thing")
+rows = M._load()
+
+check("the row count DID NOT SHRINK (nothing left the disk)", len(rows) == before,
+      "%d -> %d" % (before, len(rows)))
+check("the fact is retired, not gone",
+      any(x.get("lifecycle") and "open water" in x.get("text", "") for x in rows))
+check("...and carries a breadcrumb saying WHY it went quiet",
+      any(x.get("superseded_by") == "forget" and x.get("forgotten_at")
+          for x in rows if x.get("lifecycle")))
+# NB: assert on a word that appears ONLY IN THE FACT ("terrified"), never one that also appears
+# in the QUERY — recall()'s miss message echoes the query back ("nothing in memory about 'open
+# water'"), so testing for "open water" here matches my own question and calls it a memory. I did
+# exactly that and it failed two checks that were already passing. Measuring your own footprints
+# and reporting them as the animal is the house speciality; the gate does not get an exemption.
+check("she cannot recall it",
+      "terrified" not in M.recall("how do I feel about open water"))
+check("she cannot search it up",
+      "terrified" not in M.search_memories("open water"))
+check("the tool says so honestly", "not erased" in r.lower(), r)
+check("the OTHER fact is untouched",
+      any(not x.get("lifecycle") and "Tuffy" in x.get("text", "") for x in rows))
+
 os.unlink(_reg)
 print("\nG-CLAIM  %d/%d" % (PASS, PASS + FAIL))
 sys.exit(1 if FAIL else 0)

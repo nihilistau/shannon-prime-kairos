@@ -324,8 +324,12 @@ def remember_about_self(fact: str) -> str:
 
 def provenance(fact: str) -> str:
     """Answer "where/when did I learn X?" — return the source + timestamp of the stored fact
-    that best matches the query (MEM-OKF v2 §M1). The recallable provenance lane."""
-    eps = _load()
+    that best matches the query (MEM-OKF v2 §M1). The recallable provenance lane.
+
+    Retired rows are skipped: this is a TOOL SHE CAN SPEAK FROM, not the audit lane. Asked "where
+    did I learn that?" she must not answer out of a tombstone — the source of a fact that is no
+    longer true is a true answer to a question nobody asked."""
+    eps = [e for e in _load() if not e.get("lifecycle")]
     if not eps:
         return "(memory is empty)"
     best, hit = -1.0, None
@@ -341,25 +345,53 @@ def provenance(fact: str) -> str:
 
 
 def forget(fact: str) -> str:
-    """Remove a stored fact from memory (matches the closest stored fact by overlap)."""
-    p = _reg_path()
-    eps = _load()
-    if not eps:
+    """Retire a stored fact (matches the closest LIVE fact by overlap). It stops being recalled
+    and stops being spoken. It is NOT erased — see below.
+
+    ── THIS TOOL HARD-DELETED THE ROW. FOR MONTHS. (2026-07-14) ────────────────────────────
+    It read:
+
+        kept = [e for e in eps if _text(e) != victim]
+        with open(p, "w", encoding="utf-8") as f:      # <- rewrites the registry WITHOUT it
+            for e in kept:
+                f.write(json.dumps(e) + "\\n")
+
+    The single doctrine this store has — NOTHING IS EVER DESTROYED; tombstone or quarantine, never
+    delete — and sitting in the LIVE core toolset the whole time was a function that opened the
+    registry in "w" and wrote it back short a line. Every tombstone, every supersede chain, every
+    `superseded_by` breadcrumb, the entire audit lane that exists so we can ask "what did she
+    believe, and when, and who told her" — all of it defeated by one tool call.
+
+    And she can call it herself, on a 0.3 overlap match, mid-conversation. "You can forget about
+    the water thing" and the closest row by bag-of-words overlap leaves the disk forever.
+
+    I built the lifecycle system ON TOP of a function that deletes. Nobody grepped for the "w".
+
+    NOW: it tombstones. lifecycle=1 (which is what the ENGINE keys on — recall.rs:587 skips it),
+    plus a `forgotten_at` and a `superseded_by` breadcrumb so the audit lane can always answer WHY
+    a row went quiet. She cannot recall it, she cannot speak it, and it is still there. Forgetting
+    and destroying are not the same act, and only one of them is reversible.
+
+    (An operator who truly wants a row GONE has ops.compact_registry() — a deliberate, logged,
+    out-of-band act. That is a very different thing from a conversational tool call.)
+    """
+    rows = _load()
+    if not rows:
         return "(memory is empty)"
-    best = -1.0
-    victim = ""
-    for e in eps:
+    best, hit = -1.0, None
+    for e in rows:
+        if e.get("lifecycle"):
+            continue                       # already retired: forgetting it again is a no-op
         ov = _overlap(fact, _text(e))
         if ov > best:
-            best = ov
-            victim = _text(e)
-    if best < 0.3 or not victim:
+            best, hit = ov, e
+    if best < 0.3 or hit is None:
         return f"no stored fact matches '{fact}'"
-    kept = [e for e in eps if _text(e) != victim]
-    with open(p, "w", encoding="utf-8") as f:
-        for e in kept:
-            f.write(json.dumps(e) + "\n")
-    return f"forgot: {victim}"
+    hit["lifecycle"] = 1
+    hit["superseded_by"] = "forget"
+    hit["forgotten_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    _save_all(rows)
+    return f"forgotten (retired, not erased): {_text(hit)}"
 
 
 def count_memories() -> str:
@@ -472,30 +504,34 @@ def search_memories_ranked_rows(query: str, k: int = 5, min_overlap: float = 0.2
     return scored[:k]
 
 
-def search_memories_ranked(query: str, k: int = 5, min_overlap: float = 0.25):
-    """Internal: [(score, text)] of the top-k facts by token overlap with the query,
-    filtered at min_overlap. The RecallDecider + search tool ride this.
+def search_memories_ranked(query: str, k: int = 5, min_overlap: float = 0.25,
+                           include_retired: bool = False):
+    """Internal: [(score, TEXT)] of the top-k live facts. The search tool rides this.
 
-    P1b-2 live-play fix (2026-07-11): the query-normalized overlap dilutes under
-    polite prefixes — "quick check: what is my name?" tokenizes to {quick, check,
-    name} = 1/3 = 0.33, one hundredth UNDER the 0.34 recall threshold, while bare
-    "what is my name?" scores 1.0. The question is almost always the FINAL
-    clause, so score the last [.:;!]-separated clause too and take the max —
-    prefix chatter can no longer dilute a clean question. Deterministic; the
-    junk-recall floor (QONLY gate + threshold) is unchanged for single-clause turns.
+    ── I FIXED ONE OF TWO TWINS, AND THE OTHER ONE WAS RIGHT HERE (2026-07-14) ─────────────
+    Hours after committing the fix for search_memories_ranked_rows — with a commit message
+    explaining at length that AN INVARIANT ENFORCED IN ONE OF TWO PATHS IS ENFORCED IN NEITHER —
+    the sweep for OTHER instances of that class found this function, DIRECTLY BELOW IT, doing the
+    identical thing: `eps = _load()` over every row, tombstones included.
+
+    And it is not dead code. It is the `search_memories` TOOL, and that tool is LIVE:
+
+        MEMORY_TOOLS_EXTRA = [provenance, search_memories, memory_stats]
+        spine.py:287   core = MEMORY_TOOLS + MEMORY_TOOLS_EXTRA[:2]     <- both of them
+        agent.py:230   tools = MEMORY_TOOLS + MEMORY_TOOLS_EXTRA        <- all three
+
+    So while I was congratulating myself for moving the lifecycle filter into "the seam", there
+    were TWO seams. I had found the class, named the class, written the class on the wall — and
+    then fixed the instance in front of me and stopped looking. THAT is the actual bug, and it is
+    mine, not the code's.
+
+    THE FIX IS NOT A THIRD COPY OF THE FILTER. A rule you have to remember is a rule you will
+    forget; there is now exactly ONE function that reads the store for recall, and this one is a
+    projection of it. The twin cannot drift because the twin no longer exists.
     """
-    clause = re.split(r"[.:;!]", query)[-1].strip() or query
-    eps = _load()
-    scored = []
-    for e in eps:
-        t = _text(e)
-        ov = _overlap(query, t)
-        if clause != query:
-            ov = max(ov, _overlap(clause, t))
-        if ov >= min_overlap:
-            scored.append((ov, t))
-    scored.sort(key=lambda x: -x[0])
-    return scored[:k]
+    return [(s, _text(e)) for s, e in
+            search_memories_ranked_rows(query, k=k, min_overlap=min_overlap,
+                                        include_retired=include_retired)]
 
 
 def search_memories(query: str) -> str:

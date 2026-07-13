@@ -199,10 +199,26 @@ def _is_evidence(row: dict) -> bool:
     (This is why the store needs a real claim status — candidate/observed/inferred/confirmed —
     as a first-class enum, instead of inferring epistemics from prose. Filed as its own task;
     this is the hardening that makes today's fix survive until then.)
+
+    ── THAT TASK IS DONE, SO THE PROSE-SNIFF IS NOW THE FALLBACK, NOT THE TEST (2026-07-14) ──
+    `status` exists. It is written at stamp() time from the authoring path, it cannot be mangled
+    by a maintenance script appending to a provenance string, and it is what this function should
+    always have been reading. The src sniff stays ONLY to classify legacy rows written before the
+    field existed — it is now a migration shim with an expiry date, not the mechanism.
+
+    AND A TOMBSTONE IS NOT NEWS. This is what the sweep for the recall-seam bug turned up here:
+    the evidence count included RETIRED rows, so a fact he corrected still counted as a fresh
+    reason to go and think about him. Superseded is superseded — on this path too.
     """
+    if row.get("lifecycle"):
+        return False                       # retired: not news, not evidence, not a reason to think
     if (row.get("speaker") or "user") == "self":
         return False                       # her own voice is not news from the world
-    src = (row.get("src") or "").lower()
+    from harness.skills import lifecycle as lc
+    st = row.get("status")
+    if st:                                 # the structured field wins whenever it is present
+        return st in lc._GROUND_TRUTH
+    src = (row.get("src") or "").lower()   # legacy rows only: written before `status` existed
     if "reflection" in src or "insight" in src:
         return False                       # a conclusion is not an observation
     return True
