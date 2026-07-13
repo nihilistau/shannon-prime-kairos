@@ -7,12 +7,13 @@ status: LIVE DOCUMENT — every new gate gets a row here, in the same commit tha
 
 # gates/GATE-INDEX.md
 
-54 executable gates live in `harness_tests/g_*.py`. Before this file, there was no
-single list of them, no record of which need a GPU, and no record of which are
-currently broken. An agent arriving cold could not answer "what proves this still
-works?" or "which gates can I run right now with no daemon up?". This is the answer.
+57 executable gates live in `harness_tests/g_*.py` (54, plus G-SECRET, G-ONEWRITER,
+and G-ONEDOOR landed 2026-07-14). Before this file, there was no single list of
+them, no record of which need a GPU, and no record of which are currently broken.
+An agent arriving cold could not answer "what proves this still works?" or "which
+gates can I run right now with no daemon up?". This is the answer.
 
-Only ~14 of the 54 have a markdown write-up in `gates/*.md`. That is not a defect
+Only ~14 of the 57 have a markdown write-up in `gates/*.md`. That is not a defect
 this file fixes — a receipt still belongs in its own `G-*.md` when a gate lands or
 a regression is found. This file is the index, not a replacement for the receipts.
 
@@ -50,7 +51,9 @@ in a loop without excluding them will stall for up to 15 minutes per file.
 | G-ADMISSION | `harness_tests/g_admission.py` | Feeds the exact class of sentence that filled the registry 404 times (grammatical, declarative, about nobody) and asserts it is refused; a real personal fact still lands, v2 schema. | LIVE | `python harness_tests/g_admission.py` (warm stack, gateway :8800) |
 | G-MEMORY-LIFECYCLE / G-MEMORY-PROVENANCE | `harness_tests/g_memory_lifecycle.py` | WRITE / SUPERSEDE / PROVENANCE — a fact can be stored deliberately, a changed fact tombstones the old one forward, self-facts and user-facts never merge. | OFFLINE | `python harness_tests/g_memory_lifecycle.py` |
 | G-CLAIM | `harness_tests/g_claim.py` | Three bugs on the REAL code path (`spine.recall_decider`): the attribute-slot collision that let "cat person" overwrite "terrified of open water", the bypassed tombstone filter in automatic recall, and testimony-outranks-inference at the recall seam. | OFFLINE | `python harness_tests/g_claim.py` |
-| G-SECRET | `harness_tests/g_secret.py` | The privacy decline is REACHABLE, end to end: `lifecycle.classify()` (`lifecycle.py:245-265`) can now emit `private-secret` — checked FIRST, before relationship/identity/event (`_SECRET`/`_SECRET_POSS` at `lifecycle.py:220-233`) — and `spine.recall_decider()`'s zero-inference decline actually fires off a row `remember()` produced, with the secret text never appearing in the payload. 22/22. | OFFLINE | `python harness_tests/g_secret.py` |
+| G-SECRET | `harness_tests/g_secret.py` | The privacy decline is REACHABLE, end to end: `lifecycle.classify()` (`lifecycle.py:245-265`) can now emit `private-secret` — checked FIRST, before relationship/identity/event (`_SECRET`/`_SECRET_POSS` at `lifecycle.py:220-233`) — and `spine.recall_decider()`'s zero-inference decline actually fires off a row `remember()` produced, with the secret text never appearing in the payload. Never sets `mem_class` itself; §4 asserts the generalisation — every `mem_class` the decider BRANCHES ON must be one the writer can PRODUCE. 22/22. | OFFLINE | `python harness_tests/g_secret.py` |
+| G-ONEWRITER | `harness_tests/g_onewriter.py` | Exactly one writer touches `var/memory/registry.jsonl`. The daemon carried two write flags — `growth`/`SP_B4_NIGHTSHIFT` and `store_verb`/`SP_MEM_STORE` — and the 2026-07-12 "one memory authority" fix retired only the first; `store_verb` stayed armed on 12 of 13 profiles, including the live one (`kairos.toml` shipped armed for two days), which meant a daemon-side registry write with speaker hardcoded, no status, no admission, no identity firewall, no supersede, and zero model inference. `serve.py` now refuses to boot any profile that arms either daemon writer while `agent.authority = "spine"`. The gate walks every `profiles/*.toml`, not just the live one. 35/35. | OFFLINE | `python harness_tests/g_onewriter.py` |
+| G-ONEDOOR | `harness_tests/g_onedoor.py` | `serve.py`'s central promise — "anything not mapped here does not exist" — was false. `build_env` did `e = dict(os.environ)` and only overlaid, never cleared: of 270 `SP_*` vars read by the engine/harness, `serve.py` set 49 and 221 were inherited from whatever shell you were standing in. 28 touch memory, including `SP_DECIDE` (model-driven autonomous supersede — retires facts), `SP_FORGET` (autonomous forgetting), `SP_MEM_LIFECYCLE` (tombstone writes on a path separate from harness `forget()`), and `SP_NIGHTSHIFT_LIVE`/`SP_NIGHTSHIFT_OFFLINE` (further capture paths `growth=false` never reached). The base env is now clean, the dangerous knobs are pinned hard-off by name, and `SP_PASSTHROUGH` is the deliberate, announced escape hatch — it cannot smuggle in a memory writer. The gate derives the `SP_*` surface from source at runtime and asserts the property (no inherited `SP_*` survives `build_env`), not a hardcoded list that rots the day someone adds a `getenv`. 15/15. | OFFLINE | `python harness_tests/g_onedoor.py` |
 | G-CLOCK | `harness_tests/g_clock.py` | Every timestamp survives its own round trip (`gmtime`/`calendar.timegm`, never `mktime`) — the same UTC-offset bug fixed twice, 8 hours apart, in `watch.py` and `lifecycle.py`. | OFFLINE | `python harness_tests/g_clock.py` |
 
 ### Memory — salience, reflection, silence, recall shape
@@ -185,6 +188,16 @@ compiles — never that the thing it guards actually fires. Four confirmed insta
    secret text never appears in the payload. G-SECRET closes the hole this
    entry describes; g_mempolicy_v3_offline.py's dispatch-only scope is still
    accurately described above.
+
+4. **g_onewriter.py's first cut** asserted "every profile boots." Three
+   profiles — `drafter-datagen`, `headprobe`, `l1ref` — failed: they carry
+   `no_repeat_ngram=3` and are refused by the older G-VERBATIM lint, which they
+   are MEANT to override deliberately (`SP_ALLOW_NGRAM_BAN=1`). "Every profile
+   boots" is not true and should not be. The assertion was narrowed to what it
+   actually means to check: no shipped profile is refused for arming TWO
+   memory authorities. Lesson: a gate that asserts what you WANT rather than
+   what is TRUE is not a gate — and this is the second time in two days (see
+   the G-SILENCE entry above).
 
 **The lesson: a gate that supplies its own precondition proves only that the
 guard compiles.** Assert against the same producer the live path actually calls

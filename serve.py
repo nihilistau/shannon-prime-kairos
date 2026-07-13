@@ -86,7 +86,58 @@ def build_env(c: dict) -> dict:
             "  The daemon wins, because it writes first. Set them false, or set authority to "
             "something other than 'spine' if you genuinely want the daemon to own memory.")
 
-    e = dict(os.environ)
+    # ── "ANYTHING NOT MAPPED HERE DOES NOT EXIST" WAS NOT TRUE (2026-07-14) ───────────────
+    #
+    # This line read `e = dict(os.environ)`. It INHERITED the whole parent environment and only
+    # OVERLAID the ~49 mapped keys. It never cleared anything. So the docstring above — the entire
+    # promise of this file, the reason it is called the only door — was false:
+    #
+    #     SP_* read by the engine + harness : 270
+    #     SP_* set  by serve.py             :  49
+    #     UNMAPPED, inherited from whatever shell you happened to be in : 221
+    #
+    # And 28 of those touch memory. Among them:
+    #
+    #     SP_DECIDE            a MODEL-DRIVEN autonomous supersede pass — it RETIRES his facts
+    #     SP_FORGET            autonomous forgetting
+    #     SP_MEM_LIFECYCLE     tombstone writes, from a different code path than forget()
+    #     SP_MEM_RECONCILE     + _SEC
+    #     SP_NIGHTSHIFT_LIVE   + SP_NIGHTSHIFT_OFFLINE — MORE capture paths, not the one growth
+    #                          controls, so the store_verb fix did not reach them either
+    #
+    # Leave `set SP_FORGET=1` in a PowerShell window from a debugging session on Tuesday, and on
+    # Thursday `python serve.py agent` silently runs with autonomous forgetting armed. The profile
+    # says nothing about it. The banner would have shown it, if you read the banner. Nothing else
+    # would tell you, and his memories would just start going quiet.
+    #
+    # This is the same shape as store_verb and as the tombstone filter: A DOOR THAT ONLY GUARDS THE
+    # THINGS SOMEONE REMEMBERED TO LIST IS NOT A DOOR. It is a suggestion with good intentions.
+    #
+    # So the base is now CLEAN. Every SP_* is stripped, then the explicit table below puts back
+    # exactly what the profile asked for. Anything not mapped here genuinely does not exist now,
+    # which is what this file always claimed and never did.
+    #
+    # THE ESCAPE HATCH IS EXPLICIT, because the research knobs (SP_ARM_*, SP_XBAR_*, SP_EAGLE_*,
+    # SP_TELEPATHY_*) are real and people set them by hand:
+    #
+    #     set SP_PASSTHROUGH=SP_XBAR_ROW,SP_ARM_DUMP   ->  those two survive, and are ANNOUNCED.
+    #
+    # You may still do anything you like. You may no longer do it by accident.
+    e = {k: v for k, v in os.environ.items() if not k.startswith("SP_")}
+    stripped = sorted(k for k in os.environ if k.startswith("SP_"))
+    passthrough = [s.strip() for s in os.environ.get("SP_PASSTHROUGH", "").split(",") if s.strip()]
+    for name in passthrough:
+        if name in os.environ:
+            e[name] = os.environ[name]
+            stripped.remove(name) if name in stripped else None
+    if stripped:
+        print("[serve] STRIPPED %d inherited SP_* var(s) — the profile is the authority, not your "
+              "shell:\n         %s" % (len(stripped), ", ".join(stripped)))
+        print("         (to keep one deliberately: set SP_PASSTHROUGH=NAME1,NAME2)")
+    if passthrough:
+        print("[serve] PASSTHROUGH (deliberate, unmapped, NOT from the profile): %s"
+              % ", ".join(passthrough))
+
     e["PATH"] = paths["llvm_bin"].replace("/", "\\") + os.pathsep + e.get("PATH", "")
     b = lambda v: "1" if v else "0"
     e.update({
@@ -240,6 +291,25 @@ def build_env(c: dict) -> dict:
         "SP_MEM_CLASSIFY": b(mem["classify"]),
         "SP_MEM_POLICY": b(mem["policy"]),
         "SP_QKEY_MINT": b(mem["qkey_mint"]),
+
+        # ── THE DAEMON'S OTHER HANDS ON HIS MEMORY, PINNED SHUT (2026-07-14) ──────────────
+        # These are daemon-side writers/retirers that no profile knob has ever controlled and
+        # serve.py never set. The clean base above already removes them, so absence would be
+        # enough — TODAY. Absence is a bet that every one of these stays `== Some("1")` in Rust
+        # forever; flip one to `!= Some("0")` and it arms itself. His memory does not ride on a
+        # default staying what it happens to be, so they are pinned OFF, by name, greppably.
+        #
+        # They are NOT profile knobs. There is one memory authority (the harness) and these are
+        # all second ones. If you ever need one, it needs a knob, a doctrine and a gate — the same
+        # bar store_verb should have had to clear and didn't.
+        "SP_DECIDE": "0",           # model-driven autonomous SUPERSEDE — it retires his facts
+        "SP_FORGET": "0",           # autonomous forgetting
+        "SP_MEM_LIFECYCLE": "0",    # tombstone writes, on a different path than harness forget()
+        "SP_MEM_RECONCILE": "0",    # background reconcile pass
+        "SP_MEM_OKF_STORE": "0",
+        "SP_NIGHTSHIFT_LIVE": "0",  # MORE capture paths — growth=false never reached these
+        "SP_NIGHTSHIFT_OFFLINE": "0",
+        "SP_B4_ADMIT_PERSONAL": "0",
         # veto
         "SP_SPECTEST": b(veto.get("spectest", False)),
         "SP_SPECTEST_HEAD": paths["spectest_head"].replace("/", "\\"),

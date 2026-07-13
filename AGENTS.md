@@ -61,15 +61,19 @@ console (browser)  ──HTTP──▶  harness gateway :8800  ──HTTP──�
                                 (Python)                          (Rust)
 ```
 
-- **`serve.py` is THE ONLY DOOR into the engine.** It reads a profile (`profiles/*.toml`) and maps it to
-  the engine/gateway environment with an *explicit table*. If a knob is not mapped in `serve.py:build_env`,
-  the harness cannot reach it — several real features were unreachable for weeks because nobody mapped them.
+- **`serve.py` is THE ONLY DOOR into the engine**, and as of 2026-07-14 that is *literally* true rather
+  than aspirational. It reads a profile (`profiles/*.toml`) and maps it to the engine/gateway environment
+  with an explicit table. **Anything not in that table does not exist**: the base environment is stripped of
+  every `SP_*`, so a stray var in your shell cannot reach the engine. It used to inherit the lot —
+  270 `SP_*` are read by the tree, 49 were mapped, **221 came from whatever shell you were standing in**,
+  and 28 of those touch memory (`SP_DECIDE` is an autonomous supersede pass; `SP_FORGET` is autonomous
+  forgetting). Those are now pinned hard-off by name. Gate: **G-ONEDOOR**.
   Start the stack with `python serve.py agent`.
+- **Deliberate overrides still work; accidental ones do not.** `set SP_PASSTHROUGH=SP_XBAR_ROW,SP_ARM_DUMP`
+  keeps exactly those, and announces them at boot. It cannot be used to smuggle in a memory writer.
 - **`profiles/agent.toml` is the live production profile.** Read it before you theorise about behaviour;
-  it is the ground truth for what is armed.
-- **Caveat, verified:** `build_env` starts from `dict(os.environ)` and only *overlays*. It does not clear.
-  A stray `SP_*` var left in your shell from a debugging session **will** be inherited and will silently
-  contradict the profile. `serve.py` echoes the full effective env at boot — read the banner.
+  it is the ground truth for what is armed. `serve.py` refuses to boot a profile that arms two memory
+  writers (**G-ONEWRITER**), so the profile cannot lie to you either.
 
 | Where | What lives there |
 |---|---|
