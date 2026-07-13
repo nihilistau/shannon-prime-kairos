@@ -92,8 +92,10 @@ Other fields:
   trail. `supersedes` on the new row, `superseded_by`+`superseded_at` on the retired row(s)
   (stamped together in `memory.py:244-253`); `forgotten_at` is `forget()`'s breadcrumb
   (`memory.py:390-392`).
-- **`mem_class`** — see TRAP 1. Only ever `relationship | identity | event | preference |
-  fact` from the live writer.
+- **`mem_class`** — see TRAP 1. `relationship | identity | event | preference | fact |
+  private-secret` from the live writer (`lifecycle.classify()`, `lifecycle.py:245-265`) —
+  `private-secret` is checked FIRST, before the other five, and is producible as of
+  2026-07-14. `counterfact` is still never auto-assigned; see TRAP 1.
 - **`src`** — FREE-TEXT PROVENANCE PROSE, appended to over time (e.g. `"user turn | repair:
   un-retired (2026-07-12)"`). **Not a key you may branch on.** `harness/kairos/scheduler.py:176-224`
   (`_is_evidence`) hit this directly: it first tested `src not in ("reflection", "insight")`,
@@ -295,23 +297,52 @@ could cost him a fact he actually told her, which is the worse mistake.
 
 ## Traps
 
-**1. `mem_class` has two vocabularies, and the privacy guard is unreachable from the live
-writer.** `lifecycle.classify()` (`lifecycle.py:192-198`) — the authoritative writer used by
-`remember()` — can emit only: `relationship`, `identity`, `event`, `preference`, `fact`.
-`spine.recall_decider()` (`spine.py:224-247`) guards secrets by checking `mem_class ==
-"private-secret"` and applies special framing for `mem_class == "counterfact"`. **Neither of
-those two classes can ever be produced by the live writer.** The live registry (86 rows) has
-`fact` 58, `preference` 12, `identity` 8, `relationship` 5, `event` 3 — zero of either. The
-only thing that ever minted `private-secret` was the daemon's own classifier,
-`classify_mem_class` (`recall.rs`, invoked at `routes.rs:4636-4640` and `routes.rs:1385-1398`
-for the idle NIGHTSHIFT refine pass), armed by `growth=true`. The 2026-07-12 "one memory
-authority" fix set `growth=false` on the live profile (`agent.toml:102`) and killed the only
-producer of that class. **The zero-inference privacy decline has never fired in production and
-cannot fire under the live config.** `harness_tests/g_mempolicy_v3_offline.py:33-39`
-hand-constructs a `private-secret` row to test the dispatch — it has been green for weeks
-because it tests the *dispatch*, never the *producer*. If you need the privacy guard to
-actually protect something, either turn `growth` back on (and accept everything else that
-comes with it, see trap 2) or teach `remember()`/`is_memorable()` to classify secrets too.
+**1. FIXED (2026-07-14) — the privacy guard used to be unreachable from the live writer.**
+What the bug was: `spine.recall_decider()` (`spine.py:224-247`) guards secrets by checking
+`mem_class == "private-secret"`, but `lifecycle.classify()` — the only classifier the
+authoritative write path (`remember()`) runs — could emit only `relationship`, `identity`,
+`event`, `preference`, `fact`. The consumer branched on a value the producer could not
+produce. The live registry (86 rows) had `fact` 58, `preference` 12, `identity` 8,
+`relationship` 5, `event` 3 — zero `private-secret`. The decline had never fired once. The
+only thing that had ever minted `private-secret` was the daemon's own classifier,
+`classify_mem_class` (`recall.rs:164`, invoked at `routes.rs:4636-4640` and
+`routes.rs:1385-1398` for the idle NIGHTSHIFT refine pass), armed by `growth=true`. This was
+collateral damage of the 2026-07-12 "one memory authority" fix: it set `growth=false` on the
+live profile (`agent.toml:102`) and, as a side effect nobody checked for at the time, took the
+only producer of `private-secret` with it. `harness_tests/g_mempolicy_v3_offline.py:34,37`
+hand-constructs a `private-secret` row and asserts the dispatch honours it — green for weeks
+testing the *dispatch*, never the *producer* (see `gates/GATE-INDEX.md`, "GATES THAT ASSERTED
+THE PAST", item 3).
+
+It is fixed now: `lifecycle.classify()` (`lifecycle.py:245-265`) checks for a credential
+FIRST, before `_CLASS_RULES` (`lifecycle.py:235-242`, relationship/identity/event) ever runs,
+via `_SECRET` / `_SECRET_POSS` (`lifecycle.py:220-233`) — so "my wife's password is hunter2"
+classifies as `private-secret`, not `relationship`, because a secret that names a person is
+still a secret. Gated end to end by `harness_tests/g_secret.py` (G-SECRET, 22/22, OFFLINE): it
+sets no `mem_class` itself, drives real sentences through `remember()` and the real
+`spine.recall_decider()`, and asserts the decline fires with the secret text never appearing
+in the payload, while a direct ask for the secret itself still gets answered. It also confirms
+the admission gate composes correctly: an unanchored credential ("The garage door code is
+8812" — about nobody) is refused at the door by `is_memorable()`'s (`lifecycle.py:608-683`)
+ANCHOR rule (`_ANCHOR`, `lifecycle.py:545-547`, checked at `lifecycle.py:679`) before the
+classifier ever sees it, so it is never stored at all.
+
+The residual truth that still matters: **`mem_class` still has more than one vocabulary across
+the tree.** The engine's `recall.rs::classify_mem_class` (`recall.rs:164`) is a separate
+implementation from the harness's `lifecycle.classify()` (`lifecycle.py:245-265`), and they do
+not agree — porting the engine's rule (bare `code`/`token`/`secret`/`override`, plus any token
+with >=2 letters and >=2 digits) into the harness verbatim would flag "I write code" and the
+model name "gemma4-12b" as secrets, so the harness deliberately keeps its own, narrower,
+credential-noun-in-attribute-position rule instead. `self_model.py`'s delivery map
+(`_CLASS_DELIVERY`, `self_model.py:47`, default `mem_class="self-fact"` at `self_model.py:54`)
+and `curator.py`'s hardcoded `"mem_class: persona"` (`curator.py:70`) are two more independent
+vocabularies in the same tree, neither derived from `lifecycle.classify()`. Only the harness
+classifier is authoritative on the live profile (`growth=false`); the engine classifier still
+exists and still runs when `growth=true` re-arms it (see trap 2), and remains a different
+implementation from the harness one, not a twin of it. Anyone adding a new `mem_class` value
+anywhere in this tree must check a producer actually exists for it before a consumer is
+allowed to branch on it — that check is now literally a gate (`g_secret.py` §4, "every class
+the decider branches on must be one the writer can produce").
 
 **2. `growth=true` in 8 non-live profiles re-arms the daemon writer.**
 `profiles/kairos.toml`, `q4.toml`, `q4b.toml`, `q4b-agent.toml`, `batch.toml`, `float.toml`,

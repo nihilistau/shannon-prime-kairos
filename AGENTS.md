@@ -116,17 +116,20 @@ The essentials, so you do not have to guess:
 
 These are real. They are not hypotheticals. Do not be the next person to rediscover them.
 
-1. **THE PRIVACY DECLINE CANNOT FIRE.** `spine.recall_decider()` protects secrets by checking
-   `mem_class == "private-secret"`, and does counterfact framing on `mem_class == "counterfact"`.
-   `lifecycle.classify()` — the only classifier the authoritative writer runs — emits **exactly**
-   `relationship | identity | event | preference | fact`. It can never produce either value.
-   Live registry, 86 rows: `fact` 58, `preference` 12, `identity` 8, `relationship` 5, `event` 3.
-   **Zero `private-secret`. Zero `counterfact`.**
-   `private-secret` was only ever minted by the *daemon's* classifier (`recall.rs`), armed by `growth=true`.
-   The 2026-07-12 "one memory authority" fix set `growth=false` and killed the only producer.
-   **The privacy guarantee was collateral damage of a correctness fix.** `g_mempolicy_v3_offline.py:34,37`
-   hand-builds the `private-secret` row, so it tests the *dispatch* and never the *producer* — green for weeks.
-   → *tracked; fix is one taxonomy, one producer, and an end-to-end gate.*
+1. ~~**THE PRIVACY DECLINE CANNOT FIRE.**~~ **FIXED 2026-07-14 — G-SECRET 22/22.**
+   For the record, because the shape of it is the whole lesson: `spine.recall_decider()` protected
+   secrets by checking `mem_class == "private-secret"`, and `lifecycle.classify()` — the only classifier
+   the authoritative writer runs — could emit exactly `relationship | identity | event | preference |
+   fact`. **The consumer branched on a value the producer could not produce.** The decline had never
+   fired once. `private-secret` was only ever minted by the *daemon's* classifier, armed by `growth=true`;
+   the 2026-07-12 "one memory authority" fix set `growth=false` and took the only producer with it, so
+   **the privacy guarantee was collateral damage of a correctness fix.** `g_mempolicy_v3` stayed green
+   throughout because it hand-builds the `private-secret` row and tests the *dispatch*, never the *producer*.
+   The audit found one real credential already sitting in his live store as a plain `fact`
+   (`'My access code is 4471'`) — reclassified in place, provenance appended to `src`, nothing destroyed.
+   `harness_tests/g_secret.py` §4 now asserts the generalisation, and that is the part worth keeping:
+   **every class the decider branches on must be one the writer can produce.** Add an `if mc == "..."`
+   branch with no producer and the gate fails the day you write it, not eight weeks later when it leaks.
 
 2. **`store_verb = true` on the live profile** (`profiles/agent.toml:104`). The daemon intercepts raw
    "remember that …" / "note that …" turns, writes the registry itself via `capture_live_episode`, and

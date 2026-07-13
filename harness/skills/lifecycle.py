@@ -179,6 +179,59 @@ _PREF_VERB = re.compile(
     r"(?:like|love|hate|enjoy|prefer|adore|can'?t stand)\b", re.I)
 _PREF_NOUN = re.compile(r"\b(favou?rite|lucky number|preference)\b", re.I)
 
+# ── A CREDENTIAL. THE ONE CLASS WHERE BEING WRONG COSTS HIM SOMETHING REAL. ────────────
+#
+# THE PRIVACY GUARANTEE HAD NO PRODUCER (2026-07-14). spine.recall_decider() protects secrets
+# by checking `mem_class == "private-secret"` — the zero-inference decline that memory.py:404
+# calls "impossible by construction". classify() could emit exactly five values:
+#
+#     relationship | identity | event | preference | fact
+#
+# `private-secret` was not among them. THE CONSUMER WAS CHECKING FOR A VALUE THE PRODUCER COULD
+# NOT PRODUCE. Live registry, 86 rows: fact 58, preference 12, identity 8, relationship 5,
+# event 3. Zero private-secret. The decline had never fired once.
+#
+# It was only ever minted by the DAEMON's classifier (recall.rs::classify_mem_class), armed by
+# growth=true. The 2026-07-12 "ONE MEMORY AUTHORITY" fix moved writes here and set growth=false —
+# and took the only producer of the class with it. THE PRIVACY GUARANTEE WAS COLLATERAL DAMAGE OF
+# A CORRECTNESS FIX, and no gate noticed because g_mempolicy_v3 HAND-BUILDS the private-secret row
+# and then checks the dispatch honours it. It tested the guard. Never the producer.
+#
+# ── WHY THIS IS NOT A PORT OF THE ENGINE'S LIST ────────────────────────────────────────
+# recall.rs keys on: code, password, passcode, passphrase, " pin ", secret, api key, token,
+# override — plus any token with >=2 letters and >=2 digits. Copied here verbatim that would make
+#
+#     "I write code"            -> private-secret
+#     "I like the token economy"-> private-secret
+#     "my GPU is a gemma4-12b"  -> private-secret   (hyphenated alnum, >=5 chars)
+#
+# She would go cagey about her own model name and refuse to discuss his job. Porting a sloppy rule
+# across a seam does not give you one system — it gives you two wrong ones. So this list keys on
+# CREDENTIAL NOUNS IN ATTRIBUTE POSITION, not on loose vocabulary and not on entropy.
+#
+# ── AND THE ERROR DIRECTIONS ARE NOT SYMMETRIC, SO THE BIAS IS DELIBERATE ───────────────
+#   MISS a secret  -> it is stored as a plain `fact`, delivered as ordinary context, and she may
+#                     recite it or confabulate around it. This is the status quo for every secret
+#                     he has ever told her.
+#   FLAG a non-secret -> she answers "I have a record for that, but it does not include that
+#                     specific detail" (memory.py DECLINE_MSG) instead of using the memory.
+#                     Annoying. Visible. Harmless. He can correct it.
+# One of those loses his PIN. The other loses a sentence. When in doubt, this rule flags.
+_SECRET = re.compile(
+    r"\b(?:"
+    r"password|passcode|passphrase|"
+    r"api[\s-]?key|private[\s-]?key|secret[\s-]?key|access[\s-]?token|auth[\s-]?token|"
+    r"recovery[\s-]?(?:code|phrase|key)|seed[\s-]?phrase|"
+    r"(?:pin|door|gate|garage|wifi|wi-fi|alarm|security|access|lock|entry)[\s-]?code|"
+    r"pin(?:[\s-]?number)?|"
+    r"combination|"
+    r"ssn|social[\s-]security(?:[\s-]number)?|"
+    r"credit[\s-]?card|cvv|routing[\s-]?number|account[\s-]?number|licen[cs]e[\s-]?key"
+    r")\b", re.I)
+# `secret` bare is far too common in speech ("the secret to good pasta is salt"), so it only
+# counts when it is HIS: a possessive makes it a thing he holds, not a turn of phrase.
+_SECRET_POSS = re.compile(r"\b(?:my|our|his|her|their|the user'?s)\s+secret\b", re.I)
+
 _CLASS_RULES = (
     ("relationship", re.compile(r"\b(wife|husband|partner|girlfriend|boyfriend|brother|sister|"
                                 r"mother|father|mum|mom|dad|son|daughter|friend|cat|dog|pet)\b", re.I)),
@@ -190,6 +243,20 @@ _CLASS_RULES = (
 
 
 def classify(fact: str) -> str:
+    """The topical class of a fact. `private-secret` is checked FIRST and wins outright.
+
+    Order is load-bearing. "my wife's password is hunter2" contains `wife`, so under the old rule
+    order it classified as `relationship` and was delivered as ordinary context. A secret that
+    mentions a person is still a secret; the credential is the salient thing about the sentence.
+
+    NOT AUTO-ASSIGNED: `counterfact`. It is delivered as "Fact on record (AUTHORITATIVE for this
+    conversation, OVERRIDES PRIOR KNOWLEDGE) ... Answer from this fact" — an order to recite. It
+    used to be the DEFAULT class, which is how 99 of 131 memories became commands and she started
+    answering "what do you mean?" by reciting an unrelated fact verbatim (G-RECALL-PRECISION).
+    Nothing falls into it by accident, here or in the engine. It is set deliberately or not at all.
+    """
+    if _SECRET.search(fact) or _SECRET_POSS.search(fact):
+        return "private-secret"
     for name, rx in _CLASS_RULES:
         if rx.search(fact):
             return name

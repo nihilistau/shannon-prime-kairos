@@ -50,6 +50,7 @@ in a loop without excluding them will stall for up to 15 minutes per file.
 | G-ADMISSION | `harness_tests/g_admission.py` | Feeds the exact class of sentence that filled the registry 404 times (grammatical, declarative, about nobody) and asserts it is refused; a real personal fact still lands, v2 schema. | LIVE | `python harness_tests/g_admission.py` (warm stack, gateway :8800) |
 | G-MEMORY-LIFECYCLE / G-MEMORY-PROVENANCE | `harness_tests/g_memory_lifecycle.py` | WRITE / SUPERSEDE / PROVENANCE — a fact can be stored deliberately, a changed fact tombstones the old one forward, self-facts and user-facts never merge. | OFFLINE | `python harness_tests/g_memory_lifecycle.py` |
 | G-CLAIM | `harness_tests/g_claim.py` | Three bugs on the REAL code path (`spine.recall_decider`): the attribute-slot collision that let "cat person" overwrite "terrified of open water", the bypassed tombstone filter in automatic recall, and testimony-outranks-inference at the recall seam. | OFFLINE | `python harness_tests/g_claim.py` |
+| G-SECRET | `harness_tests/g_secret.py` | The privacy decline is REACHABLE, end to end: `lifecycle.classify()` (`lifecycle.py:245-265`) can now emit `private-secret` — checked FIRST, before relationship/identity/event (`_SECRET`/`_SECRET_POSS` at `lifecycle.py:220-233`) — and `spine.recall_decider()`'s zero-inference decline actually fires off a row `remember()` produced, with the secret text never appearing in the payload. 22/22. | OFFLINE | `python harness_tests/g_secret.py` |
 | G-CLOCK | `harness_tests/g_clock.py` | Every timestamp survives its own round trip (`gmtime`/`calendar.timegm`, never `mktime`) — the same UTC-offset bug fixed twice, 8 hours apart, in `watch.py` and `lifecycle.py`. | OFFLINE | `python harness_tests/g_clock.py` |
 
 ### Memory — salience, reflection, silence, recall shape
@@ -80,7 +81,7 @@ in a loop without excluding them will stall for up to 15 minutes per file.
 | G-PK2-MEMOKF-V2 (offline) | `harness_tests/g_pk2_memokf_v2_offline.py` | MEM-OKF v2 provenance (§M1), near-dup reinforcement not duplication (§M2), registry hygiene/compaction (§M3). Was itself an instance of the doctrine-drift pattern — see "GATES THAT ASSERTED THE PAST" below; now fixed. | OFFLINE | `python harness_tests/g_pk2_memokf_v2_offline.py` |
 | G-PK2-UI-ENDPOINTS (offline) | `harness_tests/g_pk2_ui_endpoints_offline.py` | The operator-panel gateway surfaces (§U: memory/tasks/persona JSON) and the persona editor round-trip, called directly, no server. | OFFLINE | `python harness_tests/g_pk2_ui_endpoints_offline.py` |
 | G-PK2-TOOLROBUST (offline) | `harness_tests/g_pk2_toolrobust_offline.py` | §T2-E3 robustness guards, §T2-E2 coding tools, §T2-E1 task-loop machinery — driven by a `FakeClient` scripting the model's turns, no daemon. | OFFLINE | `python harness_tests/g_pk2_toolrobust_offline.py` |
-| G-MEMPOLICY-V3 (offline, rehomed) | `harness_tests/g_mempolicy_v3_offline.py` | Per-entry MEM-OKF policy dispatch: counterfact override framing, secret-present recital, secret-absent zero-inference decline, untagged null floor. **See "GATES THAT ASSERTED THE PAST" — the privacy decline this certifies has never fired in production.** Also note: this file calls `app._native_chat_sse` (`g_mempolicy_v3_offline.py:91`), the same function spine-2/sse-v2 hang on — its GREEN receipts (`gates/G-MEMPOLICY-V3-rehomed.md`) predate that discovery; not re-verified against the `_WARM` gate here. | OFFLINE | `python harness_tests/g_mempolicy_v3_offline.py` — verify it still completes before trusting it |
+| G-MEMPOLICY-V3 (offline, rehomed) | `harness_tests/g_mempolicy_v3_offline.py` | Per-entry MEM-OKF policy dispatch: counterfact override framing, secret-present recital, secret-absent zero-inference decline, untagged null floor. **See "GATES THAT ASSERTED THE PAST" — still tests the dispatch, not the producer, but G-SECRET (2026-07-14) now covers the producer end to end, so the decline this certifies is reachable in production.** Also note: this file calls `app._native_chat_sse` (`g_mempolicy_v3_offline.py:91`), the same function spine-2/sse-v2 hang on — its GREEN receipts (`gates/G-MEMPOLICY-V3-rehomed.md`) predate that discovery; not re-verified against the `_WARM` gate here. | OFFLINE | `python harness_tests/g_mempolicy_v3_offline.py` — verify it still completes before trusting it |
 | G-PK2-RECALL-LIVE | `harness_tests/g_pk2_recall_live.py` | ADR-008 pre-turn spine recall, LIVE on the 12B through the agent gateway: matched query recalls faithfully, foreign query gets a clean parametric answer (no hijack). | LIVE | `python harness_tests/g_pk2_recall_live.py` (daemon :3000 + gateway :8800, arms `SP_SPINE_RECALL=1`) |
 | G-PK2-RECALL-L5-COMPOSE | `harness_tests/g_pk2_recall_l5_compose.py` | Enforces the one-authority rule when both harness recall and the daemon's L5 recall could fire at once (gateway auto-disarms harness recall when `auto_recall=true`). | LIVE | `python harness_tests/g_pk2_recall_l5_compose.py` (`run_console_faithful.bat` + `_pk2_recall_gateway.bat`) |
 | G-PK2-TASKLOOP-E2E | `harness_tests/g_pk2_taskloop_e2e.py` | The live agentic coding loop (§T2-E1) on the served 12B: seeded bug + failing test, asserts `run_task` drives `edit_file`/`run_tests` to a real green. | LIVE | `python harness_tests/g_pk2_taskloop_e2e.py` (daemon :3000) |
@@ -163,15 +164,27 @@ compiles — never that the thing it guards actually fires. Four confirmed insta
 3. **g_mempolicy_v3_offline.py:34,37** hand-constructs registry rows with
    `mem_class: "counterfact"` and `mem_class: "private-secret"` and asserts the
    spine dispatch honours them. It tests the DISPATCH, never the PRODUCER.
-   `lifecycle.classify()` (`harness/skills/lifecycle.py:182-198`) is the only
-   classifier the authoritative write path runs, and its rule table
-   (`_CLASS_RULES`, `lifecycle.py:182-189`) can only return `relationship`,
-   `identity`, `event`, `preference`, or `fact` — it can never emit
-   `counterfact` or `private-secret`. **The privacy decline this gate certifies
-   has never fired on a real write.** Green for weeks
-   (`gates/G-MEMPOLICY-V3-rehomed.md`: "PASS 10/10"). This is the most
-   expensive instance of the pattern found so far — it is a security control
-   the test suite vouches for and production cannot reach.
+   At the time this was written, `lifecycle.classify()` could only return
+   `relationship`, `identity`, `event`, `preference`, or `fact` — it could
+   never emit `counterfact` or `private-secret`, so the privacy decline this
+   gate certifies had never fired on a real write. Green for weeks
+   (`gates/G-MEMPOLICY-V3-rehomed.md`: "PASS 10/10"). At the time, this was
+   the most expensive instance of the pattern found so far — a security
+   control the test suite vouched for and production could not reach.
+   **UPDATE (2026-07-14): the hole is closed.** `lifecycle.classify()`
+   (`lifecycle.py:245-265`) now checks for a credential FIRST, before
+   `_CLASS_RULES` (`lifecycle.py:235-242`) ever runs, via `_SECRET` /
+   `_SECRET_POSS` (`lifecycle.py:220-233`) — so "my wife's password is
+   hunter2" classifies as `private-secret`, not `relationship`, and can emit
+   the class this file's dispatch test always assumed existed. This gate
+   itself is unchanged and still only exercises the dispatch on hand-built
+   rows — it does not, on its own, prove the producer works. `harness_tests/g_secret.py`
+   (G-SECRET, 22/22, OFFLINE) is the new gate that does: it never sets
+   `mem_class`, drives real sentences through `remember()` and
+   `spine.recall_decider()`, and asserts the decline actually fires and the
+   secret text never appears in the payload. G-SECRET closes the hole this
+   entry describes; g_mempolicy_v3_offline.py's dispatch-only scope is still
+   accurately described above.
 
 **The lesson: a gate that supplies its own precondition proves only that the
 guard compiles.** Assert against the same producer the live path actually calls
