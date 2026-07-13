@@ -376,40 +376,62 @@ def run_with_tools(
     for _round in range(max_rounds):
         resp = client.chat(messages=[system] + convo, config=cfg)
         text = resp.text
-        calls = _parse_tool_calls(text, known=set(tool_index))
-        if not calls:
-            # MALFORMED RECOVERY: the model opened a tool fence but nothing parsed —
-            # returning that raw fence as the "answer" is a silent failure. Feed the
-            # parse error back once per occurrence (bounded by max_rounds) instead.
-            # (space-tolerant: the reason model emits '``` tool_code' variants)
-            if re.search(r"```[ \t]*tool", text) or "<tool " in text:
-                logger.info("[tools] malformed tool call — re-prompting (round=%d)", _round)
-                convo.append({"role": "assistant", "content": text})
-                convo.append({"role": "user", "content":
-                    "```tool_output\n[parse error] That tool call could not be parsed. Emit ONE "
-                    "fenced block exactly like:\n```tool_code\nname(param=\"value\")\n```\n"
-                    "with real parameter names, or answer in plain text with no fence.\n```"})
-                continue
-            final = text
+
+        # ── THE GRAMMAR IS THE PARSER NOW ────────────────────────────────────────
+        # Three things change, and all three were live failures:
+        #   * a REFUSAL TEACHES. The old recovery said "[parse error] That tool call could
+        #     not be parsed" — a message containing no information, which is why she would
+        #     emit the same broken thing again and burn the loop to "(tool loop exhausted)".
+        #     The grammar says WHICH rule broke and, where it can, WHAT SHE MEANT:
+        #         "there is no tool called 'recal'"  ->  "Did you mean 'recall'?"
+        #         "adjust_mood has no parameter 'new'" -> "adjust_mood takes: mood"
+        #   * ONE CALL PER BLOCK is a grammar rule, not a post-hoc calls[:1] truncation.
+        #   * TOLERANCE IS COUNTED. Fence-drift and name-splits are still forgiven (there is
+        #     no mask yet, and breaking a working system to make a point about purity is not
+        #     engineering) — but every forgiveness is logged. That number is the measurement
+        #     of exactly what constrained decoding will buy, and it should go to zero the day
+        #     the engine can enforce this same grammar at the -inf seam.
+        from harness.mcp.grammar import ToolGrammar, ToolCall, ParseError
+        _G = ToolGrammar(list(tool_index.values()))
+        parsed = _G.parse(text, tolerant=True)
+
+        if isinstance(parsed, ParseError):
+            logger.info("[tools] refused: %s (round=%d)", parsed.reason, _round)
+            convo.append({"role": "assistant", "content": text})
+            convo.append({"role": "user", "content":
+                "```tool_output\n"
+                f"[refused] {parsed.reason}"
+                + (f" — at: {parsed.at}" if parsed.at else "")
+                + (f"\n{parsed.fixable_hint}" if parsed.fixable_hint else "")
+                + "\nEmit ONE corrected call, or just answer him in plain text.\n```"})
+            continue
+
+        if parsed is None:
+            final = text                      # she is talking. Most turns are this.
             break
+
+        if parsed.tolerated:
+            # THE CRUTCH, MEASURED. A crutch you are counting is a plan; a crutch you have
+            # stopped noticing is a permanent limp — and this codebase had four of them
+            # stacked on each other, which is exactly why nobody could see the model was
+            # drifting at all.
+            logger.warning("[tools] TOLERATED %s — the mask will make this unnecessary: %s",
+                           parsed.tolerated, parsed.name)
+
+        calls = [(parsed.name, parsed.args, parsed.kwargs)]
         convo.append({"role": "assistant", "content": text})
-        # ONE CALL PER ROUND, AND THE ROUND IS THE ENFORCEMENT (2026-07-12).
+        # ONE CALL PER ROUND — NOW A GRAMMAR RULE, NOT A TRUNCATION.
         #
-        # The prompt has said "Call at most ONE tool" since the beginning. Nothing enforced
-        # it, and on the first live notes turn she emitted THREE in one fence — add_note,
-        # then edit_note, then remove_note — and narrated it herself: "I'll remove the
-        # temporary note after editing it". She added the note, tidied it, and then deleted
-        # it, all before seeing a single tool_output. The board came back empty and she told
-        # him it was done.
+        # This used to be `calls = calls[:1]` right here: parse everything the model emitted,
+        # then quietly throw away all but the first. It was a patch on a symptom. On the
+        # first live notes turn she emitted THREE calls in one fence — add_note, edit_note,
+        # remove_note — created a note, tidied it, deleted it, all without ever seeing a
+        # single tool_output, and then told him it was done. The board was empty.
         #
-        # A tool call is an ACTION ON THE WORLD, and an action taken without seeing the
-        # result of the previous one is a guess. Truncating to one forces the loop to do
-        # what a loop is for: act, observe, then decide. She can still call a second tool —
-        # on the next round, knowing what the first one did.
-        if len(calls) > 1:
-            logger.info("[tools] %d calls in one fence — taking the FIRST (%s) and letting "
-                        "her see its result before the next", len(calls), calls[0][0])
-            calls = calls[:1]
+        # A tool call is an ACTION ON THE WORLD, and an action taken before observing the
+        # result of the last one is a guess. Under the grammar, three calls in a block is not
+        # a thing to be truncated: it is not a legal call, and she is told so, and told why.
+        # She can still call a second tool — next round, KNOWING WHAT THE FIRST ONE DID.
         outputs = []
         for name, args, kwargs in calls:
             spec = resolve_tool(tool_index, name)
