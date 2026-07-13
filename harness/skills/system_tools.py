@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.parse
@@ -122,26 +123,73 @@ def web_fetch(url: str) -> str:
 
 
 # ──── Web ────────────────────────────────────────────────────────────────────
-def web_search(query: str) -> str:
-    """Search the web and return a short text summary of the top results."""
+# Verified against the live markup rather than assumed: the classes are result__a and
+# result__snippet. My first cut guessed "result-link"/"result-snippet" and silently matched
+# NOTHING — which would have shipped a search tool that returns "(nothing found)" for every
+# query in the world, i.e. exactly the bug I was fixing, wearing a different hat. A scraper
+# written against remembered HTML is a scraper written against no HTML.
+_DDG_RESULT = re.compile(
+    r'<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>(.*?)</a>'
+    r'(?:.*?class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</a>)?', re.S | re.I)
+_TAGS = re.compile(r"<[^>]+>")
+
+
+def _clean(s: str) -> str:
+    import html
+    return html.unescape(_TAGS.sub("", s)).strip()
+
+
+def search_web(query: str, n: int = 5) -> list:
+    """THE HARNESS DOES THE SEARCHING. Returns [{title, url, snippet}] — actual results.
+
+    WHAT THIS REPLACES, AND WHY THAT MATTERS. web_search() used to hit DuckDuckGo's INSTANT
+    ANSWER api, which only ever returns something for entity and definition lookups — "who
+    was Claude Shannon", "what is a GPU". Ask it the kind of thing a person actually wants
+    ("is an RTX 3090 in stock under $1500") and it returns nothing, every single time, and
+    hands back "(no instant answer; try a more specific query)" — which reads like the
+    model's fault and is not.
+
+    The operator: "asking the model to perform a websearch is kinda weak, we should be
+    having the harness do a lot of the work, bringing back the result we need."
+
+    He is right, and it was worse than he thought: the tool could not search AT ALL. A 12B
+    asked to compensate for a search tool that returns nothing will do the only thing left to
+    it — invent a plausible answer. Every hallucinated fact that comes out of a web tool
+    starts as a tool that returned nothing and a model too polite to say so."""
+    out = []
     try:
-        url = "https://api.duckduckgo.com/?" + urllib.parse.urlencode(
-            {"q": query, "format": "json", "no_html": 1, "skip_disambig": 1})
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Shannon-Prime)"})
-        with urllib.request.urlopen(req, timeout=15) as r:
-            j = json.loads(r.read().decode("utf-8", "replace"))
-        parts = []
-        if j.get("AbstractText"):
-            parts.append(j["AbstractText"])
-        if j.get("Answer"):
-            parts.append(str(j["Answer"]))
-        for t in j.get("RelatedTopics", [])[:5]:
-            if isinstance(t, dict) and t.get("Text"):
-                parts.append("- " + t["Text"])
-        out = "\n".join(parts)
-        return _cap(out) or "(no instant answer; try a more specific/entity query)"
+        data = urllib.parse.urlencode({"q": query}).encode()
+        req = urllib.request.Request(
+            "https://html.duckduckgo.com/html/", data=data,
+            headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                                   "(KHTML, like Gecko) Chrome/120 Safari/537.36"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            html_text = r.read().decode("utf-8", "replace")
+        for href, title, snip in _DDG_RESULT.findall(html_text)[:n]:
+            url = urllib.parse.unquote(href)
+            m = re.search(r"uddg=([^&]+)", url)          # DDG wraps the real url
+            if m:
+                url = urllib.parse.unquote(m.group(1))
+            out.append({"title": _clean(title), "url": url, "snippet": _clean(snip)})
     except Exception as exc:
-        return f"[web_search error: {exc}]"
+        out.append({"title": f"[search error: {exc}]", "url": "", "snippet": ""})
+    return out
+
+
+def web_search(query: str) -> str:
+    """Search the web. Returns the top real results — titles, snippets and links.
+
+    e.g. web_search("RTX 3090 price 2026")
+    Answer him from what comes back. If it comes back empty, SAY SO — never fill the gap
+    with something that sounds right."""
+    hits = search_web(query, n=5)
+    if not hits or (len(hits) == 1 and hits[0]["title"].startswith("[search error")):
+        return (f"(the search for {query!r} returned nothing — say that plainly, "
+                "do not invent an answer)")
+    lines = []
+    for h in hits:
+        lines.append(f"- {h['title']}\n  {h['snippet'][:180]}\n  {h['url']}")
+    return _cap("\n".join(lines))
 
 
 FILESYSTEM_TOOLS = [list_dir, read_file, write_file]

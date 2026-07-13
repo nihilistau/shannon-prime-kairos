@@ -97,6 +97,15 @@ class ToolSpec:
         required: List[str] = []
         type_map = {str: "string", int: "integer", float: "number", bool: "boolean"}
         for pname, p in sig.parameters.items():
+            # **kwargs IS NOT A PARAMETER SHE CAN PASS. adjust_mood(mood="", **kw) exists so
+            # a reasonable guess (new=/value=/to=) is absorbed instead of raising TypeError —
+            # a good shim. But `kw` was leaking into the ADVERTISED schema, so the tool block
+            # she reads every turn said "adjust_mood takes: kw, mood". We handed her an
+            # invented parameter, in the one tool that had already broken her loop by hiding
+            # the real ones. Found by the grammar, which now derives its rules from this
+            # schema and therefore has to be told the truth.
+            if p.kind in (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL):
+                continue
             base = p.annotation
             base = getattr(base, "__args__", [base])[0] if getattr(base, "__origin__", None) else base
             props[pname] = {"type": type_map.get(base, "string")}

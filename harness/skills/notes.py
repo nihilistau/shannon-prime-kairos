@@ -31,7 +31,7 @@ import uuid
 from typing import Any, Optional
 
 # ── the lane ──────────────────────────────────────────────────────────────────
-CATEGORIES = ("idea", "reminder", "task", "important", "note")
+CATEGORIES = ("idea", "reminder", "task", "important", "note", "watch")
 
 # A colour per category, so the board reads at a glance. The UI may override per-note.
 CATEGORY_COLOUR = {
@@ -40,6 +40,8 @@ CATEGORY_COLOUR = {
     "task":      "#4ade80",   # green
     "important": "#f87171",   # red
     "note":      "#c084fc",   # violet
+
+    "watch":     "#2dd4bf",   # teal — she is actively looking at the world for him
 }
 
 SPEAKER_USER = "user"
@@ -111,8 +113,25 @@ def get(note_id: str) -> Optional[dict]:
 
 
 def add(title: str, body: str = "", category: str = "note",
-        due_at: str = "", colour: str = "", speaker: str = "") -> dict:
-    """Pin something to the board. Returns the note."""
+        due_at: str = "", colour: str = "", speaker: str = "",
+        watch: str = "") -> dict:
+    """Pin something to the board. Returns the note.
+
+    A WATCH IS A NOTE WITH A PREDICATE INSTEAD OF A TIME (2026-07-13).
+
+    THE OPERATOR, reading her own words back at her:
+        "the model suggests things like 'I will look out for a 3090 GPU to be available'..
+         HOW?"
+
+    She could not. There was no mechanism to look out for anything, and she said it anyway —
+    a beautifully-formed promise with nothing behind it. That is the SAME failure as a
+    reminder that never fires, and it is the worst kind this system produces: not a crash,
+    not an error, but a thing he TRUSTED that quietly was not true.
+
+    There were two honest fixes: stop her saying it, or MAKE IT TRUE. A reminder fires when
+    the CLOCK says so. A watch fires when THE WORLD does. Everything else — the store, the
+    tick, the raise-it-like-a-reminder path — already existed; the only thing missing was a
+    note whose trigger is a question rather than a time."""
     title = (title or "").strip()
     if not title:
         raise ValueError("a note needs a title")
@@ -122,6 +141,9 @@ def add(title: str, body: str = "", category: str = "note",
     # a note with a due date IS a reminder, whatever it was called
     if due_at and cat == "note":
         cat = "reminder"
+    # ...and a note with a PREDICATE is a watch, whatever it was called
+    if watch and cat in ("note", "reminder"):
+        cat = "watch"
     row = {
         "id": uuid.uuid4().hex[:12],
         "title": title[:120],
@@ -136,6 +158,16 @@ def add(title: str, body: str = "", category: str = "note",
         "raised": False,                    # kairos has already brought it up
         "lifecycle": 0,                     # 0 live, 1 tombstoned
         "src": "note",
+        # ── THE WATCH ──────────────────────────────────────────────────────────
+        # `watch` is the question she keeps asking the world. `checked` is how many times
+        # she has actually looked — which is the receipt that turns "I'll keep an eye out"
+        # from a pleasantry into a fact he can audit. `evidence` is WHY she says it fired;
+        # a watch that fires without being able to show what it saw is a watch that has
+        # learned to hallucinate.
+        "watch": (watch or "").strip(),
+        "checked": 0,
+        "last_checked": "",
+        "evidence": "",
     }
     rows = _load_all()
     rows.append(row)
@@ -157,7 +189,15 @@ def update(note_id: str, **fields: Any) -> Optional[dict]:
             break
     if hit is None:
         return None
-    allowed = ("title", "body", "category", "colour", "due_at", "done", "raised")
+    # THE WHITELIST SILENTLY DROPPED THE WATCH FIELDS. check() dutifully wrote `checked`,
+    # `last_checked` and `evidence`; update() looked at its allowed-list, did not find them,
+    # and threw them away without a word. She was looking at the world for him and the
+    # receipt was going straight in the bin — so a watch could never prove it had ever
+    # actually looked, which is the ONE claim it exists to make. Found by the gate, which is
+    # what gates are for. A whitelist that drops unknown fields in silence is a lie with a
+    # tidy interface.
+    allowed = ("title", "body", "category", "colour", "due_at", "done", "raised",
+               "watch", "checked", "last_checked", "evidence")
     prev = {k: hit.get(k) for k in ("title", "body") if k in fields}
     for k, v in fields.items():
         if k in allowed and v is not None:

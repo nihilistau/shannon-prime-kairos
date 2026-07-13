@@ -66,6 +66,28 @@ def add_note(title: str, body: str = "", category: str = "note", due: str = "") 
     return f"noted: {_fmt(n)}" + (f"  (I'll remind you {human})" if iso else "")
 
 
+def watch_for(title: str, look_for: str) -> str:
+    """KEEP AN EYE OUT for something in the world, and tell him when it happens.
+
+    title      what he is waiting for, e.g. "RTX 3090 back in stock"
+    look_for   what to SEARCH for, as a search query: "RTX 3090 in stock under $1500"
+
+    e.g. watch_for("3090 available", look_for="RTX 3090 in stock buy")
+
+    THIS IS THE ONLY WAY YOU CAN ACTUALLY WATCH FOR ANYTHING. If you tell him "I'll look out
+    for X" without calling this, nothing will look, nothing will happen, and he will find out
+    weeks later that you never meant it. You may say you will keep an eye out ONLY if you
+    have called this — then it is true: the harness searches for you every few hours, and
+    when it finds real evidence, you tell him and show him the link."""
+    _mine()
+    look_for = (look_for or title or "").strip()
+    if not look_for:
+        return "(a watch needs something to look for)"
+    n = N.add(title=title, category="watch", watch=look_for)
+    return (f"watching: {_fmt(n)}  (searching for {look_for!r} every few hours — "
+            f"I'll tell you when something real turns up)")
+
+
 def find_notes(query: str = "") -> str:
     """Search the board — or show ALL of it when `query` is empty.
 
@@ -125,4 +147,4 @@ def remove_note(note_id: str) -> str:
     return f"removed: {n.get('title')}" if n else f"(no note with id {note_id})"
 
 
-NOTE_TOOLS = [add_note, find_notes, due_reminders, edit_note, remove_note]
+NOTE_TOOLS = [add_note, watch_for, find_notes, due_reminders, edit_note, remove_note]

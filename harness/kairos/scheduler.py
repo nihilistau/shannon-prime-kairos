@@ -212,6 +212,33 @@ def reflect_tick(now: Optional[float] = None) -> Optional[dict]:
     return {"text": text, "bits": bits}
 
 
+def _watch_tick() -> None:
+    """SHE ACTUALLY LOOKS. On the same clock she thinks on.
+
+    "I will look out for a 3090 GPU to be available."  — and then nothing looked.
+
+    This is what makes that sentence true. A watch that fires becomes an ordinary due
+    reminder, so it arrives through the path that is already gated and already bounded: she
+    tells him once, with the evidence, and does not nag. The promise and the keeping of it
+    now run on the same rails as every other promise she makes."""
+    try:
+        from harness.skills import watch as W
+        due = W.due_checks()
+        if not due:
+            return
+        note = due[0]                       # one per tick: this costs a search and a turn
+        res = W.check(note)
+        if res.get("fired"):
+            # A FIRED WATCH IS A DUE REMINDER. Give it a due date of NOW and the existing
+            # REMIND path — bounded, once, with a reason — carries it the rest of the way.
+            from harness.skills import notes as N
+            N.update(note["id"], due_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                     raised=False)
+            logger.info("[watch] %r fired — it is now a due reminder", note.get("title"))
+    except Exception as exc:
+        logger.warning("[watch] tick failed: %s", exc)
+
+
 def _due_notes() -> list:
     """Reminders that have come due and have not been raised yet. Kept out of impulse.py so
     the policy stays pure and gateable without a store."""
@@ -306,6 +333,12 @@ def tick_once(now: Optional[float] = None) -> None:
     if not cfg.enabled:
         return
     now = now if now is not None else time.monotonic()
+
+    # SHE LOOKS AT THE WORLD FOR HIM. due_checks() is cheap and network-free; it only
+    # reaches the web when a watch is actually stale (every 6h by default), so this costs
+    # nothing on the overwhelming majority of ticks.
+    _watch_tick()
+
     due = _due_notes()          # THE CLOCK IS WHAT MAKES A REMINDER POSSIBLE AT ALL.
 
     # SHE THINKS ON THE SAME CLOCK SHE SPEAKS ON, but they are not the same act. reflect_tick
