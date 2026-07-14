@@ -44,10 +44,15 @@ _STATS = {"checked": 0, "divergent": 0, "unmapped": 0}
 
 # ── the ONE signature implementation ───────────────────────────────────────────────────
 def sigma(row: dict) -> dict:
-    """Normalized signature coordinates of a row (the normalization law above)."""
+    """Normalized signature coordinates of a row. Status comes from lifecycle.status_of —
+    THE normalization (Tier 1.3): the first cut of this function used a plain
+    observed-default and DIVERGED from render()/_is_evidence()'s legacy src-shim, so a
+    legacy reflection row was testimony at the seam and a conclusion at the mouth.
+    One law now, owned where the STATUS_* vocabulary lives."""
+    from harness.skills import lifecycle as lc
     return {
         "speaker": row.get("speaker") or "user",
-        "status": row.get("status") or "observed",
+        "status": lc.status_of(row),
         "lifecycle": 1 if row.get("lifecycle") else 0,
         "mem_class": row.get("mem_class") or "fact",
     }
@@ -102,6 +107,48 @@ def cell(row: dict, query: str, rows: list) -> str:
     return "speaker=%s|status=%s|lifecycle=%d|class=%s|competition=%s|attr=%s" % (
         s["speaker"], s["status"], s["lifecycle"], s["mem_class"],
         competition(row, rows), attr(row, query))
+
+
+# ── σ projections: the finite-field verdicts (Tier 1.3) ────────────────────────────────
+# Three verdicts that always were functions of the signature now read committed tables
+# here instead of local branches. G-SEM-PROJ walks every cell through the REAL consumers.
+
+# render framing: first match on (status, speaker); '*' is any. STATUS OUTRANKS SPEAKER —
+# an inference reads as hers whatever lane it lives in ("she is allowed to be wrong about
+# him; she is not allowed to be wrong about him IN HIS VOICE"), and a confirmed thing is
+# a thing they AGREED on. Unknown statuses (disputed is vocabulary-only) fall through to
+# the speaker rows — today's behaviour, pinned.
+FRAMING = [
+    ("inferred", "*", "I've come to think: {t}"),
+    ("confirmed", "*", "We settled that: {t}"),
+    ("*", "self", "About myself: {t}"),
+    ("*", "*", "Knack told me: {t}"),
+]
+
+
+def framing_for(status: str, speaker: str) -> str:
+    for st, sp, tpl in FRAMING:
+        if st in ("*", status) and sp in ("*", speaker):
+            return tpl
+    return "Knack told me: {t}"      # unreachable; the last row is total
+
+
+# supersede permission: may `incoming` retire `held`? THE asymmetry (find_superseded's
+# docstring, now data): an inference NEVER retires ground truth. Everything else may —
+# he corrects her, he changes his mind, she revises her own view.
+def may_supersede(incoming_status: str, held_status: str) -> bool:
+    from harness.skills import lifecycle as lc
+    gt = getattr(lc, "_GROUND_TRUTH", frozenset({"observed", "confirmed"}))
+    return not (incoming_status == lc.STATUS_INFERRED and held_status in gt)
+
+
+def is_evidence(row: dict) -> bool:
+    """The reflection loop's input gate as a σ projection: live, his lane, ground truth.
+    (A tombstone is not news; her own voice is not news from the world; a conclusion is
+    not an observation — scheduler._is_evidence's history, now one line over σ.)"""
+    s = sigma(row)
+    return s["lifecycle"] == 0 and s["speaker"] == "user" \
+        and s["status"] in _ground_truth()
 
 
 # ── the table ──────────────────────────────────────────────────────────────────────────

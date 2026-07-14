@@ -131,12 +131,19 @@ the proven recipe: operational signature → committed table → shadow → meta
    the Rust and held to the registry — the G-ONEDOOR trick); the verdict table's class coordinates
    and the spine's branched classes join the same registry. Bonus fix: `self-fact` concepts used
    to FAIL OKF conformance under the old seven-class vocabulary.
-3. **`scheduler._is_evidence()` + `lifecycle.find_superseded()` + `lifecycle.render()`.** All
-   three already branch on σ's own fields (lifecycle/speaker/status). `_is_evidence` is a
-   projection of the verdict signature (failure history: the self-feeding reflection loop);
-   `find_superseded` is a status×status supersede matrix spelled out in its own docstring
-   (safety-critical: "her guess tombstoned his testimony"); `render` is a finite→finite framing
-   map. They should CONSUME the existing verdict infrastructure — near-zero new surface.
+3. **`scheduler._is_evidence()` + `lifecycle.find_superseded()` + `lifecycle.render()`.
+   DONE 2026-07-14 — and the conversion found the NORMALIZATION LAW itself had diverged.**
+   A legacy row (status missing, src sniffing "reflection") was HER CONCLUSION to render and
+   _is_evidence (both carried the migration shim) but HIS TESTIMONY to testimony_wins and σ
+   (plain observed-default): ground truth at the seam, a conclusion at the mouth — one live row
+   sat in that crack. Now: `lifecycle.status_of()` is THE normalization (structured field wins;
+   src sniff is the one sanctioned legacy read, protect-him default), consumed by σ,
+   testimony_wins, render, find_superseded, and is_evidence. The three verdicts are σ
+   projections reading committed tables in `verdict.py` (`FRAMING`, `may_supersede`,
+   `is_evidence`), and **G-SEM-PROJ 25/25** walks every cell of all three through the REAL
+   consumers — including the supersede matrix through the real writer (attribute shapes,
+   because properties accumulate) and the seam check that a legacy reflection row no longer
+   wears testimony's shield. Full 20-gate suite green.
 
 ### Tier 2 — after (real value, small scope)
 

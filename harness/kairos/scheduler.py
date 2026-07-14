@@ -210,18 +210,14 @@ def _is_evidence(row: dict) -> bool:
     the evidence count included RETIRED rows, so a fact he corrected still counted as a fresh
     reason to go and think about him. Superseded is superseded — on this path too.
     """
-    if row.get("lifecycle"):
-        return False                       # retired: not news, not evidence, not a reason to think
-    if (row.get("speaker") or "user") == "self":
-        return False                       # her own voice is not news from the world
-    from harness.skills import lifecycle as lc
-    st = row.get("status")
-    if st:                                 # the structured field wins whenever it is present
-        return st in lc._GROUND_TRUTH
-    src = (row.get("src") or "").lower()   # legacy rows only: written before `status` existed
-    if "reflection" in src or "insight" in src:
-        return False                       # a conclusion is not an observation
-    return True
+    # ── Tier 1.3: this is a σ PROJECTION now (verdict.is_evidence) ──────────────────────
+    # Everything the history above argues — the structured field wins, the src sniff is a
+    # migration shim for pre-status rows only, a tombstone is not news — lives in ONE
+    # place: lifecycle.status_of (the one normalization) + verdict.sigma. This function
+    # had its own copy of the shim, and the seam had NONE — a legacy reflection row was
+    # a conclusion here and testimony at the seam. One law now; G-SEM-PROJ holds it.
+    from harness.skills import verdict as _v
+    return _v.is_evidence(row)
 
 
 def reflect_tick(now: Optional[float] = None) -> Optional[dict]:

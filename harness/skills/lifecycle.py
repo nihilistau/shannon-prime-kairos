@@ -75,6 +75,29 @@ def topic_of(fact: str) -> frozenset:
     return frozenset(w for w in words if w not in _STOP and len(w) > 2)
 
 
+def status_of(row: dict) -> str:
+    """THE status normalization — one function, every consumer (Tier 1.3,
+    INVARIANT-ROADMAP.md). Found during the conversion: this law had DIVERGED. A legacy
+    row (status missing, src sniffing 'reflection') was HER CONCLUSION to render() and
+    _is_evidence() — both carried the documented migration shim — but HIS TESTIMONY to
+    testimony_wins() and verdict.sigma(), which used a plain observed-default. Same row,
+    ground truth at the seam, conclusion at the mouth. Two normalizations of one field
+    is the two-paths bug wearing an epistemics hat.
+
+    The law: the structured field wins whenever present (stamp()-written, append-proof).
+    For legacy rows only, the src sniff classifies — a conclusion is not an observation,
+    however old the row — and everything else defaults to observed (protect-him
+    direction). The sniff is a MIGRATION SHIM with the usual trap warning: src is prose;
+    this is the ONE sanctioned read of it, and only when `status` is absent."""
+    st = row.get("status")
+    if st:
+        return st
+    src = (row.get("src") or "").lower()
+    if "reflection" in src or "insight" in src:
+        return STATUS_INFERRED
+    return STATUS_OBSERVED
+
+
 def testimony_wins(scored: list, overlap: int = 2) -> list:
     """Drop any INFERENCE that is about a topic HIS OWN TESTIMONY already covers.
 
@@ -102,15 +125,14 @@ def testimony_wins(scored: list, overlap: int = 2) -> list:
     she could have said. A false contradiction verdict would have cost her a fact he told her.
     Those are not the same kind of mistake and they must not be traded off as though they were.
     """
-    ground = [e for _s, e in scored
-              if (e.get("status") or STATUS_OBSERVED) in _GROUND_TRUTH]
+    ground = [e for _s, e in scored if status_of(e) in _GROUND_TRUTH]
     if not ground:
         return scored
     spoken = [(e.get("speaker", SPEAKER_USER), topic_of(strip_prefix(_row_text(e))))
               for e in ground]
     out = []
     for s, e in scored:
-        if (e.get("status") or STATUS_OBSERVED) in _GROUND_TRUTH:
+        if status_of(e) in _GROUND_TRUTH:
             out.append((s, e))
             continue
         mine = topic_of(strip_prefix(_row_text(e)))
@@ -448,11 +470,13 @@ def find_superseded(new_fact: str, speaker: str, rows: Iterable[dict],
         if value_of(txt) == newv:
             continue                      # same value = not a conflict, just a restatement
 
-        # THE ONE RULE. A row with no status is a legacy row from before this field existed —
-        # treat it as OBSERVED, because that is what it almost certainly is, and because the
-        # failure that matters is an inference eating testimony. Default to protecting him.
-        held = r.get("status") or STATUS_OBSERVED
-        if incoming_is_inference and held in _GROUND_TRUTH:
+        # THE ONE RULE, as a committed matrix now (verdict.may_supersede — Tier 1.3):
+        # observation⊳inference YES, observation⊳observation YES, inference⊳inference
+        # YES, inference⊳observation NEVER. status_of() is the one normalization: a
+        # legacy no-status row defaults to observed (protect him), UNLESS its src sniffs
+        # reflection/insight — her old conclusions do not get testimony's shield.
+        from harness.skills import verdict as _v
+        if not _v.may_supersede(status, status_of(r)):
             continue                      # she does not get to overwrite what he told her
 
         out.append(r)
@@ -852,24 +876,12 @@ def render(row: dict) -> str:
     # thing he never said. This store has already lost his NAME and then his GENDER to
     # exactly that blurring of who a sentence belongs to. She is allowed to be wrong about
     # him. She is not allowed to be wrong about him IN HIS VOICE.
-    # FRAME FROM THE FIELD, NOT FROM THE PROSE. This used to read `"reflection" in row["src"]` —
-    # and `src` is free-text provenance that maintenance passes APPEND to ("reflection | cleanup:
-    # stamped speaker=user"). The first housekeeping script to touch a reflection row would have
-    # left the substring intact by luck, not by design; the first one to REWRITE it would have
-    # turned her guess back into his testimony, silently, months later. Branch on `status`.
-    st = row.get("status") or (STATUS_INFERRED if "reflection" in (row.get("src") or "")
-                               else STATUS_OBSERVED)
-
-    if st == STATUS_INFERRED:
-        return f"I've come to think: {t}"
-    if st == STATUS_CONFIRMED:
-        # she guessed, she ASKED, and he said yes. That is a different and stronger thing than
-        # either a guess or a bare statement — it is a thing they agreed on.
-        return f"We settled that: {t}"
-
-    if row.get("speaker") == SPEAKER_SELF:
-        return f"About myself: {t}"
-    return f"Knack told me: {t}"
+    # FRAME FROM THE FIELD, NOT FROM THE PROSE — and from THE table, not a local branch
+    # (Tier 1.3). status_of() is the one normalization (its docstring carries the src-shim
+    # history that used to live here); verdict.FRAMING is the committed (status, speaker)
+    # table, and G-SEM-PROJ walks every cell of it through this real function.
+    from harness.skills import verdict as _v
+    return _v.framing_for(status_of(row), row.get("speaker") or SPEAKER_USER).format(t=t)
 
 
 # ── SALIENCE: HOW MANY TIMES, AND HOW RECENTLY (2026-07-13) ───────────────────
