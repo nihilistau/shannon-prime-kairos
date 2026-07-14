@@ -216,6 +216,13 @@ held to the same scoreboard.
 
 ---
 
+## 2.1 WHERE IT GOES NEXT
+
+The extension map — the updated mathematics (OC/MAX/f usability, FIN/USE admissibility, the
+φ-form gate language with bounded negation) mapped onto every remaining hand-ruled decision site
+in this tree — lives in [`INVARIANT-ROADMAP.md`](INVARIANT-ROADMAP.md). Rows move from there to
+phases here, with gates, one at a time.
+
 ## 3. HONESTY CLAUSE
 
 What is proved is exactly this and no more: properties of the verdict layer over the signature
