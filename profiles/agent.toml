@@ -143,6 +143,14 @@ mint_async = true      # SP_CAPTURE_ASYNC — the KV mint must not block her rep
 # that signal is a separate knob (kairos.enabled in the tuning registry, default OFF) —
 # so the impulse can be observed, calibrated and trusted long before it is ever acted on.
 # Signal and permission are not the same thing and must not share a switch.
+[sem]
+# SEM stack S0 (docs/SEMANTICS.md): the sidecar semantic index. DERIVED DATA ONLY —
+# recomputable from registry + model, append-only, cannot write the registry, degrades
+# silently. Safe to arm: ranking behaviour (SP_SEM_RANK) is a Phase 2 knob that is
+# deliberately not even mapped in serve.py yet. Gate: G-SEM-INDEX.
+mint  = true             # SP_SEM_MINT — index each fact as it is remembered
+index = 'D:/F/shannon-prime-repos/shannon-prime-kairos/var/memory/semindex.jsonl'   # SP_SEM_INDEX
+
 [kairos]
 enabled = true           # SP_KAIROS — emit the impulse; speaking is gated separately
 

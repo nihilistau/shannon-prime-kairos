@@ -132,6 +132,11 @@ The essentials, so you do not have to guess:
   "About myself: …". This is what stops a fact he said in the first person coming back in her voice.
 - **Three write paths exist.** Only one is authoritative (`memory.remember()`). The other two are the
   daemon's — see TRAPS.
+- **The SEM sidecar index** (`var/memory/semindex.jsonl`, `harness/skills/semindex.py`) is DERIVED
+  data for the semantics layer — recomputable from registry + model, append-only, tombstone-blind
+  (lifecycle joins from the registry at read; it is never copied). It structurally cannot write the
+  registry. Design and phase status: [`docs/SEMANTICS.md`](docs/SEMANTICS.md). Gates: G-SEM-INDEX,
+  G-SEM-CONSERVE.
 
 ---
 

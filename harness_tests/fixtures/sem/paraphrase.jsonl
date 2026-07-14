@@ -1,0 +1,100 @@
+{"q": "how does he feel about the ocean", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is terrified of open water", "lane": "user"}
+{"q": "is he scared of deep water swimming", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is terrified of open water", "lane": "user"}
+{"q": "what curry does he always order", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite meal is lamb rogan josh", "lane": "user"}
+{"q": "which dish does he enjoy most", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite meal is lamb rogan josh", "lane": "user"}
+{"q": "what does he do for a living", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack works as a radiographer at the county hospital", "lane": "user"}
+{"q": "what is his job", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack works as a radiographer at the county hospital", "lane": "user"}
+{"q": "does he have any siblings", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack has a sister named Priya who lives in Perth", "lane": "user"}
+{"q": "who in his family lives out west", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack has a sister named Priya who lives in Perth", "lane": "user"}
+{"q": "what is the pet's name", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's cat is called Biscuit", "lane": "user"}
+{"q": "who is the furry housemate", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's cat is called Biscuit", "lane": "user"}
+{"q": "where did he spend his childhood", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's home town is Ballarat", "lane": "user"}
+{"q": "which town is he originally from", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's home town is Ballarat", "lane": "user"}
+{"q": "what music does he listen to most", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite band is King Gizzard", "lane": "user"}
+{"q": "which group does he see live on every tour", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite band is King Gizzard", "lane": "user"}
+{"q": "which foods make him sick", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is allergic to shellfish", "lane": "user"}
+{"q": "what can't he eat at a seafood restaurant", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is allergic to shellfish", "lane": "user"}
+{"q": "what motorbike does he own", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's motorbike is a 1987 Yamaha SR400", "lane": "user"}
+{"q": "which classic machine does he take out on weekends", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's motorbike is a 1987 Yamaha SR400", "lane": "user"}
+{"q": "when does the little one begin classes", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's daughter starts school in February", "lane": "user"}
+{"q": "what happens for his kid early next year", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's daughter starts school in February", "lane": "user"}
+{"q": "what does he drink at breakfast", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack prefers tea over coffee in the mornings", "lane": "user"}
+{"q": "which hot beverage does he reach for first", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack prefers tea over coffee in the mornings", "lane": "user"}
+{"q": "what injury did he get", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's left wrist is weak from an old skateboarding break", "lane": "user"}
+{"q": "how did he hurt his arm", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's left wrist is weak from an old skateboarding break", "lane": "user"}
+{"q": "who is he closest to", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's best friend is a carpenter named Sol", "lane": "user"}
+{"q": "which mate of his builds furniture", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's best friend is a carpenter named Sol", "lane": "user"}
+{"q": "what charity work does he do on weekends", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is a Sunday volunteer at the animal shelter", "lane": "user"}
+{"q": "where does he help out with rescues", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is a Sunday volunteer at the animal shelter", "lane": "user"}
+{"q": "which movie does he call the greatest", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite film is Stalker by Tarkovsky", "lane": "user"}
+{"q": "what does he watch every single year", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite film is Stalker by Tarkovsky", "lane": "user"}
+{"q": "which instrument is he studying", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is learning to play the cello", "lane": "user"}
+{"q": "what does he practise in the evenings", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is learning to play the cello", "lane": "user"}
+{"q": "what does he plant out the back", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's garden grows heirloom tomatoes", "lane": "user"}
+{"q": "which vegetables does he cultivate", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's garden grows heirloom tomatoes", "lane": "user"}
+{"q": "which noise drives him mad", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack hates the sound of styrofoam squeaking", "lane": "user"}
+{"q": "what sound can he not stand", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack hates the sound of styrofoam squeaking", "lane": "user"}
+{"q": "who showed him how to make sourdough", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's grandmother taught him to bake bread", "lane": "user"}
+{"q": "where did his baking come from", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's grandmother taught him to bake bread", "lane": "user"}
+{"q": "how far does he jog each week", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack runs ten kilometres every Tuesday", "lane": "user"}
+{"q": "what exercise does he do midweek", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack runs ten kilometres every Tuesday", "lane": "user"}
+{"q": "what vehicle does he drive", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's car is a green Subaru Forester", "lane": "user"}
+{"q": "which wagon sits in his driveway", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's car is a green Subaru Forester", "lane": "user"}
+{"q": "what does he hunt for at flea markets", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is a collector of vintage fountain pens", "lane": "user"}
+{"q": "which old writing tools does he gather", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is a collector of vintage fountain pens", "lane": "user"}
+{"q": "where did he pop the question", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's engagement spot is Wilsons Promontory", "lane": "user"}
+{"q": "how did the engagement happen", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's engagement spot is Wilsons Promontory", "lane": "user"}
+{"q": "which shade does he like best", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite colour is burnt orange", "lane": "user"}
+{"q": "what hue does he pick every time", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite colour is burnt orange", "lane": "user"}
+{"q": "what was his degree", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's degree is in geology from Monash", "lane": "user"}
+{"q": "which university did he attend", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's degree is in geology from Monash", "lane": "user"}
+{"q": "what livestock does he tend", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack keeps bees in two hives behind the shed", "lane": "user"}
+{"q": "which insects does he look after", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack keeps bees in two hives behind the shed", "lane": "user"}
+{"q": "what did his dad do", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's father restored lighthouses for a living", "lane": "user"}
+{"q": "which family trade involved the coast", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's father restored lighthouses for a living", "lane": "user"}
+{"q": "what helps him fall asleep", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is unable to sleep without white noise", "lane": "user"}
+{"q": "what does he switch on at bedtime", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is unable to sleep without white noise", "lane": "user"}
+{"q": "which novel does he reread", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite book is The Dispossessed", "lane": "user"}
+{"q": "what is the best thing he ever read", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite book is The Dispossessed", "lane": "user"}
+{"q": "which language can he get by in", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's second language is Indonesian", "lane": "user"}
+{"q": "what did he pick up travelling", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's second language is Indonesian", "lane": "user"}
+{"q": "what went missing at the beach", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's wedding ring is somewhere in the surf at Torquay", "lane": "user"}
+{"q": "which keepsake did the waves take", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's wedding ring is somewhere in the surf at Torquay", "lane": "user"}
+{"q": "who looks after the house when he is away", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's neighbour Dawn waters his plants when he travels", "lane": "user"}
+{"q": "which person next door helps out", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's neighbour Dawn waters his plants when he travels", "lane": "user"}
+{"q": "what project is taking over his workshop", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is building a cedar strip canoe in the garage", "lane": "user"}
+{"q": "which boat is he crafting by hand", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is building a cedar strip canoe in the garage", "lane": "user"}
+{"q": "which time of year does he love", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite season is autumn", "lane": "user"}
+{"q": "when is he happiest outdoors", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite season is autumn", "lane": "user"}
+{"q": "what did he give away", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's old telescope is now at the local school", "lane": "user"}
+{"q": "where did the stargazing gear end up", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's old telescope is now at the local school", "lane": "user"}
+{"q": "who runs a bar overseas", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's uncle owns a pub in Galway", "lane": "user"}
+{"q": "which relative pours pints in Ireland", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's uncle owns a pub in Galway", "lane": "user"}
+{"q": "what made him ill at the fair", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is wary of food stalls since the church fete", "lane": "user"}
+{"q": "which event ruined his weekend", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is wary of food stalls since the church fete", "lane": "user"}
+{"q": "how did he earn money as a teenager", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's first job was delivering newspapers at dawn", "lane": "user"}
+{"q": "what work did he do before sunrise", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's first job was delivering newspapers at dawn", "lane": "user"}
+{"q": "which household task scares him", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is frightened of ladders after a fall", "lane": "user"}
+{"q": "why does he avoid climbing", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is frightened of ladders after a fall", "lane": "user"}
+{"q": "what sweet does he order", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite dessert is sticky date pudding", "lane": "user"}
+{"q": "which treat ends his birthday dinner", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite dessert is sticky date pudding", "lane": "user"}
+{"q": "which game fills his nights", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is an online chess regular most evenings", "lane": "user"}
+{"q": "what does he do to unwind after dark", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is an online chess regular most evenings", "lane": "user"}
+{"q": "what fruit arrives in the post each spring", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is fond of quinces from his mother's tree", "lane": "user"}
+{"q": "which fruit does his mum grow for him", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack is fond of quinces from his mother's tree", "lane": "user"}
+{"q": "what did he fix on the house", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's roof is his own repair job after the hailstorm", "lane": "user"}
+{"q": "how did he handle the storm damage", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's roof is his own repair job after the hailstorm", "lane": "user"}
+{"q": "whose art does he admire", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite painter is Clarice Beckett", "lane": "user"}
+{"q": "which artist's misty scenes does he love", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's favourite painter is Clarice Beckett", "lane": "user"}
+{"q": "what happened on the mountain walk", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's right ankle is dodgy from a Grampians hike", "lane": "user"}
+{"q": "which injury came from bushwalking", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "Knack's right ankle is dodgy from a Grampians hike", "lane": "user"}
+{"q": "what smell do you love", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "I like the smell of rain on hot asphalt", "lane": "self"}
+{"q": "which scent is your favourite", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "I like the smell of rain on hot asphalt", "lane": "self"}
+{"q": "how do you feel about storms", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "I am calmed by thunderstorms", "lane": "self"}
+{"q": "do storms bother you", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "I am calmed by thunderstorms", "lane": "self"}
+{"q": "what hobby of yours involves the garden", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "I enjoy naming the birds that visit the window", "lane": "self"}
+{"q": "which visitors do you keep track of", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "I enjoy naming the birds that visit the window", "lane": "self"}
+{"q": "how do you act in groups", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "I am more of a listener than a talker in a crowd", "lane": "self"}
+{"q": "are you talkative at parties", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "I am more of a listener than a talker in a crowd", "lane": "self"}
+{"q": "what part of the day do you prefer", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "I think slow mornings are the best part of a day", "lane": "self"}
+{"q": "when are you most content", "expect_ts": "2026-07-13T23:59:00Z", "expect_text": "I think slow mornings are the best part of a day", "lane": "self"}

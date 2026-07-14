@@ -153,6 +153,12 @@ def _mint_drain():
                     hit["npos"] = npos
                     hit["minted_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                     _save_all(rows)
+            # SEM S0: if the engine wrote an ep.l5 sidecar into this episode dir, append
+            # the l5-space index row (an UPGRADE is an APPEND — nothing is edited). No-op
+            # today: /v1/capture does not mint ep.l5; ready the day it does. Never raises.
+            if hit is not None:
+                from harness.skills import semindex as _sem
+                _sem.upgrade(out_dir, fact, hit.get("ts", ""))
         except Exception:
             pass
         finally:
@@ -445,6 +451,14 @@ def remember(fact: str, source: str = "") -> str:
 
     with open(p, "a", encoding="utf-8") as f:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+    # ── SEM S0 (docs/SEMANTICS.md): the sidecar semantic index ──────────────────────────
+    # DERIVED data in a SEPARATE file — semindex can never write the registry, never
+    # blocks, never raises (a failed mint is a telemetry tick, not an error in her
+    # mouth). Off unless SP_SEM_MINT=1 AND SP_SEM_INDEX is set, both mapped in serve.py
+    # (G-ONEDOOR). Gate: G-SEM-INDEX.
+    from harness.skills import semindex as _sem
+    _sem.mint(fact, line.get("ts", ""), out_dir=out_dir)
 
     note = ""
     if retired:

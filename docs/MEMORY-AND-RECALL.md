@@ -22,6 +22,7 @@ See the TRAPS section for the receipts.
 | Presence / attention ledger | `var/memory/presence.jsonl` | JSONL, one row per UTC day he was spoken to | `harness/model/presence.py` |
 | MEM-OKF knowledge stores | `memory-okf/` (LUT.md tier-0, `sum/` tier-1, `full/` tier-2, content-addressed), plus `memory-okf-self/`, `memory-okf-personality/`, `memory-okf-telemetry/` | Markdown + frontmatter, content-addressed by `sha256(body)[:16]` or C2 signature | `tools/okf_mem.py` |
 | Quarantine | `var/memory/quarantine.jsonl` | JSONL | `harness/maintenance/ops.py` (cleanup, see below) |
+| SEM semantic index (S0) | `var/memory/semindex.jsonl` (path from `SP_SEM_INDEX`; armed by `SP_SEM_MINT`, both mapped in `serve.py`) | JSONL sidecar, DERIVED: one embedding row per fact, keyed `(addr, ts)` with addr = MEM-OKF `addr_of(text)`; append-only, tombstone-blind, model-tagged (`hash256-v1` / `l5-512-v1`). Cannot write the registry. See [`SEMANTICS.md`](SEMANTICS.md). | `harness/skills/semindex.py` |
 
 `var/` is gitignored: all of the above is runtime state, not source. The live registry on
 this checkout has 86 rows: `fact` 58, `preference` 12, `identity` 8, `relationship` 5,

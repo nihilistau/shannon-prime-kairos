@@ -1,0 +1,21 @@
+{
+  "name": "sem_baseline",
+  "ranker": "lexical (overlap + salience prior)",
+  "ts": "2026-07-13T23:59:57Z",
+  "corpus": {
+    "facts": 50,
+    "paraphrase_queries": 100,
+    "foreign_queries": 60,
+    "version": "v1"
+  },
+  "metrics": {
+    "seam_recall_at_1": 0.46,
+    "seam_recall_at_3": 0.46,
+    "decider_hit_rate": 0.06,
+    "foreign_seam_false_hit_rate": 0.5333,
+    "foreign_decider_false_injection_rate": 0.1333,
+    "foreign_decider_precision": 0.8667
+  },
+  "pass": 100,
+  "fail": 0
+}

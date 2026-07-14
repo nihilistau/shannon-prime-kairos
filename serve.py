@@ -33,6 +33,7 @@ def build_env(c: dict) -> dict:
     """The ONE explicit profile→env mapping. Anything not mapped here does not exist."""
     paths, kv, mem = c["paths"], c["kv"], c["memory"]
     agent, dec, veto = c["agent"], c["decode"], c.get("veto", {})
+    sem = c.get("sem", {})
     if mem.get("recall_authority") != "L5":
         raise SystemExit(f"profile invalid: recall_authority must be 'L5' (got {mem.get('recall_authority')!r})")
     # G-VERBATIM lint (2026-07-12): no_repeat_ngram>=2 BANS re-emitting any N-token
@@ -312,6 +313,15 @@ def build_env(c: dict) -> dict:
         # builds are never read — authority='spine' disables the engine recall that consumes them.
         # false = the old synchronous behaviour (determinism, for gates). Gate: G-CAPTURE-ASYNC.
         "SP_CAPTURE_ASYNC": b(mem.get("mint_async", True)),
+
+        # ── SEM S0 (docs/SEMANTICS.md): the sidecar semantic index ─────────────────────────
+        # DERIVED data in its own file (harness/skills/semindex.py): recomputable from
+        # registry + model, append-only, tombstone-blind, cannot write the registry.
+        # SP_SEM_RANK (Phase 2, behaviour) is deliberately NOT mapped: per the boundary
+        # thesis it does not exist until it beats the lexical baseline receipt. Gate:
+        # G-SEM-INDEX; conservation: G-SEM-CONSERVE.
+        "SP_SEM_MINT": b(sem.get("mint", False)),
+        "SP_SEM_INDEX": str(sem.get("index", "")).replace("/", "\\"),
 
         # ── THE DAEMON'S OTHER HANDS ON HER MEMORY, PINNED SHUT (2026-07-14) ──────────────
         # These are daemon-side writers/retirers that no profile knob has ever controlled and
