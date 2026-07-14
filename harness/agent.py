@@ -178,6 +178,19 @@ def load_agent_system() -> str:
                     parts.append(sm)
             except Exception:
                 pass
+            # ── N1 (CONTINUITY.md): THE STANDING WORLD — memory meets persona ─────────
+            # The fourth slot: what is alive between them, composed from the registry
+            # (verdict-gated: never a tombstone, NEVER a secret; rank-ordered; her
+            # inferences in her voice). CACHED for the process lifetime — the KV-prefix
+            # law: a remember() mid-session must not re-prefill the conversation; new
+            # facts arrive via per-turn recall until the next boot. Gate: G-WORLD.
+            try:
+                from harness.skills.world import render_world
+                w = render_world()
+                if w:
+                    parts.append(w)
+            except Exception:
+                pass
             return "\n\n".join(p for p in parts if p) + _TOOL_DISCIPLINE
     except Exception:
         pass

@@ -141,7 +141,7 @@ a rule that silences her; it removes the conditions that made silencing rules fe
 | Phase | Lands | Proof |
 |---|---|---|
 | N0 | G-VOICE scoreboard + baseline receipts on the current dials | the receipt |
-| N1 | `render_world()` + G-WORLD (composition obeys the table; secrets never ambient) | G-WORLD ∀-checks |
+| N1 | `render_world()` + G-WORLD (composition obeys the table; secrets never ambient) — **DONE 2026-07-15**: `harness/skills/world.py`, fourth prefix slot in `load_agent_system`, session-cached (the KV-prefix law: a remember() mid-session does not re-prefill; refresh() is the NIGHTSHIFT hook), verdict-gated, salience-ranked, deduped, 180-word budget; armed on the live profile (`[agent] world`, `SP_WORLD`). | **G-WORLD 15/15** |
 | N2 | NIGHTSHIFT narrative + tags taught in persona | snapshot diffs; G-PF-CURATE extension |
 | N3 | dial tuning against G-VOICE; ban re-classification (backstop vs crutch) | before/after receipts |
 

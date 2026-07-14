@@ -351,6 +351,10 @@ def build_env(c: dict) -> dict:
         # class->delivery map IS the registry, serialized here — recall.rs consumes it
         # (class_delivery) with its compiled match as source-pinned fallback.
         "SP_MEM_CLASS_DELIVERY": json.dumps(_memclass_delivery()),
+        # N1 (CONTINUITY.md): the STANDING WORLD prefix slot — the registry rendered
+        # into her ambient context at session boot (verdict-gated, session-cached).
+        # Gate: G-WORLD.
+        "SP_WORLD": b(agent.get("world", False)),
         # Phase C: the slots sidecar — oracle-PROPOSED same-subject links, consumed by
         # verdict.competition(). Derived, append-only, silence-direction only.
         # Gate: G-SEM-SLOT. Proposer runs manually: python -m harness.skills.slots --scan

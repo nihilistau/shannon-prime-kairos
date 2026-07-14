@@ -175,6 +175,11 @@ enabled = true           # SP_KAIROS — emit the impulse; speaking is gated sep
 spine_toolset = false
 spine_recall = true
 personality = true
+# N1 (docs/CONTINUITY.md): the STANDING WORLD — the registry rendered into her prefix
+# at session boot: the durable spine of him, what is current, what she has come to
+# think. Verdict-gated (never a tombstone, NEVER a secret ambient), salience-ranked,
+# cached all session (the KV-prefix law). Gate: G-WORLD.
+world = true             # SP_WORLD
 mcp_tools = true
 # Hydrate the ~1.5k-token persona+tools preamble into the persist cache at BOOT (background)
 # so the user's FIRST message reuses it (LCP) instead of paying the one-time ~100s cold
