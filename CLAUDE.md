@@ -26,6 +26,8 @@ drift. This file will not become the third. Everything lives in `AGENTS.md`; thi
 2. Nothing in memory is ever deleted — tombstone or quarantine, never `open(p, "w")` minus a row.
 3. Be honest about measured vs asserted. A verdict you cannot defend is a lie with a timestamp on it.
 4. Her word never outranks his. An inference may never retire an observation.
+5. Verdicts are rulings of committed finite tables over order-invariant signatures —
+   prose and magnitudes never rule. See [`docs/INVARIANT-MEMORY.md`](docs/INVARIANT-MEMORY.md).
 
 ## Start the stack
 

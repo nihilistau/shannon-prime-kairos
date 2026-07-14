@@ -51,6 +51,15 @@ The corollaries, learned the hard way:
    timestamp on it.
 4. **Her word never outranks his.** An inference may never retire an observation. She is allowed to be
    wrong about him; she is not allowed to say it over him.
+5. **Verdicts are rulings of committed finite tables over order-invariant signatures.** (The
+   invariant-maximality principle — [`docs/INVARIANT-MEMORY.md`](docs/INVARIANT-MEMORY.md),
+   extensions in [`docs/INVARIANT-ROADMAP.md`](docs/INVARIANT-ROADMAP.md).) A correctness decision
+   may branch only on finite signature coordinates, never on prose or raw magnitudes; its case
+   space is enumerated and pinned; its invariances are gated; magnitudes may RANK the admitted,
+   oracles may PROPOSE, and neither may ever RULE. A new hand-written conditional over row fields
+   is a bug report against this list. Every one of the five conversions done so far found a live
+   drift the day it landed — this principle is not aspiration, it is the cheapest bug-finder the
+   repo has.
 
 ---
 

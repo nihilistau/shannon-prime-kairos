@@ -185,6 +185,41 @@ def run_spine(
 
 
 # ──── the stock deciders / executors / verifiers (the seams we already own) ────
+# THE DECIDER ORDER IS POLICY, COMMITTED AS DATA (Tier 2, INVARIANT-ROADMAP.md).
+# Lower runs first. toolset before recall — pick the tier, then decide the injection —
+# is a decision, not an accident of integers scattered over four constructors.
+# G-LANE-TABLE pins this dict and asserts every constructor consumes it.
+PRIORITIES = {"toolset": 10, "recall": 20, "persona_tags": 30, "hygiene": 40}
+
+
+def authority_lane(authority_pref: str, auto_recall: bool, want_recall: bool,
+                   looks_q: bool):
+    """WHICH RECALL AUTHORITY RUNS THIS TURN — the gateway's lane policy as a pure
+    function (Tier 2; it lived inline in app.py's stream generator). Returns
+    (auto_recall, want_recall, event) with event in {None, 'spine', 'L5'}.
+
+    The rules, in committed order (each bought with a live incident):
+      1. QONLY: spine recall only on turns that ASK something — greetings/acks were
+         surfacing junk episodes ("hi there!" x3).
+      2. SPINE AUTHORITY: profile-selected; refuses the client's auto_recall
+         passthrough (the daemon-L5 delivery re-prefills + clears the committed
+         cache — the live "minutes then [aborted]" pattern).
+      3. ONE AUTHORITY: free composition of both is REFUTED on the metal
+         ("favorite color?" -> "Human blood is green"). If the daemon's recall is
+         armed, spine auto-disarms.
+    THEOREM the gate holds over all 16 cells: never both authorities on one turn."""
+    event = None
+    if want_recall and not looks_q:
+        want_recall = False
+    if authority_pref == "spine" and auto_recall:
+        auto_recall = False
+        event = "spine"
+    if auto_recall and want_recall:
+        want_recall = False
+        event = "L5"
+    return auto_recall, want_recall, event
+
+
 def persona_tag_decider() -> Decider:
     """POST-turn: if the reply carries [MOOD]/[VOICE]/[TRAIT] tags, decide a persona_shift."""
     import re
@@ -194,20 +229,22 @@ def persona_tag_decider() -> Decider:
         if view.phase != "post" or not tag_re.search(view.reply or ""):
             return []
         return [Decision(kind="persona_shift", payload={"reply": view.reply})]
-    return FnDecider("persona_tags", fn, priority=30)
+    return FnDecider("persona_tags", fn, priority=PRIORITIES["persona_tags"])
 
 
 def hygiene_decider() -> Decider:
-    """TICK: if the registry verify-report says NEEDS COMPACTION, decide a compaction."""
+    """TICK: if the registry's health VERDICT says so, decide a compaction.
+    Tier 2 conversion: this used to sniff 'NEEDS COMPACTION' out of the human-readable
+    report string — branching on a paragraph, the src-trap in a lab coat. It consumes
+    the enum now (memory.registry_status); the report rides along for the receipt."""
     def fn(view: TurnView) -> List[Decision]:
         if view.phase != "tick":
             return []
-        from harness.skills.memory import verify_registry
-        report = verify_registry()
-        if "NEEDS COMPACTION" in report:
-            return [Decision(kind="compact_registry", payload={"report": report})]
+        from harness.skills.memory import registry_status, verify_registry
+        if registry_status() == "needs-compaction":
+            return [Decision(kind="compact_registry", payload={"report": verify_registry()})]
         return []
-    return FnDecider("hygiene", fn, priority=40)
+    return FnDecider("hygiene", fn, priority=PRIORITIES["hygiene"])
 
 
 def recall_decider(min_overlap: float = 0.34) -> Decider:
@@ -245,7 +282,7 @@ def recall_decider(min_overlap: float = 0.34) -> Decider:
         if not facts:
             return []
         return [Decision(kind="inject_recall", payload={"facts": facts})]
-    return FnDecider("recall", fn, priority=20)
+    return FnDecider("recall", fn, priority=PRIORITIES["recall"])
 
 
 def toolset_decider() -> Decider:
@@ -271,7 +308,7 @@ def toolset_decider() -> Decider:
         if tier == "core":
             return []                      # default set — no decision needed (null floor)
         return [Decision(kind="select_toolset", payload={"tier": tier})]
-    return FnDecider("toolset", fn, priority=10)
+    return FnDecider("toolset", fn, priority=PRIORITIES["toolset"])
 
 
 def toolset_for(tier: str):

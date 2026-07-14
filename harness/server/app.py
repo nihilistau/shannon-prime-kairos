@@ -801,32 +801,20 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
     _looks_q = _t.endswith("?") or _first in {
         "what", "who", "where", "when", "why", "how", "which", "do", "does",
         "did", "is", "are", "am", "can", "could", "remind", "recall", "tell"}
-    if want_recall and not _looks_q:
-        want_recall = False
-    # ── HINDSIGHT 2026-07-10: PROFILE-SELECTED RECALL AUTHORITY ──
-    # SP_GATEWAY_AUTHORITY=spine (the kairos agent profile) makes the HARNESS the one
-    # recall authority and refuses the client's auto_recall passthrough. Why: the
-    # daemon-L5 delivery re-prefills an AUGMENTED prompt and then CLEARS the persist
-    # committed cache (routes.rs recalled-turn clear), so with the console checkbox on,
-    # EVERY interrogative turn cost ~2 full preamble prefills and the following turn a
-    # third — the live "minutes then [aborted]" pattern. Spine recall injects its note
-    # BEFORE the new user message, so the prompt stays a STRICT EXTENSION of the
-    # committed cache = O(suffix) prefill. Default 'l5' keeps the old passthrough
-    # (G-PK2-RECALL-L5-COMPOSE behavior) byte-for-byte.
-    if _os.environ.get("SP_GATEWAY_AUTHORITY", "l5").lower() == "spine" and cfg.auto_recall:
-        cfg.auto_recall = False
-        if typed:
-            yield ("data: " + json.dumps({"authority": "spine"}) + "\n\n").encode()
-    # ONE-AUTHORITY GUARD (G-PK2-RECALL-L5-COMPOSE, 2026-07-08): free composition of BOTH
-    # recall authorities is REFUTED on the metal — with L5 armed, its systemecho SYSTEM
-    # delivery overrides the harness note, and an L5 selection cross-pick surfaces to the
-    # user ("favorite color?" -> "Human blood is green"). Rule made structural: when the
-    # request arms the daemon's recall (auto_recall=true => L5 is the authority), the spine
-    # recall auto-disarms. Receipt: the {"authority":"L5"} event.
-    if cfg.auto_recall and want_recall:
-        want_recall = False
-        if typed:
-            yield ("data: " + json.dumps({"authority": "L5"}) + "\n\n").encode()
+    # ── THE LANE POLICY IS A PURE FUNCTION NOW (Tier 2, INVARIANT-ROADMAP.md) ──────────
+    # QONLY, the profile-selected spine authority (HINDSIGHT 2026-07-10: the daemon-L5
+    # delivery re-prefills + clears the committed cache — the "minutes then [aborted]"
+    # pattern), and the one-authority guard (G-PK2-RECALL-L5-COMPOSE: free composition
+    # REFUTED on the metal — "favorite color?" -> "Human blood is green") all live in
+    # spine.authority_lane(), enumerated exhaustively by G-LANE-TABLE. The theorem held
+    # over every cell: NEVER BOTH AUTHORITIES ON ONE TURN.
+    from harness.control.spine import authority_lane as _lane
+    _auto, want_recall, _ev = _lane(
+        _os.environ.get("SP_GATEWAY_AUTHORITY", "l5").lower(),
+        cfg.auto_recall, want_recall, _looks_q)
+    cfg.auto_recall = _auto
+    if _ev and typed:
+        yield ("data: " + json.dumps({"authority": _ev}) + "\n\n").encode()
     if (want_recall or want_toolset) and user_text:
         try:
             from harness.control.spine import run_pre_turn, toolset_for

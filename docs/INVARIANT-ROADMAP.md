@@ -145,14 +145,19 @@ the proven recipe: operational signature → committed table → shadow → meta
    because properties accumulate) and the seam check that a legacy reflection row no longer
    wears testimony's shield. Full 20-gate suite green.
 
-### Tier 2 — after (real value, small scope)
+### Tier 2 — DONE 2026-07-14 (all four, one commit; the principle is now AGENTS.md §1.5)
 
-4. `spine.hygiene_decider` — make `verify_registry()` return a status enum; stop sniffing prose.
-5. `app.py` one-authority guard — (authority, auto_recall, want_recall) → lane; a real finite
-   policy table with real failure history ("Human blood is green").
-6. `roleplay/ladder.step()` — fully finite already; the ideal low-stakes proving ground for the
-   conversion recipe.
-7. Spine decider priorities — the magic integers (10/20/30/40) become a committed ordering table.
+4. `spine.hygiene_decider` — DONE: `memory.registry_status()` is a three-value enum
+   (ok / needs-compaction / unconfigured); the decider consumes it; the prose report is a
+   receipt, not a branch target.
+5. `app.py` one-authority guard — DONE: `spine.authority_lane()`, a pure function enumerated
+   exhaustively (16 cells, **G-LANE-TABLE 15/15**) with the body-count theorem held over every
+   cell: NEVER both authorities on one turn, the lane never arms what the caller didn't ask for.
+6. `roleplay/ladder.step()` — DONE: 512 cells walked edge to edge (**G-LADDER-TABLE 10/10**,
+   `fixtures/roleplay/ladder-table.json`): a stop always wins gated by nothing; cooling always
+   works; the build is the scene; the ceiling is the operator's word; no rung is ever skipped.
+7. Spine decider priorities — DONE: `spine.PRIORITIES` is the committed ordering; every stock
+   constructor provably consumes it.
 
 ### Tier 3 — the far edge (the foundation's full reach)
 

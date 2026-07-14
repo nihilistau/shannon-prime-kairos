@@ -1043,12 +1043,15 @@ def memory_stats() -> str:
 
 
 # ──── MEM-OKF v2 §M3: registry hygiene (verify + compaction) ────────────────
-def verify_registry() -> str:
-    """Integrity check on the fact registry: count rows, malformed lines, exact duplicates,
-    near-duplicate paraphrase pairs, and rows missing an episode dir. Read-only report."""
+def _registry_health():
+    """(stats dict, status enum). The ONE computation behind both the human report and
+    the machine verdict — Tier 2 (INVARIANT-ROADMAP.md): the hygiene decider used to
+    sniff 'NEEDS COMPACTION' out of the report STRING, which is branching on a
+    paragraph, the src-trap in a lab coat. Status is an enum now; the prose is for
+    people."""
     p = _reg_path()
     if not p or not os.path.exists(p):
-        return "[no registry configured]"
+        return None, "unconfigured"
     rows, malformed = 0, 0
     with open(p, encoding="utf-8") as f:
         for line in f:
@@ -1074,10 +1077,29 @@ def verify_registry() -> str:
                 near += 1
     no_ep = sum(1 for e in eps if not e.get("dir") or int(e.get("npos", 0) or 0) <= 0)
     no_prov = sum(1 for e in eps if not e.get("src"))
-    ok = malformed == 0 and exact_dups == 0
-    return (f"registry {p}: rows={rows} parsed={len(eps)} malformed={malformed} "
-            f"exact_dups={exact_dups} near_dups={near} unminted={no_ep} no_provenance={no_prov} "
-            f"-> {'OK' if ok else 'NEEDS COMPACTION'}")
+    stats = {"path": p, "rows": rows, "parsed": len(eps), "malformed": malformed,
+             "exact_dups": exact_dups, "near_dups": near, "unminted": no_ep,
+             "no_provenance": no_prov}
+    status = "ok" if (malformed == 0 and exact_dups == 0) else "needs-compaction"
+    return stats, status
+
+
+def registry_status() -> str:
+    """The machine verdict: 'ok' | 'needs-compaction' | 'unconfigured'."""
+    return _registry_health()[1]
+
+
+def verify_registry() -> str:
+    """Integrity check on the fact registry: count rows, malformed lines, exact duplicates,
+    near-duplicate paraphrase pairs, and rows missing an episode dir. Read-only report."""
+    s, status = _registry_health()
+    if s is None:
+        return "[no registry configured]"
+    return (f"registry {s['path']}: rows={s['rows']} parsed={s['parsed']} "
+            f"malformed={s['malformed']} exact_dups={s['exact_dups']} "
+            f"near_dups={s['near_dups']} unminted={s['unminted']} "
+            f"no_provenance={s['no_provenance']} "
+            f"-> {'OK' if status == 'ok' else 'NEEDS COMPACTION'}")
 
 
 def compact_registry() -> str:
