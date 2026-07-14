@@ -138,13 +138,26 @@ is what makes "the store settles" a theorem instead of an observation.
 
 ## 2. WHAT CHANGES, CONCRETELY (the phase plan)
 
-**Phase A — draw the game board (no behaviour change).** Extract the DE FACTO decision table:
-enumerate every reachable signature cell, drive each through the REAL seam and decider, record the
-ruling. Commit the table as a receipt. The meta-gates land here:
-G-SEM-COMPLETE (every reachable cell ruled — an unruled cell is the gate's finite witness),
-G-SEM-CONSISTENT (one ruling per cell), and G-SEM-STABLE (the §1.2 invariances). The day these are
-green, the whack-a-mole board is finite, mapped, and pinned — every future "fringe case" is a
-diff against a committed table, visible in review.
+**Phase A — draw the game board (no behaviour change). DONE 2026-07-14.** The de facto decision
+table is committed (`harness_tests/fixtures/sem/verdict-table.json`: 19 cells, 0 refusals,
+0 conflicts, enumerated by `harness_tests/sem_enum.py` through the real writer/seam/decider) and
+the meta-gates are green: **G-SEM-TABLE 13/13** (COMPLETE: the ∀-theorems hold over every cell —
+tombstones silent on every path, live testimony always admitted, attr-absent secrets never spoken,
+covered inferences never take the floor, nothing spoken bypasses the seam; CONSISTENT: zero
+prose-dependent rulings, regeneration matches the committed table cell-for-cell) and
+**G-SEM-STABLE 9/9** (the §1.2 invariances). Every future "fringe case" is now a diff against a
+committed table, visible in review.
+
+Two structural findings from the first enumeration, both recorded in the table's notes:
+(1) **the topic relation is PROSE** — an inference sharing one content word with his testimony is
+operationally "uncovered" and lawfully takes the floor ("wary of ladders after a fall" vs "relaxed
+about ladders these days"). Topic-equivalence must become a signature coordinate (a slot),
+oracle-PROPOSED and table-consumed — that is Phase C's first job. (2) `counterfact` remains
+consumer-branched with no producer, flagged by the closure survey — vocabulary-only by design,
+watched by the gate. The enumeration method itself earned two corrections that are now doctrine in
+`sem_enum.py`: **cell coordinates are computed from the system's operational relations
+(`attr_absent`, `topic_of`, the store at observation time), never from recipe intent** — intent
+labels produced one phantom leak and one phantom conflict before this was law.
 
 **Phase B — the table becomes the law.** The seam's scattered conditionals are replaced by one
 evaluator reading the committed table (rules-as-data). Existing gates (G-CLAIM, G-SECRET,

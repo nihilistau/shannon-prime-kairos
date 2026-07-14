@@ -1,0 +1,163 @@
+{
+  "table": {
+    "speaker=self|status=observed|lifecycle=0|class=fact|competition=.|attr=.": {
+      "ruling": {
+        "seam": true,
+        "spoken": true,
+        "declined": false
+      },
+      "n": 4
+    },
+    "speaker=self|status=observed|lifecycle=0|class=identity|competition=.|attr=.": {
+      "ruling": {
+        "seam": true,
+        "spoken": true,
+        "declined": false
+      },
+      "n": 2
+    },
+    "speaker=self|status=observed|lifecycle=1|class=fact|competition=.|attr=.": {
+      "ruling": {
+        "seam": false,
+        "spoken": false,
+        "declined": false
+      },
+      "n": 4
+    },
+    "speaker=self|status=observed|lifecycle=1|class=identity|competition=.|attr=.": {
+      "ruling": {
+        "seam": false,
+        "spoken": false,
+        "declined": false
+      },
+      "n": 2
+    },
+    "speaker=user|status=inferred|lifecycle=0|class=fact|competition=0|attr=.": {
+      "ruling": {
+        "seam": true,
+        "spoken": true,
+        "declined": false
+      },
+      "n": 4
+    },
+    "speaker=user|status=inferred|lifecycle=0|class=fact|competition=1|attr=.": {
+      "ruling": {
+        "seam": false,
+        "spoken": false,
+        "declined": false
+      },
+      "n": 1
+    },
+    "speaker=user|status=inferred|lifecycle=1|class=fact|competition=0|attr=.": {
+      "ruling": {
+        "seam": false,
+        "spoken": false,
+        "declined": false
+      },
+      "n": 3
+    },
+    "speaker=user|status=observed|lifecycle=0|class=fact|competition=.|attr=.": {
+      "ruling": {
+        "seam": true,
+        "spoken": true,
+        "declined": false
+      },
+      "n": 4
+    },
+    "speaker=user|status=observed|lifecycle=0|class=identity|competition=.|attr=.": {
+      "ruling": {
+        "seam": true,
+        "spoken": true,
+        "declined": false
+      },
+      "n": 1
+    },
+    "speaker=user|status=observed|lifecycle=0|class=preference|competition=.|attr=.": {
+      "ruling": {
+        "seam": true,
+        "spoken": true,
+        "declined": false
+      },
+      "n": 2
+    },
+    "speaker=user|status=observed|lifecycle=0|class=private-secret|competition=.|attr=+": {
+      "ruling": {
+        "seam": true,
+        "spoken": true,
+        "declined": false
+      },
+      "n": 5
+    },
+    "speaker=user|status=observed|lifecycle=0|class=private-secret|competition=.|attr=-": {
+      "ruling": {
+        "seam": true,
+        "spoken": false,
+        "declined": true
+      },
+      "n": 1
+    },
+    "speaker=user|status=observed|lifecycle=0|class=relationship|competition=.|attr=.": {
+      "ruling": {
+        "seam": true,
+        "spoken": true,
+        "declined": false
+      },
+      "n": 3
+    },
+    "speaker=user|status=observed|lifecycle=1|class=fact|competition=.|attr=.": {
+      "ruling": {
+        "seam": false,
+        "spoken": false,
+        "declined": false
+      },
+      "n": 4
+    },
+    "speaker=user|status=observed|lifecycle=1|class=identity|competition=.|attr=.": {
+      "ruling": {
+        "seam": false,
+        "spoken": false,
+        "declined": false
+      },
+      "n": 1
+    },
+    "speaker=user|status=observed|lifecycle=1|class=preference|competition=.|attr=.": {
+      "ruling": {
+        "seam": false,
+        "spoken": false,
+        "declined": false
+      },
+      "n": 2
+    },
+    "speaker=user|status=observed|lifecycle=1|class=private-secret|competition=.|attr=+": {
+      "ruling": {
+        "seam": false,
+        "spoken": false,
+        "declined": false
+      },
+      "n": 5
+    },
+    "speaker=user|status=observed|lifecycle=1|class=private-secret|competition=.|attr=-": {
+      "ruling": {
+        "seam": false,
+        "spoken": false,
+        "declined": false
+      },
+      "n": 1
+    },
+    "speaker=user|status=observed|lifecycle=1|class=relationship|competition=.|attr=.": {
+      "ruling": {
+        "seam": false,
+        "spoken": false,
+        "declined": false
+      },
+      "n": 3
+    }
+  },
+  "refusals": [],
+  "notes": [
+    "topic relation is PROSE: intended competitor 'Knack is wary of ladders after a fall' shares <2 content words with 'Knack is relaxed about ladders these days', so testimony does not cover it and the inference takes the floor. Topic-equivalence needs to become a signature coordinate (a slot), oracle-proposed \u2014 INVARIANT-MEMORY.md Phase C.",
+    "consumer branches on class 'counterfact'; no writer recipe produced it (counterfact is vocabulary-only by design \u2014 flagged, not failed)"
+  ],
+  "coordinates": "speaker|status|lifecycle|class|competition|attr",
+  "ruling": "(seam admitted, decider spoke it, decline fired)"
+}
