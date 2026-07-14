@@ -112,6 +112,22 @@ repeat rate ~0, with kairos CONTINUE explicitly trusted to recover late-stop ove
 (keep, should never fire; alert if it does), or crutch (retire). The Hodor clause is explicitly
 the former. A backstop that fires weekly is a dial problem, and the receipts will say so.
 
+**N0 BASELINE MEASURED (2026-07-15, `voice_score.py`, receipt frozen) — AND THE DIALS ARE
+LARGELY EXONERATED.** Same knobs as the dead transcript (0.6 / eot_bias 4.0 / 192), fresh
+sandboxed conversation, live daemon: median reply **21.5 words** (p10 4, p90 57), **six
+questions asked back**, zero consecutive repeats, distinct ratio 1.0, recall woven naturally
+("I do! Tuffy, right?"; "I was starting to worry you were having a burglary!"). The paired
+probe is decisive: the operator's transcript asked "just fine?" and got **"Yes."** — the
+scoreboard's identical probe got **"Just fine is boring."** Same model, same dials, same
+persona. THE ATTRACTOR LIVES IN THE ACCUMULATED CONVERSATION CONTEXT, not the knobs: his
+session carried a long history (including the terse spiral feeding itself); the sandbox began
+fresh. Consequences, in priority order: (1) the T-story narrative + session-boundary hygiene
+(a rolling summary REPLACING aged raw turns) is promoted from nice-to-have to THE treatment —
+context is where the disease lives; (2) the dial matrix (eb15/mt384/warm) drops to
+sensitivity-check priority; (3) the confounds to close in N0.1: replay WITH a long terse
+history prepended (the attractor reproduction), and WITH the full tool block armed (the
+sandbox ran toolless — persona+discipline+coda only).
+
 ## 4. WHAT THE FOUNDATION GUARDS (unchanged, and this is the point)
 
 Emergence lives at the PRESENTATION layer: what the prefix says, how she narrates, how she
