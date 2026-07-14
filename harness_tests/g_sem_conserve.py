@@ -37,6 +37,7 @@ for k in [k for k in os.environ if k.startswith("SP_SEM_")]:
     del os.environ[k]
 
 from harness.skills import memory as M                       # noqa: E402
+from harness.skills import semindex as SX                    # noqa: E402
 
 PASS = FAIL = 0
 
@@ -52,7 +53,15 @@ def check(name, cond, detail=""):
 
 
 def results(q):
-    return [[e.get("ts", ""), round(float(s), 6)]
+    """Row identity + order. Not scores: scores carry the salience recency term, which
+    decays by design — a frozen score is a frozen clock (the first golden went stale in
+    hours when the event-class half-life moved the 6th decimal)."""
+    return [SX.addr_of(e.get("text") or "")
+            for _, e in M.search_memories_ranked_rows(q, k=3)]
+
+
+def results_scored(q):
+    return [[SX.addr_of(e.get("text") or ""), round(float(s), 6)]
             for s, e in M.search_memories_ranked_rows(q, k=3)]
 
 
@@ -89,6 +98,17 @@ if os.path.exists(gp):
     flat = {**golden.get("paraphrase", {}), **golden.get("foreign", {})}
     bad = [q for q, want in flat.items() if results(q) != want]
     check("all %d golden result lists reproduced exactly" % len(flat), not bad, bad[:3])
+
+# -- 4. FLAGS ABSENT == FLAGS ZERO, SAME INSTANT, SCORES INCLUDED ------------------------
+# The golden above is deliberately clock-free; THIS check is byte-exact because both
+# runs share one clock: SEM disabled by absence must equal SEM disabled by "0".
+print("\n4. flags absent == flags zero (byte-exact, same instant)")
+probe = queries[:20]
+absent = [results_scored(q) for q in probe]
+os.environ["SP_SEM_RANK"] = "0"
+zero = [results_scored(q) for q in probe]
+del os.environ["SP_SEM_RANK"]
+check("absence and '0' are the same off", absent == zero)
 
 print("\nG-SEM-CONSERVE: %d pass, %d fail" % (PASS, FAIL))
 rdir = os.path.join(ROOT, "var", "sem", "receipts")

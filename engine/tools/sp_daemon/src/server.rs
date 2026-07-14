@@ -59,6 +59,18 @@ fn oneshot_route() -> Router<Arc<AppState>> {
     Router::new()
 }
 
+/// SEM S1 (docs/SEMANTICS.md): the query-side L5 embed. CUDA-only — it needs the same
+/// scratch `sp_g4_kv` machinery as /v1/oneshot, and honors the same doctrine: the
+/// resident cache is not read, not written, not evicted.
+#[cfg(feature = "wire_cuda_backend")]
+fn embed_route() -> Router<Arc<AppState>> {
+    Router::new().route("/v1/embed", post(crate::routes::v1_embed))
+}
+#[cfg(not(feature = "wire_cuda_backend"))]
+fn embed_route() -> Router<Arc<AppState>> {
+    Router::new()
+}
+
 /// the routes are wired unconditionally and resolve per target.
 pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
@@ -95,6 +107,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // out. They get their own scratch cache now, batched (legal: nothing will continue it),
         // released at the end. The resident KV is not read, not written, and NOT EVICTED.
         .merge(oneshot_route())
+        // SEM S1: /v1/embed — l5_query_embed of a text, ep.l5 provenance, read-only.
+        .merge(embed_route())
         // Console static files. ServeDir with a RELATIVE path resolves against the
         // process CWD, which depends on where the launcher ran (G-12B-SERVE aftermath:
         // engine-root launches 404'd the console). Resolve robustly: prefer the dir

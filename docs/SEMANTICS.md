@@ -1,13 +1,19 @@
 # SEMANTICS.md — the SEM stack (S0–S4)
 
-**Status: PHASE 1 COMPLETE (2026-07-14). Phase 0: corpus frozen (`harness_tests/fixtures/sem/`,
-50 synthetic facts through the real writer, 100 paraphrase + 60 foreign queries), lexical baseline
-receipt committed (decider paraphrase hit rate **0.06**, foreign decider precision 0.8667 — the bar
-S1 must clear), G-SEM-CONSERVE 4/4. Phase 1: S0 sidecar index live (`harness/skills/semindex.py`,
-G-SEM-INDEX 21/21, live-registry coverage 81/81, verify green) — in **hash-space** (`hash256-v1`):
-the engine does not yet mint `ep.l5` on the `/v1/capture` path (see §4.3), so l5-space rows await
-that seam. Live status: `python tools/sem_dash.py`. Phases 2–4 not started; every number those
-phases promise is still a target, not a measurement.**
+**Status: PHASE 2 MEASURED — THE τ-GATE LOST, ON THE RECORD (2026-07-14). Phases 0–1 complete
+(corpus frozen; baseline receipt: decider hit **0.06**, foreign precision 0.8667; S0 index 81/81,
+G-SEM-INDEX 21/21). Phase 2: the S1 dual-admission machinery is shipped default-off (G-SEM-RANK,
+G-SEM-CLAIM 6/6, G-SEM-CONSERVE), the engine seams are live (`/v1/embed` with QKEY chat-template
+provenance; `SP_CAPTURE_L5` mints `ep.l5` on `/v1/capture` — grown episodes are no longer
+L5-invisible), and the scoreboard was run against every reachable embedding space: hash-space
+(= lexical exactly), l5 raw (hit 0.14 but precision 0.0167), l5 centered (precision 0.0000),
+l5 re-provenanced (argmax 2/10). **Full negatives + diagnosis: [`gates/G-SEM-SCOREBOARD.md`](../gates/G-SEM-SCOREBOARD.md).**
+The two findings: L5 cosine is a ranking signal the engine only uses inside its learned selector,
+and foreign-query rejection is an ABSENCE judgment no similarity threshold can make. Phase 3 is
+therefore revised: expose the engine's learned W_c + (E+1)-NULL selector (G-CHAT-B3-WC-DIV2:
+360/361 + 50/50 reject) as the admission oracle via a read-only `/v1/recall_rank` route, into the
+same seam, behind the same flag, held to the same scoreboard. `[sem].rank` stays FALSE until a
+`ships: true` receipt exists. Live status: `python tools/sem_dash.py`.**
 
 This is the Friedman stack — PPT-ARM Papers III/IV, the KSTE encoder, the dominance sieve, the
 WKL₀/PRA conservation asymmetry — lifted from the engine's KV cache to the fact registry. Paper III

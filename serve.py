@@ -314,14 +314,22 @@ def build_env(c: dict) -> dict:
         # false = the old synchronous behaviour (determinism, for gates). Gate: G-CAPTURE-ASYNC.
         "SP_CAPTURE_ASYNC": b(mem.get("mint_async", True)),
 
-        # ── SEM S0 (docs/SEMANTICS.md): the sidecar semantic index ─────────────────────────
-        # DERIVED data in its own file (harness/skills/semindex.py): recomputable from
-        # registry + model, append-only, tombstone-blind, cannot write the registry.
-        # SP_SEM_RANK (Phase 2, behaviour) is deliberately NOT mapped: per the boundary
-        # thesis it does not exist until it beats the lexical baseline receipt. Gate:
-        # G-SEM-INDEX; conservation: G-SEM-CONSERVE.
+        # ── SEM (docs/SEMANTICS.md): S0 sidecar index + S1 semantic rank ───────────────────
+        # S0 (mint/index): DERIVED data in its own file (harness/skills/semindex.py) —
+        # recomputable from registry + model, append-only, tombstone-blind, cannot write
+        # the registry. Gate: G-SEM-INDEX.
+        # S1 (rank/tau): the dual admission gate at the recall seam. The knob is mapped
+        # because a reader exists (G-SEM-CONSERVE closure), but per the boundary thesis it
+        # stays FALSE on every profile until a receipt shows it beating
+        # fixtures/sem/baseline-receipt.json on the frozen corpus. Gates: G-SEM-RANK,
+        # G-SEM-CLAIM; conservation: G-SEM-CONSERVE.
         "SP_SEM_MINT": b(sem.get("mint", False)),
         "SP_SEM_INDEX": str(sem.get("index", "")).replace("/", "\\"),
+        "SP_SEM_RANK": b(sem.get("rank", False)),
+        "SP_SEM_TAU": str(sem.get("tau", 0.60)),
+        # S0 engine-side: mint the ep.l5 sidecar on /v1/capture (routes.rs::v1_capture),
+        # so grown episodes stop being L5-invisible. Derived sidecar, never fails capture.
+        "SP_CAPTURE_L5": b(sem.get("capture_l5", False)),
 
         # ── THE DAEMON'S OTHER HANDS ON HER MEMORY, PINNED SHUT (2026-07-14) ──────────────
         # These are daemon-side writers/retirers that no profile knob has ever controlled and

@@ -189,6 +189,92 @@ def upgrade(out_dir: str, fact: str, ts: str) -> bool:
         return False
 
 
+# ── read-side: cached load + query embedding (S1 support) ────────────────────────────
+_CACHE = {"key": None, "idx": None}
+
+
+def load_cached(models=KNOWN_MODELS) -> dict:
+    """load(), memoized on (path, mtime, size). Size is in the key because an in-place
+    rewrite inside one mtime tick is exactly how a stale cache served a dead vector
+    during G-SEM-RANK's own bring-up — measure the thing, not the proxy."""
+    p = index_path()
+    try:
+        st = os.stat(p) if p and os.path.exists(p) else None
+        key = (p, st.st_mtime_ns, st.st_size) if st else (p, None, None)
+    except Exception:
+        key = (p, None, None)
+    with _LOCK:
+        if _CACHE["key"] == key and _CACHE["idx"] is not None:
+            return _CACHE["idx"]
+        idx = load(models)
+        _CACHE.update(key=key, idx=idx, mu={})
+        return idx
+
+
+def space_mean(model=MODEL_L5):
+    """Mean vector of the index rows in one embedding space — the anisotropy correction.
+
+    MEASURED (2026-07-14, the tau-sweep receipt): raw l5 question-space cosine does not
+    discriminate as an ABSOLUTE threshold — every (query, fact) pair scored >= 0.70,
+    foreign precision 0.0167 even at tau 0.80 — because the space is anisotropic: all
+    vectors share a dominant common direction. G-REP-LAYER-L5's 88.5% is recall@1, a
+    RANKING number; the engine only ever uses this signal as an argmax. To use it as an
+    admission threshold, subtract the population mean first (the standard all-but-the-top
+    correction): after centering, unrelated pairs fall near 0 and related pairs keep
+    their margin. The mean is over HER indexed facts — the population she actually knows —
+    and is cached with the index. None when the space has < 3 rows (fall back to raw)."""
+    idx = load_cached()
+    with _LOCK:
+        mu = _CACHE.get("mu", {}).get(model)
+        if mu is not None:
+            return mu or None                        # [] sentinel -> None
+        vecs = [r["vec"] for r in idx.values()
+                if r.get("model") == model and r.get("vec")]
+        if len(vecs) < 3:
+            _CACHE.setdefault("mu", {})[model] = []  # remember the miss too
+            return None
+        dim = len(vecs[0])
+        mu = [sum(v[i] for v in vecs) / len(vecs) for i in range(dim)]
+        _CACHE.setdefault("mu", {})[model] = mu
+        return mu
+
+
+def centered_cosine(a, b, mu) -> float:
+    if mu is None or len(mu) != len(a) or len(a) != len(b):
+        return cosine(a, b)
+    return cosine([x - m for x, m in zip(a, mu)], [y - m for y, m in zip(b, mu)])
+
+
+_EMBED_DOWN_UNTIL = 0.0     # negative cache: a dead daemon costs ONE probe a minute,
+_EMBED_HOLDOFF = 60.0       # not a timeout per recall — the seam runs every turn.
+
+
+def query_embed(query: str):
+    """(vec, model_tag) for a live query. Tries the daemon's /v1/embed (the engine's
+    l5_query_embed of the query text — the 88.5%-paraphrase selector) with a short
+    timeout; on ANY failure degrades to hash-space and holds off retries for a minute.
+    The tag rides along so the seam only ever compares same-space vectors: cosine
+    across spaces is noise."""
+    global _EMBED_DOWN_UNTIL
+    import time as _time
+    import urllib.request
+    if _time.monotonic() >= _EMBED_DOWN_UNTIL:
+        daemon = os.environ.get("SP_DAEMON_URL", "http://127.0.0.1:3000")
+        try:
+            body = json.dumps({"text": query}).encode()
+            req = urllib.request.Request(daemon + "/v1/embed", data=body,
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=1.5) as r:
+                j = json.loads(r.read().decode())
+            vec = j.get("l5") or []
+            if len(vec) == _L5_DIM and all(math.isfinite(v) for v in vec):
+                return [round(float(v), 6) for v in vec], MODEL_L5
+            _EMBED_DOWN_UNTIL = _time.monotonic() + _EMBED_HOLDOFF
+        except Exception:
+            _EMBED_DOWN_UNTIL = _time.monotonic() + _EMBED_HOLDOFF
+    return hash_embed(query), MODEL_HASH
+
+
 # ── maintenance: coverage / verify / backfill ─────────────────────────────────────────
 def _live(registry_rows):
     return [r for r in registry_rows if not r.get("lifecycle") and r.get("text")]

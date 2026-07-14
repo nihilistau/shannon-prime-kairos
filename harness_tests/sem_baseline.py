@@ -26,6 +26,7 @@ os.environ["SP_DAEMON_URL"] = "http://127.0.0.1:9"          # discard port
 os.environ["SP_RECALL_REGISTRY"] = os.path.join(FIX, "registry_snapshot.jsonl")
 
 from harness.skills import memory as M                       # noqa: E402
+from harness.skills import semindex as SX                    # noqa: E402
 from harness.control.spine import recall_decider, TurnView   # noqa: E402
 
 DECIDER_OVERLAP = 0.34   # the live per-turn threshold (AGENTS.md §3 / spine.py)
@@ -52,11 +53,16 @@ def injected(q):
 def main():
     paras, foreign = _jsonl("paraphrase.jsonl"), _jsonl("foreign.jsonl")
 
+    # GOLDEN = ROW IDENTITY AND ORDER (content addresses), NOT SCORES. The first golden
+    # froze 6-decimal scores and went stale within hours: scores contain the salience
+    # recency term, which DECAYS BY DESIGN (event-class half-life is 3 days), so a
+    # frozen score is a frozen clock — the G-CLOCK lesson wearing a new hat. What
+    # conservation actually promises is: same rows, same order. That is what is pinned.
     golden = {"paraphrase": {}, "foreign": {}}
     r_at1 = r_at3 = dec_hit = 0
     for p in paras:
         rows = seam(p["q"])
-        golden["paraphrase"][p["q"]] = [[e.get("ts", ""), round(float(s), 6)] for s, e in rows]
+        golden["paraphrase"][p["q"]] = [SX.addr_of(e.get("text") or "") for _, e in rows]
         hits = [e.get("ts") for _, e in rows]
         if hits[:1] == [p["expect_ts"]]:
             r_at1 += 1
@@ -68,7 +74,7 @@ def main():
     seam_fp = dec_fp = 0
     for fq in foreign:
         rows = seam(fq["q"])
-        golden["foreign"][fq["q"]] = [[e.get("ts", ""), round(float(s), 6)] for s, e in rows]
+        golden["foreign"][fq["q"]] = [SX.addr_of(e.get("text") or "") for _, e in rows]
         if rows:
             seam_fp += 1
         if injected(fq["q"]):

@@ -1,7 +1,7 @@
 {
   "name": "sem_baseline",
   "ranker": "lexical (overlap + salience prior)",
-  "ts": "2026-07-13T23:59:57Z",
+  "ts": "2026-07-14T01:30:18Z",
   "corpus": {
     "facts": 50,
     "paraphrase_queries": 100,

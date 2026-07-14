@@ -144,12 +144,18 @@ mint_async = true      # SP_CAPTURE_ASYNC — the KV mint must not block her rep
 # so the impulse can be observed, calibrated and trusted long before it is ever acted on.
 # Signal and permission are not the same thing and must not share a switch.
 [sem]
-# SEM stack S0 (docs/SEMANTICS.md): the sidecar semantic index. DERIVED DATA ONLY —
+# SEM stack (docs/SEMANTICS.md). S0 = the sidecar semantic index: DERIVED DATA ONLY —
 # recomputable from registry + model, append-only, cannot write the registry, degrades
-# silently. Safe to arm: ranking behaviour (SP_SEM_RANK) is a Phase 2 knob that is
-# deliberately not even mapped in serve.py yet. Gate: G-SEM-INDEX.
+# silently; safe to arm. S1 = ranking behaviour, held to the baseline receipt below.
+# Gates: G-SEM-INDEX, G-SEM-RANK, G-SEM-CLAIM, G-SEM-CONSERVE.
 mint  = true             # SP_SEM_MINT — index each fact as it is remembered
 index = 'D:/F/shannon-prime-repos/shannon-prime-kairos/var/memory/semindex.jsonl'   # SP_SEM_INDEX
+# S1 ranking stays OFF until a committed receipt beats the lexical baseline on the
+# frozen corpus (the boundary thesis — docs/SEMANTICS.md §0). Flipping this without
+# that receipt is claiming without a gate.
+rank  = false            # SP_SEM_RANK — dual admission gate at the recall seam
+tau   = 0.60             # SP_SEM_TAU  — semantic admission threshold (precision-first)
+capture_l5 = true        # SP_CAPTURE_L5 — engine mints ep.l5 on /v1/capture (derived sidecar)
 
 [kairos]
 enabled = true           # SP_KAIROS — emit the impulse; speaking is gated separately

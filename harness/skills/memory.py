@@ -693,6 +693,29 @@ def search_memories_ranked_rows(query: str, k: int = 5, min_overlap: float = 0.2
     from harness.skills import lifecycle as lc
     clause = re.split(r"[.:;!]", query)[-1].strip() or query
     eps = _load()
+
+    # ── SEM S1 (docs/SEMANTICS.md): the DUAL admission gate, in THE seam ──────────────────
+    # A paraphrase shares no content tokens with the fact it asks about, so the lexical gate
+    # alone recalls it at 0.06 on the frozen corpus (fixtures/sem/baseline-receipt.json). A
+    # row may now ALSO be admitted by semantic match: cosine >= SP_SEM_TAU against its
+    # semindex row, SAME embedding space only (cross-space cosine is noise). This is
+    # admission by MATCH, not by salience — G-SALIENCE's law is untouched, salience still
+    # only breaks ties among the admitted. Off (SP_SEM_RANK unset) is byte-identical to the
+    # lexical path: G-SEM-CONSERVE holds the golden. Any failure inside SEM degrades to
+    # lexical silently — a ranker may never cost her a sentence. It lives HERE because the
+    # three comments below this one are all the same story: a guard in a caller guards
+    # nothing. Gates: G-SEM-RANK, G-SEM-CLAIM.
+    sem_idx, qvec, qmodel, sem_tau = {}, None, None, 2.0
+    if os.environ.get("SP_SEM_RANK", "0") == "1":
+        from harness.skills import semindex as sx
+        try:
+            sem_tau = float(os.environ.get("SP_SEM_TAU", "0.60"))
+            sem_idx = sx.load_cached()
+            if sem_idx:
+                qvec, qmodel = sx.query_embed(query)
+        except Exception:
+            sem_idx, qvec = {}, None      # degrade to lexical, never block
+
     scored = []
     for e in eps:
         if not include_retired and e.get("lifecycle"):
@@ -701,8 +724,19 @@ def search_memories_ranked_rows(query: str, k: int = 5, min_overlap: float = 0.2
         ov = _overlap(query, t)
         if clause != query:
             ov = max(ov, _overlap(clause, t))
-        if ov >= min_overlap:
-            scored.append((ov, e))
+        cos = 0.0
+        if qvec is not None:
+            srow = sem_idx.get((sx.addr_of(e.get("text") or t), e.get("ts") or ""))
+            if srow is not None and srow.get("model") == qmodel:
+                # l5-space is anisotropic (measured: every raw pair >= 0.70) — center on
+                # the index population so the absolute threshold means something. Raw
+                # cosine for hash-space (sparse, no common-direction pathology).
+                if qmodel == sx.MODEL_L5:
+                    cos = sx.centered_cosine(qvec, srow.get("vec") or [], sx.space_mean())
+                else:
+                    cos = sx.cosine(qvec, srow.get("vec") or [])
+        if ov >= min_overlap or cos >= sem_tau:
+            scored.append((max(ov, cos), e))
     scored.sort(key=lambda x: -x[0])
     if not include_retired:
         scored = lc.testimony_wins(scored)

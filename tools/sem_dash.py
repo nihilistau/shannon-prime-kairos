@@ -120,7 +120,11 @@ def phases(fx, rc, sem_idx, flag_mapped):
     p0 = all(fx[n] for n in ("registry_snapshot.jsonl", "paraphrase.jsonl",
                              "foreign.jsonl", "baseline-receipt.json")) and _green(rc, "g_sem_conserve")
     p1 = sem_idx["exists"] and (sem_idx["coverage"] or 0) >= 1.0 and _green(rc, "g_sem_index")
-    p2 = flag_mapped and _green(rc, "g_sem_rank") and _green(rc, "g_sem_claim")
+    # Phase 2 completes only when the SHIP CONDITION is met: gates green AND the
+    # scoreboard receipt says it beats the baseline (ships: true). Machinery landing
+    # is "in-progress"; a negative receipt keeps it there, honestly.
+    p2 = (flag_mapped and _green(rc, "g_sem_rank") and _green(rc, "g_sem_claim")
+          and rc.get("sem_rank_score", {}).get("ships") is True)
     p3 = _green(rc, "g_sem_dominate") and _green(rc, "g_sem_whistle")
     p4 = _green(rc, "g_sem_stable")
     started = {

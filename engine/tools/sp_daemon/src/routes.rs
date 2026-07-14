@@ -5028,12 +5028,103 @@ pub async fn v1_capture(
         }
         std::fs::create_dir_all(&out_dir).map_err(|e| format!("mkdir {out_dir}: {e}"))?;
         unsafe { kv::capture_batched(qm, &toks, &out_dir) }?;
+        // ── SEM S0 (2026-07-14, docs/SEMANTICS.md §4.3): mint ep.l5 on THE capture path ──
+        // Until now ep.l5 was minted only by the RETIRED daemon-writer path (B4/store_verb
+        // → mint_ep_l5), so every episode the one memory authority captured via this route
+        // was L5-INVISIBLE: the 88.5%-paraphrase selector (G-REP-LAYER-L5) had nothing to
+        // read for grown memories. Same seam, same provenance, now reachable from the door
+        // the harness actually uses. Gated SP_CAPTURE_L5 (mapped in serve.py, [sem] in the
+        // profile). Mint failure logs and never fails the capture. NOT a memory writer:
+        // ep.l5 is a derived sidecar beside ep.k/ep.v, consumed by recall.rs and the
+        // harness semindex upgrade hook (G-SEM-INDEX).
+        #[cfg(feature = "wire_cuda_backend")]
+        if std::env::var("SP_CAPTURE_L5").as_deref() == Ok("1") {
+            let _ = mint_ep_l5(&app, qm, &toks, &text, std::path::Path::new(&out_dir));
+        }
         Ok(ntok)
     }).await;
     match res {
         Ok(Ok(npos)) => (StatusCode::OK, Json(serde_json::json!({"ok":true,"npos":npos}))).into_response(),
         Ok(Err(e))   => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":e}))).into_response(),
         Err(e)       => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":format!("join: {e}")}))).into_response(),
+    }
+}
+
+// ── /v1/embed — the SEM S1 query-key (2026-07-14, docs/SEMANTICS.md §4.3) ────────────
+// POST {"text": ...} -> {"l5": [512 f32], "n": ntok}: the SAME l5_query_embed the live
+// recall selector ranks with, minted with the SAME provenance as ep.l5 (standalone
+// position-0 scratch forward, global-Q of the last token, mean-over-heads of global
+// layer 5, L2-normed) — so harness-side cosine(query, ep.l5) is the measured
+// G-REP-LAYER-L5 geometry, not an approximation of it. READ-ONLY: a throwaway scratch
+// session, released before returning; the resident cache is not read, not written, not
+// evicted (the /v1/oneshot doctrine). Consumer: harness/skills/semindex.query_embed()
+// behind SP_SEM_RANK. CUDA-only, like every route that needs a scratch sp_g4_kv.
+#[cfg(feature = "wire_cuda_backend")]
+#[derive(serde::Deserialize)]
+pub struct EmbedReq {
+    pub text: String,
+}
+
+#[cfg(feature = "wire_cuda_backend")]
+pub async fn v1_embed(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<EmbedReq>,
+) -> Response {
+    let app = state.clone();
+    let text = req.text.trim().to_string();
+    if text.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"empty text"}))).into_response();
+    }
+    // PROVENANCE (v2, 2026-07-14): key the text EXACTLY as QKEY keys a question and as a
+    // live query is keyed (mint_question_l5 step 2): a chat-TEMPLATED user turn, prefill
+    // all but the last token, read_global_q at the last. The first draft of this route
+    // embedded BARE text (mint_live_ep_l5 provenance) and cosines against the QKEY
+    // question-space keys were meaningless — 3/100 argmax on the SEM corpus, every pair
+    // >= 0.70 — because templated and bare texts live in different manifold regions.
+    // The QKEY comment two hundred lines up warned about exactly this cross-pick.
+    // PROVENANCE IS NOT A DETAIL; IT IS THE SPACE.
+    let msgs = vec![Message { role: "user".to_string(), content: text.clone() }];
+    let toks = match app.tokenizer.apply_template_ids(&msgs) {
+        Ok(t) => t,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR,
+                          Json(serde_json::json!({"error": format!("template: {e}")}))).into_response(),
+    };
+    if toks.len() < 2 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"too short","npos":toks.len()}))).into_response();
+    }
+    let ntok = toks.len();
+    let res = task::spawn_blocking(move || -> Result<Vec<f32>, String> {
+        use sp_daemon::cuda_kvdecode_dispatch as kv;
+        use sp_daemon::recall;
+        let qm = {
+            let mut sguard = app.session.as_ref().expect("L1 session unavailable (qwen36 lane)").lock().unwrap();
+            let sraw = sguard.raw_ptr() as *mut sp_daemon::ffi_l1::sp_session;
+            (unsafe { sp_daemon::ffi_l1::sp_session_qwen3_model(sraw) }) as *const std::ffi::c_void
+        };
+        if qm.is_null() {
+            return Err("sp_session_qwen3_model NULL".to_string());
+        }
+        // The mint_live_ep_l5 forward, minus the file write: scratch open, prefill all
+        // but the last token, read global-Q at the last, embed, release. None -> Err.
+        let scratch = unsafe { kv::open(qm, toks.len() as i32 + 8) }
+            .map_err(|e| format!("scratch open: {e:?}"))?;
+        let n_global = recall::NL / recall::PERIOD;
+        let mut ql = vec![0.0f32; n_global * recall::G_NH * recall::HD];
+        let key = (|| {
+            unsafe { kv::prefill(scratch, &toks[..toks.len() - 1]) }.ok()?;
+            unsafe { kv::read_global_q(scratch, toks[toks.len() - 1], &mut ql) }.ok()?;
+            let k = recall::l5_query_embed(&ql);
+            if k.len() != recall::HD { return None; }
+            Some(k)
+        })();
+        // SAFETY: scratch came from open() above; release is NULL-safe/idempotent.
+        unsafe { kv::release_for_model(scratch) };
+        key.ok_or_else(|| "l5 embed failed".to_string())
+    }).await;
+    match res {
+        Ok(Ok(k))  => (StatusCode::OK, Json(serde_json::json!({"l5": k, "n": ntok}))).into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":e}))).into_response(),
+        Err(e)     => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":format!("join: {e}")}))).into_response(),
     }
 }
 
