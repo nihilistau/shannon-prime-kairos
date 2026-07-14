@@ -60,13 +60,21 @@ def _ground_truth():
 
 def competition(row: dict, rows: list) -> str:
     """OPERATIONAL competition coordinate: does a LIVE ground-truth row of the SAME
-    speaker cover this row's topic (testimony_wins's exact relation)? Only meaningful
-    for non-ground-truth rows; ground truth gets '.' (not applicable)."""
+    speaker cover this row's topic? Two detectors feed the ONE coordinate:
+      1. prose — topic_of overlap >= 2 (testimony_wins's exact relation);
+      2. Phase C — an oracle-proposed same-subject LINK (slots sidecar), which closes
+         the paraphrase gap prose cannot see (the "ladders" finding). Quarantine: a
+         link can only push toward competition=1 — the silence direction. It cannot
+         admit, cannot rank, cannot make her speak over him.
+    Only meaningful for non-ground-truth rows; ground truth gets '.'."""
     from harness.skills import lifecycle as lc
+    from harness.skills import semindex as sx
+    from harness.skills import slots as sl
     s = sigma(row)
     if s["status"] in _ground_truth():
         return "."
     mine = lc.topic_of(lc.strip_prefix(row.get("text") or row.get("topic") or ""))
+    my_addr = sx.addr_of(row.get("text") or "") if sl.enabled() else ""
     for r in rows:
         if r is row or r.get("name") == row.get("name"):
             continue
@@ -75,6 +83,8 @@ def competition(row: dict, rows: list) -> str:
                 and rs["speaker"] == s["speaker"]:
             theirs = lc.topic_of(lc.strip_prefix(r.get("text") or r.get("topic") or ""))
             if len(mine & theirs) >= 2:
+                return "1"
+            if my_addr and sl.linked(my_addr, sx.addr_of(r.get("text") or "")):
                 return "1"
     return "0"
 
@@ -122,6 +132,42 @@ def ruling(row: dict, query: str, rows: list):
 def stats() -> dict:
     with _LOCK:
         return dict(_STATS)
+
+
+# ── Phase B2: enforcement (armed by SP_SEM_VERDICT=1) ─────────────────────────────────
+def enforce(query: str, scored: list, all_rows: list) -> list:
+    """THE CUTOVER, silence-direction only: drop any (score, row) whose cell the law
+    rules seam-inadmissible. Three deliberate properties:
+      - the law can only EXCLUDE. It cannot admit around the match gate and cannot
+        reorder — authority moved, code did not get deleted (belt-and-braces).
+      - an UNMAPPED cell is KEPT and counted, loudly. Unlegislated is not forbidden:
+        silencing her on cells MY enumeration missed punishes her for my gaps (the
+        self-preference rows were one field-run away from exactly that). The meta-
+        gates and counters make holes loud; enforcement does not make them mute.
+      - a missing table disables enforcement entirely (there is no law to apply).
+    NEVER raises; on any internal failure the input passes through untouched."""
+    try:
+        if os.environ.get("SP_SEM_VERDICT", "0") != "1":
+            return scored
+        table = load_table()
+        if not table:
+            return scored
+        kept = []
+        with _LOCK:
+            for s, e in scored:
+                r = table.get(cell(e, query, all_rows))
+                if r is None:
+                    _STATS["unmapped"] += 1
+                    _witness("unmapped", query, cell(e, query, all_rows))
+                    kept.append((s, e))
+                elif r.get("seam", False):
+                    kept.append((s, e))
+                else:
+                    _STATS["enforced_drops"] = _STATS.get("enforced_drops", 0) + 1
+                    _witness("enforced_drop", query, cell(e, query, all_rows))
+        return kept
+    except Exception:
+        return scored
 
 
 def _witness(kind: str, q: str, c: str):

@@ -762,6 +762,15 @@ def search_memories_ranked_rows(query: str, k: int = 5, min_overlap: float = 0.2
         # Third time in this one file: the lifecycle filter, the twin ranker, and now this. The
         # polite path had every guard; the automatic one had none of them.
         scored = _target_and_rank(query, scored)
+        # ── SEM PHASE B2 CUTOVER (docs/INVARIANT-MEMORY.md): the table RULES ─────────────
+        # Behind SP_SEM_VERDICT (mapped in serve.py). Silence-direction only: the law can
+        # drop a row it rules inadmissible (this is what closes the ladders leak once a
+        # slot link exists); it cannot admit, cannot reorder, keeps unmapped cells (loud,
+        # counted — unlegislated is not forbidden). Old conditionals stay: authority
+        # moved, code did not get deleted. Gate: G-SEM-VERDICT.
+        if os.environ.get("SP_SEM_VERDICT", "0") == "1":
+            from harness.skills import verdict as _law2
+            scored = _law2.enforce(query, scored, eps)
         # ── SEM PHASE B SHADOW (docs/INVARIANT-MEMORY.md): the law watches the seam ──────
         # Read-only, behind SP_SEM_LAW (mapped in serve.py). Checks the one direction that
         # is checkable and load-bearing: EVERYTHING ADMITTED IS TABLE-ADMISSIBLE. Counters

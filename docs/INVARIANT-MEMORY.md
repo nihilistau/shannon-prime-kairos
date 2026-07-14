@@ -178,10 +178,35 @@ added, the board re-frozen at **23 cells**, and the live registry now runs entir
 mapped board: 29/0/0. Completeness stopped being an assumption the moment the field could falsify
 it — and it did, and the fix was a diff against a committed table.
 
-**Phase B2 — cutover (pending):** the seam consults `ruling()` as its verdict filter, behind a
-flag, preconditioned on a sustained zero-divergence shadow receipt from live operation. Existing
-gates (G-CLAIM, G-SECRET, G-DURABILITY...) must stay green bit-for-bit — they become corollaries
-of table cells, and the meta-gates prove there are no cells they missed.
+**Phase B2 — cutover. ARMED 2026-07-14.** `verdict.enforce()` at the seam behind `SP_SEM_VERDICT`
+(true on the live profile). Three deliberate properties: the law can only EXCLUDE (it cannot admit
+around the match gate, cannot reorder — authority moved, code did not get deleted); an UNMAPPED
+cell is KEPT and counted, loudly (unlegislated is not forbidden — her self-preference rows were one
+field-run away from being muted for MY enumeration gap); a missing table disables enforcement.
+The receipt behind arming it: **G-SEM-VERDICT** — all 160 corpus queries byte-identical (addrs AND
+scores) with the flag on while slots are empty, the drop mechanism demonstrably firing with a
+witness, k-window refill shown to be the seam's, not the law's. Plus the 29/0/0 live shadow.
+
+**Phase C — topic-equivalence as a consumed relation. ARCHITECTURE SHIPPED 2026-07-14; the live
+oracle is the open calibration item.** `harness/skills/slots.py`: same-subject LINKS in a derived
+append-only sidecar (`SP_SEM_SLOTS`), keyed by content addr, proposed by an oracle, consumed by
+`verdict.competition()` as a second detector feeding the SAME coordinate (the board did not grow —
+the relation grew eyes). Quarantine direction proven: a link can only push toward competition=1 —
+silence — so a wrong link costs a sentence and can never make her speak over him, admit, or
+retire. **G-SEM-SLOT 11/11** is the ladders finding end-to-end: leak reproduced, then closed by a
+link + enforcement, his words standing, registry byte-identical.
+
+The honest ledger on the live oracle: the greedy 12B `/v1/oneshot` judge, across four prompt
+designs, produced **zero false "same" verdicts and zero true ones** — every miss fell in the safe
+direction (unparseable/NO ⇒ no link ⇒ today's behaviour), and the boundary thesis holds one more
+time: a hand-worded prompt is a hand-built signal. Successors, in order: an OPERATOR oracle (the
+sidecar accepts any oracle tag — a human-proposed link works today); a judged eval with a fixture
+pair-corpus and a yield/precision scoreboard (the S1 pattern, applied to the judge); or the
+learned-selector route (the W_c pattern). Until then the scan runs, proposes nothing wrongly, and
+the mechanism waits armed.
+
+Existing gates (G-CLAIM, G-SECRET, G-DURABILITY...) stay green — they are corollaries of table
+cells now, and the meta-gates prove there are no cells they missed.
 
 **Phase C — maximal-consistent-view recall.** The recall result set is defined as the maximal
 table-consistent subset of matched rows (testimony_wins et al. become properties of the view), with

@@ -335,6 +335,14 @@ def build_env(c: dict) -> dict:
         # counters + witness lines; they never alter results. Gate: G-SEM-LAW.
         "SP_SEM_LAW": b(sem.get("law", False)),
         "SP_SEM_LAW_LOG": str(sem.get("law_log", "")).replace("/", "\\"),
+        # Phase B2 cutover: the table RULES at the seam (silence-direction only; unmapped
+        # cells kept and counted). Receipt behind arming it: G-SEM-VERDICT corpus byte-
+        # equality with empty slots + the 29/0/0 live shadow. Gate: G-SEM-VERDICT.
+        "SP_SEM_VERDICT": b(sem.get("verdict", False)),
+        # Phase C: the slots sidecar — oracle-PROPOSED same-subject links, consumed by
+        # verdict.competition(). Derived, append-only, silence-direction only.
+        # Gate: G-SEM-SLOT. Proposer runs manually: python -m harness.skills.slots --scan
+        "SP_SEM_SLOTS": str(sem.get("slots", "")).replace("/", "\\"),
 
         # ── THE DAEMON'S OTHER HANDS ON HER MEMORY, PINNED SHUT (2026-07-14) ──────────────
         # These are daemon-side writers/retirers that no profile knob has ever controlled and

@@ -158,6 +158,11 @@ tau   = 0.60             # SP_SEM_TAU  — semantic admission threshold (precisi
 capture_l5 = true        # SP_CAPTURE_L5 — engine mints ep.l5 on /v1/capture (derived sidecar)
 law     = true           # SP_SEM_LAW — Phase B shadow: the verdict table watches the seam (read-only)
 law_log = 'D:/F/shannon-prime-repos/shannon-prime-kairos/var/sem/law_divergence.jsonl'  # SP_SEM_LAW_LOG — witnesses
+# Phase B2 + C (2026-07-14). verdict=true is armed on measurement, not hope: G-SEM-VERDICT
+# proves cutover is byte-identical on the whole corpus while slots are empty, and the live
+# shadow ran 29 checked / 0 divergent / 0 unmapped. The law can only silence, never admit.
+verdict = true           # SP_SEM_VERDICT — the table rules at the seam (silence-direction only)
+slots   = 'D:/F/shannon-prime-repos/shannon-prime-kairos/var/memory/slots.jsonl'  # SP_SEM_SLOTS — oracle-proposed links
 
 [kairos]
 enabled = true           # SP_KAIROS — emit the impulse; speaking is gated separately
