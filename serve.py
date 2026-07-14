@@ -23,6 +23,14 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 VAR = os.path.join(ROOT, "var")
 
 
+def _memclass_delivery() -> dict:
+    """THE class->delivery registry (harness/skills/memclass.py), for the engine's env.
+    Lazy import so `serve.py --stop` and profile errors never depend on harness health."""
+    sys.path.insert(0, ROOT)
+    from harness.skills.memclass import delivery_map
+    return delivery_map()
+
+
 def load_profile(name: str) -> dict:
     p = os.path.join(ROOT, "profiles", f"{name}.toml")
     with open(p, "rb") as f:
@@ -339,6 +347,10 @@ def build_env(c: dict) -> dict:
         # cells kept and counted). Receipt behind arming it: G-SEM-VERDICT corpus byte-
         # equality with empty slots + the 29/0/0 live shadow. Gate: G-SEM-VERDICT.
         "SP_SEM_VERDICT": b(sem.get("verdict", False)),
+        # ONE VOCABULARY, ONE DOOR (Tier 3; G-MEMCLASS): the engine's live
+        # class->delivery map IS the registry, serialized here — recall.rs consumes it
+        # (class_delivery) with its compiled match as source-pinned fallback.
+        "SP_MEM_CLASS_DELIVERY": json.dumps(_memclass_delivery()),
         # Phase C: the slots sidecar — oracle-PROPOSED same-subject links, consumed by
         # verdict.competition(). Derived, append-only, silence-direction only.
         # Gate: G-SEM-SLOT. Proposer runs manually: python -m harness.skills.slots --scan

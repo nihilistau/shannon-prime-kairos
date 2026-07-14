@@ -145,6 +145,16 @@ bad = [c for c in branched if c not in MC.REGISTRY]
 check("every class the decider branches on has a registry entry (%s)"
       % sorted(branched), not bad, bad)
 
+# -- 6. THE ENGINE CONSUMES THROUGH THE ONE DOOR (Tier 3) -------------------------------------
+print("\n6. the engine's live map is the registry, via serve.py")
+sv = src("serve.py")
+check("serve.py maps SP_MEM_CLASS_DELIVERY from the registry",
+      "SP_MEM_CLASS_DELIVERY" in sv and "delivery_map" in sv)
+check("recall.rs consumes SP_MEM_CLASS_DELIVERY (class_delivery seam exists)",
+      "SP_MEM_CLASS_DELIVERY" in rs and "fn class_delivery" in rs)
+check("MemPolicy::from_class consumes the seam, not the compiled twin directly",
+      re.search(r"fn from_class.*?class_delivery\(class\)", rs, re.S) is not None)
+
 print("\nG-MEMCLASS: %d pass, %d fail" % (PASS, FAIL))
 rdir = os.path.join(ROOT, "var", "sem", "receipts")
 os.makedirs(rdir, exist_ok=True)

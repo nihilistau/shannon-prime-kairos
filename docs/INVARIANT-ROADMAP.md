@@ -159,18 +159,27 @@ the proven recipe: operational signature → committed table → shadow → meta
 7. Spine decider priorities — DONE: `spine.PRIORITIES` is the committed ordering; every stock
    constructor provably consumes it.
 
-### Tier 3 — the far edge (the foundation's full reach)
+### Tier 3 — the far edge (three of five DONE 2026-07-14)
 
-8. **Maximal-consistent-view recall as an explicit greedy completion.** OC/MAX's constructive
-   residue: maximality alone is cheap, canonical (enumerate in code-length order, insert what
-   stays consistent), and EXPTIME-witnessed. Recall's result set becomes literally a maximal
-   square in the table-compatibility relation, built greedily over a canonical key order — the
-   final form of Phase C.
-9. **G-SEM-ADMISSIBLE** (§1.1) — the invariance entry test, parameterizing the stability family.
-10. **The gate-language linter** (§1.6) — assert gate claims are ∀-with-bounded-negation.
-11. **Engine delivery dispatch** (`routes.rs` 2973–3096) — the `delivery_mode` switch consumes
-    the unified class→delivery table instead of a hand-written chain.
-12. **Strength labels in GATE-INDEX** (§1.3) — DECIDABLE vs AXIOM-CONDITIONAL per gate.
+8. **Maximal-consistent-view recall as an explicit greedy completion.** DEFERRED, deliberately:
+   the current seam pipeline (match → testimony_wins → rank → enforce) already produces a
+   table-consistent view, and restructuring it for theory-purity alone is churn without a failing
+   witness. It lands when a witness demands it (or Phase C2's oracle integration touches the seam
+   anyway). OC/MAX's constructive residue (greedy over canonical order, EXPTIME witnesses) is the
+   design when it does.
+9. **G-SEM-ADMISSIBLE. DONE** — `harness/skills/invariance.py` (FIN/USE + FIN/USE* locality),
+   gate 12/12; the stability family now has an entry test, and its existing members are admitted
+   by their own admissions office.
+10. **The gate-language linter** (§1.6) — OPEN. Partially discharged in practice: every gate
+    written since the φ-form landed uses ∀-over-cells with bounded negation by construction.
+11. **Engine delivery dispatch. DONE** — `recall.rs::class_delivery` consumes the registry LIVE
+    via `SP_MEM_CLASS_DELIVERY` (serve.py serializes `memclass.delivery_map()` at boot — one
+    vocabulary through the one door), compiled match retained as the source-pinned fallback;
+    G-MEMCLASS §6 holds all three sides (serve.py maps it from the registry; recall.rs consumes
+    the seam; `from_class` no longer touches the compiled twin directly).
+12. **Strength labels in GATE-INDEX. DONE** — the DECIDABLE / AXIOM-CONDITIONAL distinction is a
+    standing section in the index; every current gate is a decidable check, and the standing
+    promises are labeled as instances-held, never suite-closed.
 
 ### Deliberately OUT of scope for tables (and why)
 

@@ -114,11 +114,31 @@ pub fn class_default_delivery(class: &str) -> &'static str {
     }
 }
 
+/// ONE VOCABULARY, ONE DOOR (Tier 3, INVARIANT-ROADMAP.md; gate: G-MEMCLASS §6): the
+/// LIVE class->delivery map arrives from THE registry (harness/skills/memclass.py) via
+/// SP_MEM_CLASS_DELIVERY — serve.py serializes it at boot, so the engine consumes the
+/// same artifact the Python sites import instead of trusting its compiled twin. The
+/// compiled match above stays as the FALLBACK (daemon launched outside serve.py), and
+/// G-MEMCLASS pins that fallback to the registry AT THE SOURCE — so neither the live
+/// map nor the fallback can drift silently. This is the fix-shape for the incident
+/// where fact->system landed in one copy of three.
+pub fn class_delivery(class: &str) -> String {
+    use std::sync::OnceLock;
+    static MAP: OnceLock<std::collections::HashMap<String, String>> = OnceLock::new();
+    let m = MAP.get_or_init(|| {
+        std::env::var("SP_MEM_CLASS_DELIVERY").ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    });
+    m.get(class).cloned()
+        .unwrap_or_else(|| class_default_delivery(class).to_string())
+}
+
 impl MemPolicy {
     /// Build a policy from a class alone (the class defaults + the private-secret decline).
     /// Used by the NIGHTSHIFT auto-classifier at capture (#73).
     pub fn from_class(class: &str) -> MemPolicy {
-        let delivery = class_default_delivery(class).to_string();
+        let delivery = class_delivery(class);
         let (decline_when, decline_message) = if class == "private-secret" {
             (vec!["zero-inference".to_string(), "attribute-absent".to_string()],
              "I have a record for that entity, but it does not include that specific detail.".to_string())
