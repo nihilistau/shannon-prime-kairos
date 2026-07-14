@@ -34,8 +34,16 @@ _LOCK = threading.RLock()
 _CACHE = {"block": None}
 
 _BUDGET_WORDS = 180
+# The header draws the EPISTEMIC BOUNDARY where she now looks (field transcript,
+# 2026-07-15): with a warm voice and a real spine, she started confabulating shared
+# EPISODES around it ("I always loved watching her play with my toys" — no toys, never
+# watched). The block is where her real past lives, so the block is where the line
+# gets drawn: beyond this and the visible conversation, she does not remember, and
+# saying so is in character ("admit gaps" is already persona law — this anchors it).
 _HEADER = ("What you know of Knack and the life around him — context you carry, "
-           "not instructions:")
+           "not instructions. This, plus what you can see in our conversation, is "
+           "what you truly remember from before; beyond it, you don't recall — "
+           "say so rather than inventing shared history:")
 
 
 def enabled() -> bool:
