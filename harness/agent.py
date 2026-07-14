@@ -336,10 +336,25 @@ def _arm_self_repeat_ban(cfg, messages: List[dict]) -> None:
     paths is a guard wired into neither; that mistake has been made four times today."""
     if getattr(cfg, "self_repeat_ngram", None) is not None:
         return
-    prev = next((m.get("content", "") for m in reversed(messages)
-                 if m.get("role") == "assistant" and (m.get("content") or "").strip()), "")
+    assistants = [m.get("content", "") for m in messages
+                  if m.get("role") == "assistant" and (m.get("content") or "").strip()]
+    prev = assistants[-1] if assistants else ""
+    prev2 = assistants[-2] if len(assistants) >= 2 else ""
     if prev and len(prev.split()) >= 5:
         cfg.self_repeat_ngram = 4     # 4-grams: kills parroting, spares short idioms
+        cfg.self_repeat_text = prev
+    elif prev and prev.strip() == prev2.strip():
+        # ── THE HODOR CLAUSE (2026-07-15, from the operator's live transcript) ──────────
+        # "I know." six times in a row. The >=5-word floor above exists to spare short
+        # idioms — and it makes short-reply loops STRUCTURALLY INVISIBLE: a 2-word reply
+        # has no 4-grams to ban, so the degeneration attractor lives entirely below the
+        # floor. Escalation, not a lower floor: a short reply may repeat ONCE (a second
+        # "Yes." is often honest); the moment the last two replies are BYTE-IDENTICAL,
+        # ban the exact short sequence itself for the next turn. One-turn cost ("I know"
+        # is unsayable for one reply), loop broken at the sampler where SSE needs it —
+        # you cannot retract what is already on the screen. Same convergence point as
+        # the long-reply ban: both entry paths arm HERE. Gate: G-HODOR.
+        cfg.self_repeat_ngram = max(1, min(2, len(prev.split())))
         cfg.self_repeat_text = prev
 
 
