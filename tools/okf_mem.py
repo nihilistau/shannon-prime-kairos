@@ -24,18 +24,24 @@ FULL_DIR = "full"
 LUT_HEADER = ("| addr | kind | keys | summary | status | sum |\n"
               "|---|---|---|---|---|---|\n")
 
-# MEM-OKF v2 policy vocabulary (see PPT-LAT-MEM-OKF-V2-SPEC + ADR-004).
-MEM_CLASSES    = {"private-secret", "counterfact", "same-template", "fact",
-                  "preference", "persona", "episodic-event"}
-MEM_DELIVERIES = {"attr-gate-strict", "systemecho", "two-stage", "recite",
-                  "system", "pass"}  # "route:<t>" also allowed (checked by prefix)
-MEM_DECLINES   = {"attribute-absent", "family-ambiguous", "low-margin", "zero-inference"}
-# class -> default delivery (the proven mapping; per-entry field overrides).
-CLASS_DEFAULT_DELIVERY = {
-    "private-secret": "attr-gate-strict", "counterfact": "systemecho",
-    "same-template": "systemecho",  # two-stage REFUTED (G-MEMPOLICY-V3); delivery is perfect
-    "fact": "recite", "preference": "system",  # given selection, so use systemecho + low-confidence
-    "persona": "system", "episodic-event": "recite"}
+# MEM-OKF v2 policy vocabulary — CONSUMED from THE class registry (2026-07-14,
+# INVARIANT-ROADMAP.md Tier 1.2). This file used to hold its own copy, and the copy had
+# DRIFTED: the 2026-07-12 engine fix (fact -> system: "a remembered thing is CONTEXT,
+# not a command") never landed here, so this map still said fact -> recite — the exact
+# delivery that made her recite an unrelated memory at "what do you mean?". One
+# registry now (harness/skills/memclass.py); G-MEMCLASS convicts any new copy.
+# Widening note: the vocabulary now includes the harness writer's classes
+# (relationship/identity/event) and self-fact — self-model concepts used to FAIL
+# conformance under the old seven-class set.
+import sys as _sys
+_sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from harness.skills import memclass as _mc  # noqa: E402
+
+MEM_CLASSES    = set(_mc.CLASSES)
+MEM_DELIVERIES = set(_mc.DELIVERIES)        # "route:<t>" also allowed (checked by prefix)
+MEM_DECLINES   = set(_mc.DECLINES)
+# class -> default delivery (the registry's; per-entry field overrides).
+CLASS_DEFAULT_DELIVERY = _mc.delivery_map()
 # A1: orthogonal trust x freshness axes (Icarus verified x lifecycle; 2606.01444 audit contract).
 MEM_VERIFIED  = {"unverified", "verified", "contradicted", "rolled_back"}
 MEM_LIFECYCLE = {"active", "superseded"}

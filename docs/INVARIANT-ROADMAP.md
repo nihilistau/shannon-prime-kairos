@@ -119,12 +119,18 @@ the proven recipe: operational signature → committed table → shadow → meta
    promise always reminds; she never fills a silence she made; his turn buys her budget; nothing
    speaks around the bounds. This is the discipline's strongest form — a domain with edges you
    can walk.
-2. **One class vocabulary, one frozen artifact.** FOUR class enumerations exist
-   (`lifecycle.classify`, `okf_mem.MEM_CLASSES`, `recall.rs::classify_mem_class`,
-   `self_model._CLASS_DELIVERY`) and THREE copies of class→delivery. This is the house bug class
-   at the vocabulary level, and `mem_class` is a σ coordinate — the verdict layer's own input.
-   `okf_mem` already holds committed vocab sets + a conformance gate: promote, unify, make all
-   four sites consume one artifact, extend the gate to catch drift.
+2. **One class vocabulary, one frozen artifact. DONE 2026-07-14 — and it found a LIVE drift.**
+   The 2026-07-12 engine fix (fact → system: "a remembered thing is CONTEXT, not a command") had
+   been applied in ONE of the THREE class→delivery copies; `okf_mem.py` and `self_model.py` still
+   said fact → recite — the exact delivery behind the recited-memory incident. Now:
+   `harness/skills/memclass.py` is THE registry (classes + deliveries + per-class producers — the
+   G-SECRET §4 producer/consumer closure held globally); okf_mem and self_model CONSUME it (their
+   literals are deleted, and **G-MEMCLASS 28/28** asserts the literals stay deleted — equality can
+   be faked by a faithful copy, absence cannot); `lifecycle.classify` is probe-held to its declared
+   productions; `recall.rs` is pinned AT THE SOURCE (match arms and classifier returns parsed from
+   the Rust and held to the registry — the G-ONEDOOR trick); the verdict table's class coordinates
+   and the spine's branched classes join the same registry. Bonus fix: `self-fact` concepts used
+   to FAIL OKF conformance under the old seven-class vocabulary.
 3. **`scheduler._is_evidence()` + `lifecycle.find_superseded()` + `lifecycle.render()`.** All
    three already branch on σ's own fields (lifecycle/speaker/status). `_is_evidence` is a
    projection of the verdict signature (failure history: the self-feeding reflection loop);

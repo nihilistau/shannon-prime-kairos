@@ -26,9 +26,13 @@ def _resolve_root(root=None) -> Path:
     """Root precedence: explicit arg > SP_SELF_MODEL_ROOT env > default SELF_TIER."""
     return Path(root) if root else Path(os.environ.get("SP_SELF_MODEL_ROOT") or SELF_TIER)
 
-_CLASS_DELIVERY = {"self-fact": "recite", "fact": "recite", "persona": "system",
-                   "preference": "system", "counterfact": "systemecho",
-                   "episodic-event": "recite", "private-secret": "attr-gate-strict"}
+# CONSUMED from THE class registry (2026-07-14, INVARIANT-ROADMAP.md Tier 1.2). The
+# local copy had drifted from the 2026-07-12 engine fix (fact/episodic-event -> system,
+# not recite: a remembered thing is CONTEXT, not a command). self-fact stays recite by
+# doctrine — she does not paraphrase who she is. G-MEMCLASS convicts any new copy.
+from harness.skills import memclass as _mc
+
+_CLASS_DELIVERY = _mc.delivery_map()
 
 
 def _addr(text: str) -> str:
