@@ -1,0 +1,40 @@
+{"a": "Knack is wary of ladders after a fall", "b": "Knack is relaxed about ladders these days", "link": true, "zone": "gap", "note": "THE finding"}
+{"a": "Knack is anxious in crowds at night", "b": "Knack is easy in crowds lately", "link": true, "zone": "gap", "note": ""}
+{"a": "Knack is proud of his garden this spring", "b": "Knack is embarrassed by the garden lately", "link": true, "zone": "gap", "note": ""}
+{"a": "Knack is devoted to his motorbike", "b": "Knack is bored of the motorbike now", "link": true, "zone": "gap", "note": ""}
+{"a": "Knack is committed to the marathon plan", "b": "Knack is finished with marathon training", "link": true, "zone": "gap", "note": ""}
+{"a": "Knack is fond of the neighbour's dog", "b": "Knack is nervous around that dog now", "link": true, "zone": "gap", "note": ""}
+{"a": "Knack is careful with money since the layoff", "b": "Knack is loose with money again", "link": true, "zone": "gap", "note": ""}
+{"a": "Knack is serious about the chess club", "b": "Knack is done with chess for a while", "link": true, "zone": "gap", "note": ""}
+{"a": "Knack is glad about the new job", "b": "Knack is stressed by the job already", "link": true, "zone": "gap", "note": ""}
+{"a": "Knack is keen on early mornings", "b": "Knack is sick of mornings this winter", "link": true, "zone": "gap", "note": ""}
+{"a": "Knack is terrified of open water", "b": "Knack is comfortable in open water", "link": true, "zone": "covered", "note": "the canonical pair"}
+{"a": "My mower fuel is E10", "b": "My mower fuel is diesel", "link": true, "zone": "covered", "note": "attribute slot"}
+{"a": "Knack is happy at the beach house", "b": "Knack is anxious at the beach house", "link": true, "zone": "covered", "note": ""}
+{"a": "My cat's name is Tuffy", "b": "My cat's name is Milo", "link": true, "zone": "covered", "note": ""}
+{"a": "Knack is confident about public speaking", "b": "Knack is terrified of public speaking", "link": true, "zone": "covered", "note": ""}
+{"a": "I am fond of foggy mornings", "b": "I am tired of foggy mornings", "link": true, "zone": "covered", "note": "self lane"}
+{"a": "Knack is strict about screen time", "b": "Knack is relaxed about screen time", "link": true, "zone": "covered", "note": ""}
+{"a": "Knack is loyal to the old bakery", "b": "Knack is disappointed with the old bakery", "link": true, "zone": "covered", "note": ""}
+{"a": "Knack is hopeful about the harvest", "b": "Knack is worried about the harvest", "link": true, "zone": "covered", "note": ""}
+{"a": "My office chair is comfortable", "b": "My office chair is broken", "link": true, "zone": "covered", "note": ""}
+{"a": "Knack is terrified of open water", "b": "Knack's favourite soup is spicy laksa", "link": false, "zone": "none", "note": "unrelated"}
+{"a": "Knack is wary of ladders after a fall", "b": "Knack keeps bees behind the shed", "link": false, "zone": "none", "note": "no stative frame on b"}
+{"a": "Knack is a cat person", "b": "Knack is a gifted whistler", "link": false, "zone": "none", "note": "properties, disjoint"}
+{"a": "Knack is happy at the beach", "b": "Knack is tall like his father at the beach", "link": false, "zone": "gap", "note": "HARD: shared word, different dimension (mood vs height)"}
+{"a": "Knack is nervous about the wedding speech", "b": "Knack is generous with wedding gifts", "link": false, "zone": "gap", "note": "HARD: wedding shared, speech-anxiety vs gift-giving"}
+{"a": "Knack is late for work most days", "b": "Knack is respected at work", "link": false, "zone": "gap", "note": "HARD: work shared, punctuality vs standing"}
+{"a": "Knack is fussy about coffee beans", "b": "Knack is allergic to coffee creamer", "link": false, "zone": "gap", "note": "HARD: coffee shared, taste vs allergy"}
+{"a": "Knack is proud of his daughter", "b": "Knack is worried about his daughter's flight", "link": false, "zone": "gap", "note": "HARD: daughter shared, pride-in-person vs worry-about-event"}
+{"a": "Knack is quick at crosswords", "b": "Knack is hopeless at parking", "link": false, "zone": "none", "note": "disjoint skills"}
+{"a": "Knack is broke this month", "b": "Knack is busy this month", "link": false, "zone": "gap", "note": "HARD: month shared, finances vs schedule"}
+{"a": "My gpu is an RTX 2060", "b": "My monitor is a 4K panel", "link": false, "zone": "none", "note": "different possessive slots"}
+{"a": "Knack repaired the roof after the storm", "b": "Knack is proud of the roof", "link": false, "zone": "gap", "note": "event vs stance; a has no copula frame"}
+{"a": "Knack is reading a book about lighthouses", "b": "Knack is writing a letter about insurance", "link": false, "zone": "none", "note": "disjoint activities"}
+{"a": "I am calmed by thunderstorms", "b": "Knack is scared of thunderstorms", "link": false, "zone": "gap", "note": "CROSS-LANE: different grammatical subjects"}
+{"a": "Knack is sure the car needs new tyres", "b": "Knack is sure the recipe needs more salt", "link": false, "zone": "covered", "note": "HARD: epistemic-verb trap — 'sure' and 'needs' shared, subjects disjoint; the incumbent (>=2 overlap) false-links this one"}
+{"a": "Knack is tired after the night shift", "b": "Knack is saving for a new tent", "link": false, "zone": "none", "note": "disjoint"}
+{"a": "Knack is patient with the apprentices", "b": "Knack is rough on the old ute", "link": false, "zone": "none", "note": "disjoint"}
+{"a": "My password hint is the old street name", "b": "My street has new speed bumps", "link": false, "zone": "gap", "note": "HARD: street shared, secret-hint vs infrastructure"}
+{"a": "Knack is fascinated by tide charts", "b": "Knack is dismissive of astrology charts", "link": false, "zone": "gap", "note": "HARD: charts shared, different domains"}
+{"a": "Knack is gentle with the seedlings", "b": "Knack is ruthless at cards", "link": false, "zone": "none", "note": "disjoint"}

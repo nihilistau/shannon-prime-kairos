@@ -137,8 +137,11 @@ print("\n5. the proposer: gap zone only, idempotent, mute without its oracle")
 os.environ["SP_SEM_SLOTS"] = os.path.join(_tmp, "slots2.jsonl")
 rows = [json.loads(x) for x in open(REG, encoding="utf-8") if x.strip()]
 r = SL.scan(rows)                                   # daemon is a discard port here
-check("an unreachable oracle proposes nothing", r == {"asked": 0, "same": 0,
-      "different": 0}, r)
+check("an unreachable ORACLE proposes nothing; the frame proposes PENDING only "
+      "(C2: auto-link failed its bar, review-mode is the shipped default)",
+      r["asked"] == 0 and r["same"] == 0 and r["different"] == 0
+      and r["frame"] >= 1 and all(x.get("verdict") != "same"
+                                  for x in SL.pending()), r)
 check("gap-zone candidacy is real (the ladders pair overlaps at exactly 1)",
       len(__import__("harness.skills.lifecycle", fromlist=["x"]).topic_of(TESTIMONY)
           & __import__("harness.skills.lifecycle", fromlist=["x"]).topic_of(INFERENCE)) == 1)

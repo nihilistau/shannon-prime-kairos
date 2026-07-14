@@ -100,6 +100,82 @@ def _append(row: dict) -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+# ── the ORDER-FRAME proposer (OFFLINE; proposals only) — Phase C2 ─────────────────────
+# The operator's insight, made mechanical: similarity (magnitudes of meaning) failed as
+# a link detector twice — cosine (no discrimination) and the greedy LLM judge (no
+# yield). Its OPPOSITE is pair-level STRUCTURE, and structure is literally in the
+# invariant-maximality program as EMULATION: two rows link the way a known pair links
+# iff the PAIRS are order-equivalent. The ladders pair is an emulation of the water
+# pair: same stative frame, same grammatical subject, shared subject-matter inside the
+# value region, competing residues on both sides.
+#
+# THE SCAR THIS RESPECTS: find_contradicted() was deleted from lifecycle.py for being a
+# semantic contradiction engine built from substring matching — A VERDICT-WRITER. This
+# is the same instrument with the OPPOSITE authority: it PROPOSES into the quarantined
+# sidecar, where a wrong link costs one sentence (an inference wrongly silenced while
+# its fake-cover is live) and a missing link is yesterday's behaviour. The incumbent
+# topic test (testimony_wins, overlap >= 2) accepts exactly the same false-positive
+# direction on purpose ("at worst she is quieter") — so the ship bar, measured by
+# sem_pair_score.py on the committed pair corpus, is THE INCUMBENT'S OWN STANDARD:
+# precision no worse than prose-overlap's, recall strictly better on the gap zone.
+FRAME_TAG = "order-frame-v1"
+
+
+_FRAME_COPULA = None    # frame-local: includes "am" (lc._COPULA is the supersede slot
+                        # machinery and deliberately does not — do not touch it)
+
+
+def _frame(text: str):
+    """(subject-string, subject content words, value content words) for a stative
+    claim, or None. The FIRST copula splits."""
+    import re as _re
+    global _FRAME_COPULA
+    from harness.skills import lifecycle as lc
+    if _FRAME_COPULA is None:
+        _FRAME_COPULA = _re.compile(r"\b(is|are|was|were|am|=|:)\b", _re.I)
+    t = lc.strip_prefix(text or "").strip()
+    m = _FRAME_COPULA.search(t)
+    if not m:
+        return None
+    subj = " ".join(t[:m.start()].lower().split())
+    sval = lc.topic_of(t[:m.start()])
+    val = lc.topic_of(t[m.end():])
+    if not subj or not (val or sval):
+        return None
+    return subj, sval, val
+
+
+def frame_link(text_a: str, text_b: str):
+    """(link?, why) — the emulation-pair test, pure and decidable. TWO frame kinds:
+
+    ATTRIBUTE competition — identical multi-word subject with content ("my mower
+    fuel"), differing values: the pair competes over the slot the subject names.
+    PROPERTY competition — same bare subject ("knack"), shared subject-matter in both
+    VALUE regions, and BOTH sides carrying a competing residue (a restatement or
+    containment is not a competing claim).
+
+    No antonym lists, no similarity, no model. Known precision ceiling, measured on
+    the committed corpus: shared-word-different-dimension pairs (mood-at-beach vs
+    height-at-beach) are structurally indistinguishable at bag-of-words granularity —
+    that is what the oracle-veto column of sem_pair_score.py is for."""
+    fa, fb = _frame(text_a), _frame(text_b)
+    if not fa or not fb:
+        return False, "no stative frame on one side"
+    if fa[0] != fb[0]:
+        return False, "different grammatical subjects (%r vs %r)" % (fa[0], fb[0])
+    # ATTRIBUTE kind: the subject itself names the slot ("my mower fuel is ...")
+    if fa[1] and fa[2] != fb[2]:
+        return True, ("attribute pair: slot %r, competing values" % fa[0])
+    shared = fa[2] & fb[2]
+    if not shared:
+        return False, "no shared subject-matter in the value regions"
+    ra, rb = fa[2] - shared, fb[2] - shared
+    if not ra or not rb:
+        return False, "one side adds nothing: restatement/containment, not competition"
+    return True, ("property pair: frame %r, shared %s, competing residues"
+                  % (fa[0], sorted(shared)))
+
+
 # ── the oracle (LIVE; proposals only) ─────────────────────────────────────────────────
 def ask_oracle(text_a: str, text_b: str):
     """One greedy /v1/oneshot judgment: 'same' | 'different' | None (unreachable/unparseable).
@@ -132,19 +208,22 @@ def ask_oracle(text_a: str, text_b: str):
         return None
 
 
-def scan(registry_rows: list) -> dict:
-    """Propose links for the gap zone. Idempotent (asked pairs are never re-asked).
-    Writes ONLY the sidecar. Returns counts."""
+def scan(registry_rows: list, proposers=("frame-review", "oracle")) -> dict:
+    """Propose links for the gap zone. Idempotent (decided pairs are never re-asked).
+    Writes ONLY the sidecar. Proposer order is deliberate: the order-frame test is
+    free, offline and deterministic; the LLM oracle only sees pairs structure could
+    not decide. Returns counts."""
     from harness.skills import lifecycle as lc
     from harness.skills import semindex as sx
     if not enabled():
-        return {"asked": 0, "same": 0, "different": 0, "note": "SP_SEM_SLOTS unset"}
+        return {"asked": 0, "same": 0, "different": 0, "frame": 0,
+                "note": "SP_SEM_SLOTS unset"}
     gt = getattr(lc, "_GROUND_TRUTH", frozenset({"observed", "confirmed"}))
     live = [r for r in registry_rows if not r.get("lifecycle") and r.get("text")]
-    ground = [r for r in live if (r.get("status") or "observed") in gt]
-    inferred = [r for r in live if (r.get("status") or "observed") not in gt]
+    ground = [r for r in live if lc.status_of(r) in gt]
+    inferred = [r for r in live if lc.status_of(r) not in gt]
     _, seen = _load()
-    asked = same = different = 0
+    asked = same = different = frame = 0
     for b in inferred:
         tb = lc.topic_of(lc.strip_prefix(b["text"]))
         ab = sx.addr_of(b["text"])
@@ -157,16 +236,60 @@ def scan(registry_rows: list) -> dict:
             aa = sx.addr_of(a["text"])
             if frozenset((aa, ab)) in seen:
                 continue
-            verdict = ask_oracle(a["text"], b["text"])
-            if verdict is None:
-                continue                      # unreachable oracle proposes nothing
-            asked += 1
-            same += verdict == "same"
-            different += verdict == "different"
-            _append({"a": aa, "b": ab, "verdict": verdict, "oracle": MODEL_TAG,
-                     "a_text": a["text"][:60], "b_text": b["text"][:60],
-                     "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
-    return {"asked": asked, "same": same, "different": different}
+            if "frame" in proposers or "frame-review" in proposers:
+                ok, why = frame_link(a["text"], b["text"])
+                if ok:
+                    # MEASURED (sem_pair_score, the C2 receipt): frame recall on the gap
+                    # zone is 1.0 but precision 0.625 — below the pre-registered 0.80
+                    # auto-bar — and the LLM judge is out in every role (all-NO, true
+                    # pairs included). So the SHIPPED configuration is frame-review:
+                    # proposals land PENDING (inert — linked() honors only "same") and
+                    # the OPERATOR is the precision oracle, via --review/--confirm.
+                    # Machine recall, human precision; the quarantine holds throughout.
+                    verdict = "same" if "frame" in proposers else "pending"
+                    frame += 1
+                    _append({"a": aa, "b": ab, "verdict": verdict, "oracle": FRAME_TAG,
+                             "why": why[:100], "a_text": a["text"][:60],
+                             "b_text": b["text"][:60],
+                             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+                    continue
+            if "oracle" in proposers:
+                verdict = ask_oracle(a["text"], b["text"])
+                if verdict is None:
+                    continue                  # unreachable oracle proposes nothing
+                asked += 1
+                same += verdict == "same"
+                different += verdict == "different"
+                _append({"a": aa, "b": ab, "verdict": verdict, "oracle": MODEL_TAG,
+                         "a_text": a["text"][:60], "b_text": b["text"][:60],
+                         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+    return {"asked": asked, "same": same, "different": different, "frame": frame}
+
+
+def pending() -> list:
+    """The review queue: frame proposals awaiting the operator's verdict."""
+    p = sidecar_path()
+    out, resolved = [], set()
+    if not p or not os.path.exists(p):
+        return out
+    with open(p, encoding="utf-8") as f:
+        rows = [json.loads(x) for x in f if x.strip()]
+    for r in rows:
+        if r.get("verdict") in ("same", "different") \
+                and r.get("oracle") == "operator":
+            resolved.add(frozenset((r["a"], r["b"])))
+    for r in rows:
+        if r.get("verdict") == "pending" \
+                and frozenset((r["a"], r["b"])) not in resolved:
+            out.append(r)
+    return out
+
+
+def resolve(addr_a: str, addr_b: str, verdict: str) -> None:
+    """The operator's ruling on a pending proposal — appended, never edited."""
+    assert verdict in ("same", "different")
+    _append({"a": addr_a, "b": addr_b, "verdict": verdict, "oracle": "operator",
+             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
 
 
 if __name__ == "__main__":
@@ -177,7 +300,23 @@ if __name__ == "__main__":
         with open(reg, encoding="utf-8") as f:
             rows = [json.loads(x) for x in f if x.strip()]
     if "--scan" in sys.argv:
-        print(json.dumps(scan(rows)))
+        print(json.dumps(scan(rows, proposers=("frame-review", "oracle"))))
+    elif "--review" in sys.argv:
+        q = pending()
+        for r in q:
+            print("%s | %s\n    A: %s\n    B: %s\n    (%s)" % (
+                r["a"], r["b"], r.get("a_text", ""), r.get("b_text", ""),
+                r.get("why", "")))
+        print("%d pending. confirm: python -m harness.skills.slots --confirm A B" % len(q))
+    elif "--confirm" in sys.argv:
+        i = sys.argv.index("--confirm")
+        resolve(sys.argv[i + 1], sys.argv[i + 2], "same")
+        print("confirmed")
+    elif "--reject" in sys.argv:
+        i = sys.argv.index("--reject")
+        resolve(sys.argv[i + 1], sys.argv[i + 2], "different")
+        print("rejected")
     else:
         same, seen = _load()
-        print(json.dumps({"pairs_seen": len(seen), "links_same": len(same)}))
+        print(json.dumps({"pairs_seen": len(seen), "links_same": len(same),
+                          "pending": len(pending())}))

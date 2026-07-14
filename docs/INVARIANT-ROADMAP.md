@@ -195,6 +195,32 @@ the proven recipe: operational signature → committed table → shadow → meta
 
 ---
 
+## 2.2 PHASE C2 — THE LINK PROPOSER, RESOLVED (2026-07-14)
+
+The question C2 answered: can invariant maximality itself propose slot links? YES — as
+**emulation**: two rows link the way a known pair links iff the PAIRS are order-equivalent.
+`slots.frame_link` is the decidable form (stative frames; attribute kind = shared possessive
+slot with competing values; property kind = same subject, shared value-matter, competing
+residues). Measured on the committed 40-pair corpus with deliberate traps
+(`fixtures/sem/pairs.jsonl`, receipt `pair-receipt.json`): **gap-zone recall 1.0** (every
+paraphrase-distance pair caught, the ladders finding included), precision 0.625 — below the
+pre-registered 0.80 auto-bar, because shared-word-different-dimension pairs (mood-at-beach vs
+height-at-beach) are structurally indistinguishable at bag-of-words granularity. The receipt says
+ships:false and G-SEM-PAIR pins it saying so.
+
+The LLM judge is measured OUT in every role: after fixing the parse (the greedy 12B was
+*continuing the few-shot pattern* instead of answering), it answers cleanly — and says NO on
+everything, true pairs included. Not miscalibrated; incapable of the judgment.
+
+**What ships is the operator's combine-opposites, completed: machine recall + HUMAN precision.**
+`scan(proposers=("frame-review",...))` lands proposals as PENDING sidecar rows — inert, the
+evaluator honors only "same" — and `python -m harness.skills.slots --review/--confirm/--reject`
+is the operator's precision oracle. **G-SEM-PAIR 19/19** proves the loop end-to-end through the
+real paths: structure proposes, pending changes nothing, the operator rules, the table silences,
+his words stand, rejections are never re-proposed. Successor for auto-linking, if ever needed:
+richer role structure in σ (prep-object vs adjunct) or a learned judge with this same corpus as
+its scoreboard — the bar is committed and waiting.
+
 ## 3. HOW FAR, HONESTLY
 
 The foundation carries as far as decisions over finite signatures reach — which the survey shows

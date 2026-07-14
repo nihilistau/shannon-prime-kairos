@@ -1,0 +1,48 @@
+{
+  "name": "sem_pair_score",
+  "bar": {
+    "precision": 0.8,
+    "recall": 0.8
+  },
+  "corpus": {
+    "pairs": 40,
+    "positives": 20,
+    "gap_zone": 20
+  },
+  "prose_incumbent_all": {
+    "tp": 9,
+    "fp": 1,
+    "fn": 11,
+    "precision": 0.9,
+    "recall": 0.45
+  },
+  "frame_all": {
+    "tp": 20,
+    "fp": 7,
+    "fn": 0,
+    "precision": 0.7407,
+    "recall": 1.0
+  },
+  "frame_gap_zone": {
+    "tp": 10,
+    "fp": 6,
+    "fn": 0,
+    "precision": 0.625,
+    "recall": 1.0
+  },
+  "combined_all": {
+    "tp": 20,
+    "fp": 7,
+    "fn": 0,
+    "precision": 0.7407,
+    "recall": 1.0
+  },
+  "oracle_all": "absent (no daemon)",
+  "frame_with_oracle_veto_all": "absent (no daemon)",
+  "frame_with_oracle_veto_gap": "absent (no daemon)",
+  "ts": "2026-07-14T05:38:58Z",
+  "ships": false,
+  "pass": 0,
+  "fail": 1,
+  "note": "does not clear the pre-registered bar \u2014 frame stays out of the live scan; this negative is the receipt"
+}
