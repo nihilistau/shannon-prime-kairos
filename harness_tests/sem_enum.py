@@ -57,13 +57,22 @@ USER_TEXTS = {
     "relationship": ["Knack's best friend is a carpenter named Sol",
                      "Knack's sister is a nurse who lives in Perth"],
     "identity": ["My name is Knack", "My surname is Aurelius"],
-    "event": ["Knack's daughter starts school in February",
-              "Knack's licence renewal is due in March"],
+    # FIELD FINDING (Phase B shadow on the live registry): the first event templates
+    # never landed in class=event — "daughter starts school" classifies RELATIONSHIP,
+    # "licence renewal is due" classifies FACT — so the board had no event cells and
+    # her real event rows hit the unmapped counter. These two are probe-verified
+    # producers of class=event. Intent proposes; classify() disposes.
+    "event": ["Knack's flight to Perth is on the twelfth",
+              "Knack's clinic appointment is on the ninth"],
     "private-secret": ["My secret access code is 9137",
                        "My secret locker combination is 4-18-22"],
 }
 SELF_TEXTS = {
-    "preference": ["I am fond of foggy mornings", "I am partial to long silences"],
+    # FIELD FINDING (same shadow run): "I am fond of X" classifies FACT, so the board
+    # had no self-lane preference cells while her real store has six ("I like the
+    # sound of rain on a tin roof"). "I like ..." is the probe-verified producer.
+    "preference": ["I like the hour just before sunrise",
+                   "I like the sound of wind in the wires"],
     "identity": ["My name is Shannon", "I am a woman"],
     "fact": ["I am unable to smell rain through a microphone",
              "I am a light sleeper by design"],
@@ -126,43 +135,27 @@ def _ruling(query):
     return seam, spoken, declined
 
 
-def _cell(row, competition, attr):
-    return "speaker=%s|status=%s|lifecycle=%d|class=%s|competition=%s|attr=%s" % (
-        row.get("speaker", "?"), row.get("status", "?"),
-        1 if row.get("lifecycle") else 0, row.get("mem_class", "?"),
-        competition, attr)
-
-
 def _observe(M, subject_text, competition="."):
-    """Rulings for one subject row. COORDINATES ARE OPERATIONAL: the attr coordinate is
-    attr_absent(query, fact) — the relation the decider actually consults — never the
-    probe's intent. (First enumeration mislabeled a recite-to-owner ask as attr-absent
-    and read it as a leak; the leak was in the labeling.) Likewise competition="auto"
-    is read from THE STORE AT OBSERVATION TIME — a live observed row whose topic_of
-    overlaps >= 2 — because the retire step's forget() has a blast radius (its 0.3
-    overlap match can tombstone the testimony too), and a recipe-level label lies the
-    moment it does."""
+    """Rulings for one subject row. COORDINATES ARE OPERATIONAL, AND THERE IS EXACTLY
+    ONE IMPLEMENTATION OF THEM: harness/skills/verdict.py (sigma / competition / attr /
+    cell). The enumerator IMPORTS the evaluator it exists to check — a second copy of
+    the signature would drift, and that is the two-paths bug in a mathematician's hat.
+    (Bring-up history, kept because the shape matters: intent-level labels here
+    produced one phantom privacy leak — a recite-to-owner ask read as attr-absent —
+    and one phantom conflict — forget()'s 0.3-overlap blast radius tombstoning the
+    testimony beside the inference. Operational coordinates ended both.)
+    The `competition` parameter is retained for signature compatibility and ignored:
+    verdict.cell() reads it from the store at observation time."""
+    from harness.skills import verdict as V
     row = _find(subject_text)
     if row is None:
         return None, []
-    if competition == "auto":
-        from harness.skills import lifecycle as lc
-        mine = lc.topic_of(row.get("text") or "")
-        competition = str(int(any(
-            not r.get("lifecycle") and r.get("status") == "observed"
-            and r.get("name") != row.get("name")
-            and len(lc.topic_of(r.get("text") or "") & mine) >= 2
-            for r in _rows())))
     out = []
     queries = [subject_text] + SECRET_PROBES.get(subject_text, [])
     for q in queries:
         seam, spoken, declined = _ruling(q)
         admitted = any(e.get("text") == row["text"] for _, e in seam)
-        if row.get("mem_class") == "private-secret":
-            attr = "-" if M.attr_absent(q, row["text"]) else "+"
-        else:
-            attr = "."
-        out.append((_cell(row, competition, attr),
+        out.append((V.cell(row, q, _rows()),
                     {"seam": admitted, "spoken": spoken and admitted,
                      "declined": declined}))
     return row, out
@@ -237,7 +230,7 @@ def enumerate_table():
                 if with_a and not retire \
                         and len(lc.topic_of(a_text) & lc.topic_of(b_text)) < 2:
                     intent_mismatches.append((a_text, b_text))
-                row, cells = _observe(M, b_text, competition="auto")
+                row, cells = _observe(M, b_text)
                 if row is None:
                     refusals.append({"lane": "user", "text": b_text,
                                      "why": "stored but not found"})

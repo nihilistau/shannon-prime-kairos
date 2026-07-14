@@ -762,6 +762,15 @@ def search_memories_ranked_rows(query: str, k: int = 5, min_overlap: float = 0.2
         # Third time in this one file: the lifecycle filter, the twin ranker, and now this. The
         # polite path had every guard; the automatic one had none of them.
         scored = _target_and_rank(query, scored)
+        # ── SEM PHASE B SHADOW (docs/INVARIANT-MEMORY.md): the law watches the seam ──────
+        # Read-only, behind SP_SEM_LAW (mapped in serve.py). Checks the one direction that
+        # is checkable and load-bearing: EVERYTHING ADMITTED IS TABLE-ADMISSIBLE. Counters
+        # + optional witnesses (SP_SEM_LAW_LOG); never raises, never reorders, never costs
+        # a sentence. Cutover to ruling-as-filter is Phase B2, gated on a zero-divergence
+        # receipt. Gate: G-SEM-LAW.
+        if os.environ.get("SP_SEM_LAW", "0") == "1":
+            from harness.skills import verdict as _law
+            _law.shadow(query, [e for _s, e in scored[:k]], eps)
     return scored[:k]
 
 

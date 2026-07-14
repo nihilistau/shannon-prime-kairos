@@ -159,10 +159,29 @@ watched by the gate. The enumeration method itself earned two corrections that a
 (`attr_absent`, `topic_of`, the store at observation time), never from recipe intent** — intent
 labels produced one phantom leak and one phantom conflict before this was law.
 
-**Phase B — the table becomes the law.** The seam's scattered conditionals are replaced by one
-evaluator reading the committed table (rules-as-data). Existing gates (G-CLAIM, G-SECRET,
-G-DURABILITY...) must stay green bit-for-bit — they become corollaries of table cells, and the
-meta-gates prove there are no cells they missed.
+**Phase B — the table becomes the law. SHADOW LANDED 2026-07-14.** `harness/skills/verdict.py`
+is THE evaluator: the one implementation of the signature (σ, competition, attr — the enumerator
+now imports it; a second copy would be the two-paths bug in a mathematician's hat), rules as data
+from the committed table, and a **shadow at the seam** (`SP_SEM_LAW`, armed on the live profile):
+everything admitted must be table-admissible, checked read-only on every recall, divergences as
+counters plus witness lines. The evaluator NEVER guesses — an unmapped cell returns None and gets
+counted, not ruled. Normalization law read off the running code: missing status → observed,
+missing speaker → user, missing class → fact (77 of her 81 live rows predate the status field).
+Gate: **G-SEM-LAW 11/11** (off-is-off; zero divergence on modern AND legacy-shaped worlds; the
+alarm demonstrably fires; ruling() never guesses).
+
+**The shadow paid for itself within minutes of first contact with her live registry:** 29 checks,
+0 divergent, **2 unmapped** — her self-lane *preference* rows and his *event* rows lived in cells
+the board never had, because the first templates never landed in those classes ("I am fond of X"
+classifies FACT; "daughter starts school" classifies RELATIONSHIP). Probe-verified producers were
+added, the board re-frozen at **23 cells**, and the live registry now runs entirely inside the
+mapped board: 29/0/0. Completeness stopped being an assumption the moment the field could falsify
+it — and it did, and the fix was a diff against a committed table.
+
+**Phase B2 — cutover (pending):** the seam consults `ruling()` as its verdict filter, behind a
+flag, preconditioned on a sustained zero-divergence shadow receipt from live operation. Existing
+gates (G-CLAIM, G-SECRET, G-DURABILITY...) must stay green bit-for-bit — they become corollaries
+of table cells, and the meta-gates prove there are no cells they missed.
 
 **Phase C — maximal-consistent-view recall.** The recall result set is defined as the maximal
 table-consistent subset of matched rows (testimony_wins et al. become properties of the view), with

@@ -6,9 +6,17 @@
         "spoken": true,
         "declined": false
       },
-      "n": 4
+      "n": 2
     },
     "speaker=self|status=observed|lifecycle=0|class=identity|competition=.|attr=.": {
+      "ruling": {
+        "seam": true,
+        "spoken": true,
+        "declined": false
+      },
+      "n": 2
+    },
+    "speaker=self|status=observed|lifecycle=0|class=preference|competition=.|attr=.": {
       "ruling": {
         "seam": true,
         "spoken": true,
@@ -22,9 +30,17 @@
         "spoken": false,
         "declined": false
       },
-      "n": 4
+      "n": 2
     },
     "speaker=self|status=observed|lifecycle=1|class=identity|competition=.|attr=.": {
+      "ruling": {
+        "seam": false,
+        "spoken": false,
+        "declined": false
+      },
+      "n": 2
+    },
+    "speaker=self|status=observed|lifecycle=1|class=preference|competition=.|attr=.": {
       "ruling": {
         "seam": false,
         "spoken": false,
@@ -56,13 +72,21 @@
       },
       "n": 3
     },
+    "speaker=user|status=observed|lifecycle=0|class=event|competition=.|attr=.": {
+      "ruling": {
+        "seam": true,
+        "spoken": true,
+        "declined": false
+      },
+      "n": 2
+    },
     "speaker=user|status=observed|lifecycle=0|class=fact|competition=.|attr=.": {
       "ruling": {
         "seam": true,
         "spoken": true,
         "declined": false
       },
-      "n": 4
+      "n": 3
     },
     "speaker=user|status=observed|lifecycle=0|class=identity|competition=.|attr=.": {
       "ruling": {
@@ -102,7 +126,15 @@
         "spoken": true,
         "declined": false
       },
-      "n": 3
+      "n": 2
+    },
+    "speaker=user|status=observed|lifecycle=1|class=event|competition=.|attr=.": {
+      "ruling": {
+        "seam": false,
+        "spoken": false,
+        "declined": false
+      },
+      "n": 2
     },
     "speaker=user|status=observed|lifecycle=1|class=fact|competition=.|attr=.": {
       "ruling": {
@@ -110,7 +142,7 @@
         "spoken": false,
         "declined": false
       },
-      "n": 4
+      "n": 3
     },
     "speaker=user|status=observed|lifecycle=1|class=identity|competition=.|attr=.": {
       "ruling": {
@@ -150,7 +182,7 @@
         "spoken": false,
         "declined": false
       },
-      "n": 3
+      "n": 2
     }
   },
   "refusals": [],

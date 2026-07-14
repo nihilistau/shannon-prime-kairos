@@ -330,6 +330,11 @@ def build_env(c: dict) -> dict:
         # S0 engine-side: mint the ep.l5 sidecar on /v1/capture (routes.rs::v1_capture),
         # so grown episodes stop being L5-invisible. Derived sidecar, never fails capture.
         "SP_CAPTURE_L5": b(sem.get("capture_l5", False)),
+        # Phase B shadow (docs/INVARIANT-MEMORY.md): the verdict table watches the seam,
+        # read-only — everything admitted must be table-admissible. Divergences are
+        # counters + witness lines; they never alter results. Gate: G-SEM-LAW.
+        "SP_SEM_LAW": b(sem.get("law", False)),
+        "SP_SEM_LAW_LOG": str(sem.get("law_log", "")).replace("/", "\\"),
 
         # ── THE DAEMON'S OTHER HANDS ON HER MEMORY, PINNED SHUT (2026-07-14) ──────────────
         # These are daemon-side writers/retirers that no profile knob has ever controlled and

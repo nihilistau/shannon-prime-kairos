@@ -156,6 +156,8 @@ index = 'D:/F/shannon-prime-repos/shannon-prime-kairos/var/memory/semindex.jsonl
 rank  = false            # SP_SEM_RANK — dual admission gate at the recall seam
 tau   = 0.60             # SP_SEM_TAU  — semantic admission threshold (precision-first)
 capture_l5 = true        # SP_CAPTURE_L5 — engine mints ep.l5 on /v1/capture (derived sidecar)
+law     = true           # SP_SEM_LAW — Phase B shadow: the verdict table watches the seam (read-only)
+law_log = 'D:/F/shannon-prime-repos/shannon-prime-kairos/var/sem/law_divergence.jsonl'  # SP_SEM_LAW_LOG — witnesses
 
 [kairos]
 enabled = true           # SP_KAIROS — emit the impulse; speaking is gated separately
