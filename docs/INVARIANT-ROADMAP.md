@@ -108,12 +108,17 @@ the proven recipe: operational signature → committed table → shadow → meta
 
 ### Tier 1 — next (high value, low risk, recipe applies directly)
 
-1. **`kairos/impulse.decide()` — the unprompted-speech gate.** Highest-traffic non-memory decider;
-   pure, clock-injected, unit-tested; its own comments spend ~80 lines arguing that the CHECK
-   ORDER is the policy. Signature: {cooling, cap_hit, has_due, chain_maxed, asked_question,
-   has_insight, cut_off, idle_long} → action ∈ {SILENT, REMIND, MUSE, CONTINUE, CHECK_IN}.
-   The committed table makes the ordering a pinned artifact and order-permutation sensitivity a
-   PROVABLE meta-gate instead of prose.
+1. **`kairos/impulse.decide()` — the unprompted-speech gate. DONE 2026-07-14.**
+   **G-KAIROS-TABLE 12/12**: because decide() is pure and every magnitude enters through a
+   threshold, the verdict domain booleanizes EXACTLY — the enumeration is **exhaustive (all 512
+   cells through the real decide(), committed at `fixtures/kairos/impulse-table.json`)**, so no
+   runtime shadow is needed: complete coverage means any cascade change trips the gate as a cell
+   diff. The ~80 lines of argued check-ordering are now a committed PRECEDENCE artifact that the
+   code PROVABLY implements (first-match semantics over every cell), and the argued properties
+   are φ-fragment ∀-theorems over the whole domain: spam bounds dominate even promises; a clear
+   promise always reminds; she never fills a silence she made; his turn buys her budget; nothing
+   speaks around the bounds. This is the discipline's strongest form — a domain with edges you
+   can walk.
 2. **One class vocabulary, one frozen artifact.** FOUR class enumerations exist
    (`lifecycle.classify`, `okf_mem.MEM_CLASSES`, `recall.rs::classify_mem_class`,
    `self_model._CLASS_DELIVERY`) and THREE copies of class→delivery. This is the house bug class
