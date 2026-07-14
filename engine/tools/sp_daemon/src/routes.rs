@@ -5059,6 +5059,107 @@ pub async fn v1_capture(
 // session, released before returning; the resident cache is not read, not written, not
 // evicted (the /v1/oneshot doctrine). Consumer: harness/skills/semindex.query_embed()
 // behind SP_SEM_RANK. CUDA-only, like every route that needs a scratch sp_g4_kv.
+// ── /v1/recall_rank — the LEARNED selector as a read-only oracle (2026-07-14) ─────────
+// Phase C2's successor question (INVARIANT-ROADMAP): can the W_c + (E+1)-NULL head — the
+// one signal on this box with a measured 360/361 recall + 50/50 reject
+// (G-CHAT-B3-WC-DIV2) — beat the 0.06 lexical decider baseline on the SEM corpus?
+// This route exposes exactly that judgment, statelessly: templated scratch forward for
+// the query's global-Q (the /v1/embed pattern), load_episode_global_k per candidate
+// dir, wc_score each, argmax against the s0 NULL. READ-ONLY: scratch session released,
+// resident cache untouched, nothing replayed, nothing written. The deploy blob path
+// rides in the REQUEST (SP_B3_WC is unmapped on the live profile — G-ONEDOOR strips
+// it — and a research oracle should be explicit, not ambient).
+// HONESTY FLAG from this file's own F2b comment: W_c is geometric — strong on
+// high-entropy novel needles, measured BLIND on mutually-similar natural facts. The
+// SEM corpus is natural facts. The scoreboard may return a negative; that is its job.
+#[cfg(feature = "wire_cuda_backend")]
+#[derive(serde::Deserialize)]
+pub struct RecallRankReq {
+    pub text: String,
+    pub episode_dirs: Vec<String>,
+    pub wc_path: String,
+}
+
+#[cfg(feature = "wire_cuda_backend")]
+pub async fn v1_recall_rank(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<RecallRankReq>,
+) -> Response {
+    let app = state.clone();
+    let text = req.text.trim().to_string();
+    if text.is_empty() || req.episode_dirs.is_empty() {
+        return (StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error":"empty text or no candidates"}))).into_response();
+    }
+    let head = match sp_daemon::recall::load_wc(&req.wc_path) {
+        Some(h) => h,
+        None => return (StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"error": format!("load_wc({}) failed", req.wc_path)}))).into_response(),
+    };
+    let msgs = vec![Message { role: "user".to_string(), content: text.clone() }];
+    let toks = match app.tokenizer.apply_template_ids(&msgs) {
+        Ok(t) => t,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR,
+                          Json(serde_json::json!({"error": format!("template: {e}")}))).into_response(),
+    };
+    if toks.len() < 2 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"too short"}))).into_response();
+    }
+    let dirs = req.episode_dirs.clone();
+    let res = task::spawn_blocking(move || -> Result<(Vec<Option<f32>>, f32), String> {
+        use sp_daemon::cuda_kvdecode_dispatch as kv;
+        use sp_daemon::recall;
+        let qm = {
+            let mut sguard = app.session.as_ref().expect("L1 session unavailable (qwen36 lane)").lock().unwrap();
+            let sraw = sguard.raw_ptr() as *mut sp_daemon::ffi_l1::sp_session;
+            (unsafe { sp_daemon::ffi_l1::sp_session_qwen3_model(sraw) }) as *const std::ffi::c_void
+        };
+        if qm.is_null() {
+            return Err("sp_session_qwen3_model NULL".to_string());
+        }
+        let scratch = unsafe { kv::open(qm, toks.len() as i32 + 8) }
+            .map_err(|e| format!("scratch open: {e:?}"))?;
+        let n_global = recall::NL / recall::PERIOD;
+        let mut qbuf = vec![0.0f32; n_global * recall::G_NH * recall::HD];
+        let qok = (|| {
+            unsafe { kv::prefill(scratch, &toks[..toks.len() - 1]) }.ok()?;
+            unsafe { kv::read_global_q(scratch, toks[toks.len() - 1], &mut qbuf) }.ok()?;
+            Some(())
+        })();
+        // SAFETY: scratch came from open() above; release is NULL-safe/idempotent.
+        unsafe { kv::release_for_model(scratch) };
+        if qok.is_none() {
+            return Err("query global-Q read failed".to_string());
+        }
+        let scores = dirs.iter().map(|d| {
+            recall::load_episode_global_k(d, i32::MAX).map(|(gk, ng)| {
+                let npos = if ng > 0 { gk.len() / (ng * recall::HD) } else { 0 };
+                recall::wc_score(&qbuf, &gk, ng, npos, &head)
+            })
+        }).collect();
+        Ok((scores, head.s0))
+    }).await;
+    match res {
+        Ok(Ok((scores, s0))) => {
+            let (mut bi, mut bv) = (None::<usize>, f32::NEG_INFINITY);
+            for (i, s) in scores.iter().enumerate() {
+                if let Some(v) = s {
+                    if *v > bv { bv = *v; bi = Some(i); }
+                }
+            }
+            let picked = match bi {
+                Some(i) if bv > s0 => serde_json::json!(i),
+                _ => serde_json::Value::Null,          // the (E+1)-NULL reject
+            };
+            (StatusCode::OK, Json(serde_json::json!({
+                "scores": scores, "null": s0, "picked": picked, "best": bv
+            }))).into_response()
+        }
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("join: {e}")}))).into_response(),
+    }
+}
+
 #[cfg(feature = "wire_cuda_backend")]
 #[derive(serde::Deserialize)]
 pub struct EmbedReq {

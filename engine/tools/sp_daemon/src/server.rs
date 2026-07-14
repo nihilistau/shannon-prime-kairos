@@ -64,7 +64,11 @@ fn oneshot_route() -> Router<Arc<AppState>> {
 /// resident cache is not read, not written, not evicted.
 #[cfg(feature = "wire_cuda_backend")]
 fn embed_route() -> Router<Arc<AppState>> {
-    Router::new().route("/v1/embed", post(crate::routes::v1_embed))
+    Router::new()
+        .route("/v1/embed", post(crate::routes::v1_embed))
+        // the learned W_c + NULL selector as a read-only, stateless oracle (Phase C2
+        // successor; the scoreboard is harness_tests/sem_wc_score.py)
+        .route("/v1/recall_rank", post(crate::routes::v1_recall_rank))
 }
 #[cfg(not(feature = "wire_cuda_backend"))]
 fn embed_route() -> Router<Arc<AppState>> {

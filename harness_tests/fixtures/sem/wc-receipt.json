@@ -1,0 +1,21 @@
+{
+  "name": "sem_wc_score",
+  "bar": {
+    "hit": 0.06,
+    "foreign_precision": 0.98
+  },
+  "wc_blob": "D:\\F\\shannon-prime-repos\\shannon-prime-system-engine\\_b3_wc\\wc_deploy.bin",
+  "candidates": 50,
+  "metrics": {
+    "wc_hit_rate": 0.02,
+    "wc_argmax_rate": 0.02,
+    "wc_null_on_paraphrase": 0.0,
+    "foreign_precision": 0.0
+  },
+  "ships": false,
+  "pass": 0,
+  "fail": 1,
+  "baseline_decider_hit_rate": 0.06,
+  "note": "does not clear the pre-registered bar on natural personal facts \u2014 consistent with the engine's own F2b honesty flag; this negative is the receipt",
+  "ts": "2026-07-14T07:14:07Z"
+}

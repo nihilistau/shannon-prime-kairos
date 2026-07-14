@@ -221,6 +221,22 @@ his words stand, rejections are never re-proposed. Successor for auto-linking, i
 richer role structure in σ (prep-object vs adjunct) or a learned judge with this same corpus as
 its scoreboard — the bar is committed and waiting.
 
+**The W_c ledger (2026-07-14, closing the contender list).** The engine's learned selector —
+the one signal on this box with a measured 360/361 + 50/50 reject — was exposed read-only at
+`/v1/recall_rank` (stateless: templated scratch forward for the query's global-Q,
+`load_episode_global_k` per candidate, `wc_score` each, argmax vs the s0 NULL; blob path in the
+request) and scored on the frozen corpus (`sem_wc_score.py`, receipt
+`fixtures/sem/wc-receipt.json`): **hit 0.02 (below the 0.06 lexical decider), argmax 0.02,
+foreign precision 0.00 — it never rejects and almost never picks right.** The engine's own F2b
+honesty flag ("W_c is geometric — blind to mutually-similar natural facts") is now a measured
+fact on this corpus. That closes the third and last off-the-shelf contender (cosine, LLM judge,
+W_c), each with a frozen receipt. THE OPEN PATHS, all genuinely new work: (a) **query→keyword
+expansion** at the harness (association, not judgment — a different task shape from the failed
+judge; cheap to score against the existing corpus and the 0.06 bar); (b) **a head trained on
+natural personal facts** (the W_c recipe applied to THIS regime, with the corpus as its eval);
+(c) a real sentence-embedding provider through the existing nexus `EmbeddingProvider` seam,
+scored on the same rig. The rig is the asset: every future contender costs one scoreboard run.
+
 ## 3. HOW FAR, HONESTLY
 
 The foundation carries as far as decisions over finite signatures reach — which the survey shows
