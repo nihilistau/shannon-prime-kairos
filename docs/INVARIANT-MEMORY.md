@@ -1,0 +1,170 @@
+# INVARIANT-MEMORY.md — the memory system as a finite mathematical object
+
+**Status: FOUNDATION (2026-07-14). This document is the basis the SEM stack builds on, stated
+after the Phase 2 measurements made the alternative untenable. [`SEMANTICS.md`](SEMANTICS.md)
+remains the stack (S0–S4, phases, receipts); THIS file owns the why and the invariant discipline.
+No content is duplicated between them on purpose — one truth, one owner.**
+
+---
+
+## 0. THE DIAGNOSIS: WHY MEMORY WORK HAS BEEN WHACK-A-MOLE
+
+Count the rules the memory system enforces today: the tombstone filter, testimony-over-inference,
+speaker lanes, the identity firewall, attribute-slot supersede, property accumulation, the privacy
+decline, counterfact framing, pronoun scoping, the relationship-noun penalty, admission
+(is_memorable), quoted-speech stripping, reflection evidence-gating. Every one is a Python
+conditional at a seam. Every one was added after a failure. Every one has the two-paths failure
+mode this repo's AGENTS.md §0 exists to warn about, and several have had it.
+
+The reason it never converges: **rules written as code have an unbounded case space.** A
+conditional over free text and ad hoc fields can meet a new input shape forever; each fix creates
+new boundary behaviour; regression gates pin the cases we have MET, and nothing bounds the cases we
+have not. That is the whack-a-mole machine, and no amount of discipline dismantles it — discipline
+only slows it.
+
+The Phase 2 scoreboard (gates/G-SEM-SCOREBOARD.md) showed the same disease in its purest form:
+"semantically similar" as a cosine threshold has no finite refutation semantics — no witness you
+can put in a gate that proves a similarity verdict wrong — so building POLICY on it guarantees an
+eternity of tuning. It measured 0.0167 precision and lost, and the loss generalizes:
+
+> **A correctness rule may only be built on structure whose case space is finite and enumerable.
+> Anything built on magnitudes is a preference, never a verdict.**
+
+The mathematics this project already leans on (Friedman's invariant maximality, order-invariant
+relations on Q^k, WQO theory, PRA-grade conservation) is not decoration for that principle — it IS
+that principle, developed for eighty years precisely because "strong and provable" requires it.
+
+---
+
+## 1. THE BASIS, IN FOUR MOVES
+
+### 1.1 Order invariance: rules become finite objects
+
+Friedman's central device: a relation on Q^k is **order invariant** iff membership depends only on
+the ORDER TYPE of the tuple — the pattern of <, =, > among coordinates — never on the values. An
+order-invariant relation on an infinite domain is therefore a **finite object**: a set of order
+types, of which there are finitely many for each k, all enumerable.
+
+The memory translation. Give every fact a **signature** σ(row): a tuple over finite vocabularies
+plus rational time coordinates —
+
+```
+σ(row) = ( speaker ∈ {user, self},
+           status  ∈ {observed, inferred, confirmed},
+           lifecycle ∈ {0, 1},
+           mem_class ∈ C            (ONE vocabulary — SEMANTICS.md §4 prerequisite 1),
+           slot ∈ S ∪ {⊥}           (attribute key, if any),
+           t_first, t_last, t_retired ∈ Q ∪ {⊥} )
+```
+
+and require: **every verdict-level decision is a function of the order type of a small tuple of
+signatures.** Admit-to-speech is a ruling on (query-context, σ(row)); supersede-permission is a
+ruling on (σ(new), σ(old)); merge verdicts are rulings on (σ(a), σ(b)). The rulings form a
+**decision table over order types — data, not code — evaluated by ONE evaluator at the one seam.**
+
+What this buys, and it is the whole point:
+
+- **The case space is finite.** Every combination of the finite coordinates × every order pattern
+  of the time coordinates is a cell. A "fringe case" is an unclassified cell, and the cells can be
+  ENUMERATED. The game board has edges.
+- **Completeness is a theorem you check by running a loop:** every reachable cell has exactly one
+  ruling. Offline, no GPU, finite. (Reachable = producible by the real writer — the
+  producer/consumer closure of G-SECRET §4, promoted from one lesson to the general law.)
+- **Consistency is the same loop:** no cell carries two rulings.
+- **`src` stays prose and policy stays blind to it** — already law (TRAP: branching on src), now a
+  corollary: prose has no order type, so the table cannot see it.
+
+### 1.2 Invariant maximality: the store's view is a maximal object, and its invariances are chosen from the provable class
+
+Friedman's deep result-shape: *maximality* (greedy, cheap, trivial) plus an *invariance demand* on
+the maximal object is where all the content lives — and which invariances you may demand is
+delicate: some are provable low (finite strictly-increasing embeddings), some cost large cardinals
+(tail-identity), i.e. are not obtainable inside your working theory at all.
+
+The memory translation. **Her spoken view of a topic = the maximal subset of matched rows
+consistent under an order-invariant priority relation.** Testimony-over-inference stops being a
+special-cased speech filter and becomes a property of the relation: on a shared slot,
+(status=observed) dominates (status=inferred) at every order type — so the maximal consistent view
+provably never contains her guess over his word. Same for lanes: cross-speaker tuples carry no
+compatible order types, so lanes cannot merge in any view, ever, on any path.
+
+And the engineering reading of Friedman's warning: **choose the invariances you demand of the
+maximal view DELIBERATELY, from the provable class.** The ones we demand, each a gate:
+
+| Invariance (provable class) | Meaning here | Gate |
+|---|---|---|
+| time translation (order-preserving shift of all t) | verdicts depend on the ORDER of events, never the calendar | G-SEM-STABLE §1 |
+| future extension (append rows with later t) | verdicts about the past do not flip because the world grew | G-SEM-STABLE §2 |
+| unrelated retirement | tombstoning X changes no verdict that never involved X | G-SEM-STABLE §3 |
+
+What we deliberately do NOT demand (the tail-identity analogue — attractive, unaffordable):
+invariance under *reordering* of observations. What he said SECOND superseding what he said first
+is load-bearing; a memory invariant under observation order would be a memory that cannot learn.
+
+### 1.3 PRA / conservation: the admission criterion for mechanisms
+
+Already stated as the epistemic contract (SEMANTICS.md §1); promoted here to the **entry bar**:
+
+> A mechanism may participate in verdicts iff its correctness claim is Π⁰₂-shaped — every
+> violation has a finite, primitive-recursive witness (a cell, a row id, a tuple) that a gate can
+> print. If a mechanism's failure cannot be exhibited finitely, the mechanism may rank, propose,
+> and decorate — it may never rule.
+
+This single sentence sorts everything we have:
+
+- order-type tables, dominance checks, lifecycle, lanes, slots → verdict layer (witnesses: cells).
+- salience, recency decay, cosine, W_c scores, any learned signal → **rank layer** (order among
+  already-admitted rows; magnitudes allowed, invariance NOT required — recency decay is the rank
+  layer doing its job).
+- LLM/embedding judgments ("same slot?", "paraphrase?") → **oracle layer**: fallible proposers.
+  An oracle output is an edge with an order-typed label; it may cause a PROPOSAL (a supersede
+  candidate, a recall candidate) that then flows through the verdict table like anything else.
+  Oracle off ⇒ every verdict identical (conservation, G-SEM-CONSERVE's law); oracle wrong ⇒ a
+  worse ranking or a missed proposal, never a false verdict.
+
+The strength claim of the whole design is exactly this: **correctness is a theorem about the
+verdict layer alone.** Oracles and rankers can be arbitrarily clever, arbitrarily wrong, or
+switched off entirely, and no non-negotiable can be violated — not because a guard remembered to
+fire, but because the violating object has no cell to live in.
+
+### 1.4 WQO: the termination ordinals
+
+Unchanged from SEMANTICS.md (S2): Dickson dominance for supersede proposals and frontier
+settlement; the Higman/Kruskal whistle for consolidation loops. Their role in the foundation:
+**every repair or growth loop names its well-founded measure** (§1.5 of the contract), and the WQO
+is what makes "the store settles" a theorem instead of an observation.
+
+---
+
+## 2. WHAT CHANGES, CONCRETELY (the phase plan)
+
+**Phase A — draw the game board (no behaviour change).** Extract the DE FACTO decision table:
+enumerate every reachable signature cell, drive each through the REAL seam and decider, record the
+ruling. Commit the table as a receipt. The meta-gates land here:
+G-SEM-COMPLETE (every reachable cell ruled — an unruled cell is the gate's finite witness),
+G-SEM-CONSISTENT (one ruling per cell), and G-SEM-STABLE (the §1.2 invariances). The day these are
+green, the whack-a-mole board is finite, mapped, and pinned — every future "fringe case" is a
+diff against a committed table, visible in review.
+
+**Phase B — the table becomes the law.** The seam's scattered conditionals are replaced by one
+evaluator reading the committed table (rules-as-data). Existing gates (G-CLAIM, G-SECRET,
+G-DURABILITY...) must stay green bit-for-bit — they become corollaries of table cells, and the
+meta-gates prove there are no cells they missed.
+
+**Phase C — maximal-consistent-view recall.** The recall result set is defined as the maximal
+table-consistent subset of matched rows (testimony_wins et al. become properties of the view), with
+the rank layer ordering it and oracles proposing candidates into it. This is where the Phase 3
+`/v1/recall_rank` oracle (G-SEM-SCOREBOARD's direction) plugs in — as a proposer under quarantine,
+held to the same scoreboard.
+
+---
+
+## 3. HONESTY CLAUSE
+
+What is proved is exactly this and no more: properties of the verdict layer over the signature
+vocabulary, by finite enumeration, under the invariances of §1.2. Nothing here proves the ORACLES
+right (nothing can — that is the point of quarantining them), nothing here makes recall
+semantically better by itself (that is the rank/oracle layers' job, measured by the scoreboard),
+and the enumeration is only as good as the signature: a policy-relevant distinction missing from
+σ is invisible to every meta-gate. Adding a coordinate to σ is therefore a REVIEWED event — it
+multiplies the game board, and the meta-gates must be re-run and re-committed in the same change.

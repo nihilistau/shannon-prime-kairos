@@ -22,6 +22,9 @@ and recall across every surface (spine, tools, kairos scheduler, notes, MEM-OKF)
 
 Companion reading, in order:
 
+- [`INVARIANT-MEMORY.md`](INVARIANT-MEMORY.md) — **the foundation (2026-07-14):** the memory
+  system as a finite mathematical object — order-invariant verdict tables, invariant maximality,
+  the PRA entry bar, oracle quarantine. This stack is now an instance of that discipline.
 - [`AGENTS.md`](../AGENTS.md) — the bug class, the non-negotiables. This design is shaped around them.
 - [`docs/MEMORY-AND-RECALL.md`](MEMORY-AND-RECALL.md) — the current registry, the one seam.
 - PPT-ARM-III-Friedman.md / PPT-ARM-IV-KSTE.md (Position_Is_Arithmetic, `Archived/SP-PPT-ARM/`) —
