@@ -29,3 +29,10 @@ var/hidden/
 # It dirtied git status after each run, which trains you to ignore git status,
 # and a status you ignore is a status that hides a real change.
 memory-okf-telemetry/
+
+# STORED MEMORY SURFACES (operator, 2026-07-15): her stores are hers, not repo
+# content. The synthetic fixtures under harness_tests/fixtures/ remain tracked.
+memory-okf/
+memory-okf-self/
+memory-okf-personality/
+persona.md
