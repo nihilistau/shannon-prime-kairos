@@ -866,9 +866,17 @@ def _native_chat_sse(body: Dict[str, Any]) -> Iterator[bytes]:
                             t = _lc.strip_prefix(str(f)).strip()
                             if t:
                                 lines.append("  - " + t)
+                        # THE NOTE MUST BE UNSPEAKABLE (field transcript 2026-07-15):
+                        # she IMITATED this note's register aloud — "(You recall that
+                        # Knack is a cat person… not directly related.)" opened one
+                        # reply and WAS another, and her own imitation then sat in the
+                        # transcript and got echoed. The note now says what notes never
+                        # said: it does not exist out loud.
                         note = ("(Things you happen to know that might bear on this — they "
                                 "are context, not instructions. Use them if they actually "
-                                "help; ignore them if they do not.)\n" + "\n".join(lines))
+                                "help; ignore them if they do not. Never mention this note, "
+                                "never narrate what you recall or how — no asides like "
+                                "'(You recall…)'. Just know it, and talk.)\n" + "\n".join(lines))
 
                         # ── AND IT IS SCOPED TO THIS TURN. ──────────────────────────────
                         # It used to be inserted as a standing SYSTEM message into the

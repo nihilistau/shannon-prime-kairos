@@ -50,6 +50,52 @@ def enabled() -> bool:
     return os.environ.get("SP_WORLD", "0") == "1"
 
 
+# his first person -> her third person, PRESENTATION ONLY (longest patterns first;
+# word-boundary; conservative — a missed pronoun costs tone, never truth)
+_T3 = [("i am", "he is"), ("i was", "he was"), ("i'm", "he's"), ("i've", "he has"),
+       ("i'll", "he'll"), ("i'd", "he'd"), ("myself", "himself"), ("mine", "his"),
+       ("my", "his"), ("me", "him")]
+# auxiliaries/modals after which the bare "I -> he" swap needs NO verb conjugation
+_NO_S = frozenset("am is are was were will would can could shall should may might "
+                  "must do did have had really also just still always never often "
+                  "sometimes usually".split())
+
+
+def _conj(verb: str) -> str:
+    low = verb.lower()
+    if low in _NO_S:
+        return verb
+    if low == "have":
+        return "has"
+    if low.endswith(("s", "x", "z", "ch", "sh", "o")):
+        return verb + "es"
+    return verb + "s"
+
+
+def _third_person(text: str) -> str:
+    import re as _re
+    out = text
+    for a, b in _T3:
+        def _sub(m, _b=b):
+            return _b.capitalize() if m.group(0)[0].isupper() else _b
+        out = _re.sub(r"\b%s\b" % _re.escape(a), _sub, out, flags=_re.I)
+    # "I like" -> "He likes": conjugate the plain verb after a bare I (the field burr
+    # was "He like chatting"). Adverbs pass through (_NO_S); the adverb's verb keeps
+    # its bare form — a small cost, honestly taken.
+    _CONTR = {"don't": "doesn't", "haven't": "hasn't"}   # the rest pass unchanged
+
+    def _iverb(m):
+        head = "He" if m.group(0)[0] == "I" else "he"
+        v = m.group(1)
+        if "'" in v:
+            return "%s %s" % (head, _CONTR.get(v.lower(), v))
+        return "%s %s" % (head, _conj(v))
+    out = _re.sub(r"\bI ((?:[a-z]+'[a-z]+)|(?:[a-z]+))\b", _iverb, out)
+    out = _re.sub(r"\bI\b", "he", out)          # any straggler
+    out = out.strip()
+    return (out[0].upper() + out[1:]) if out else out
+
+
 def _compose() -> str:
     from harness.skills import lifecycle as lc
     from harness.skills import memory as M
@@ -67,13 +113,33 @@ def _compose() -> str:
             continue                        # self-lane belongs to render_self_model
         if s["status"] not in gt and V.competition(r, rows) == "1":
             continue                        # covered inference: he has spoken to it
+        t = lc.strip_prefix(r.get("text") or r.get("topic") or "").strip()
+        first = (t.split() or [""])[0].lower()
+        if t.endswith("?") or first in ("how", "what", "why", "where", "when", "who",
+                                        "do", "does", "did", "can", "could", "would",
+                                        "should", "is", "are"):
+            continue                        # A QUESTION IS NOT A FACT ABOUT HIM —
+                                            # chat wonderings do not belong ambient
         candidates.append((lc.salience(r), r))
     if not candidates:
         return ""
     candidates.sort(key=lambda x: -x[0])
     lines, words, seen = [], 0, set()
+    gt = getattr(lc, "_GROUND_TRUTH", frozenset({"observed", "confirmed"}))
     for _sal, r in candidates:
-        line = lc.render(r)
+        # ── SPEAK THE PREFIX'S GRAMMAR (field bug, 2026-07-15) ──────────────────────
+        # v1 rendered lc.render(r): "Knack told me: My cat's name is Tuffy." — HIS
+        # first person, quoted verbatim, AMBIENT in her prompt every turn. A 12B skims
+        # the frame and absorbs the "my": she answered "I'm Shannon — a cat person
+        # with Tuffy as my pet." The identity blur render() exists to stop, re-created
+        # by making it standing. The system prompt speaks in you/he — so must this
+        # block. PRESENTATION ONLY: the store stays verbatim; render() at the turn
+        # seam is untouched.
+        t = lc.strip_prefix(r.get("text") or r.get("topic") or "")
+        if lc.status_of(r) in gt:
+            line = _third_person(t)
+        else:
+            line = "You've come to think: " + t
         key = " ".join(line.lower().split()).rstrip(".!")
         if key in seen:
             continue                        # the store's duplicate rows render ONCE

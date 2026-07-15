@@ -76,8 +76,11 @@ block = W.refresh()
 # -- 1. THE SPINE ---------------------------------------------------------------------------
 print("\n2. the spine, framed")
 check("the block exists and carries the header", block.startswith(W._HEADER), block[:80])
-check("his facts are there, framed as his",
-      "Knack told me: My cat's name is Tuffy" in block, block)
+check("his facts are there, IN THE PREFIX'S GRAMMAR (his, not quoted 'my' — the "
+      "ownership-tangle field bug)",
+      "His cat's name is Tuffy" in block, block)
+check("his first person never appears ambient",
+      "My cat" not in block and "my cat" not in block, block)
 check("preferences included", "Oolong" in block)
 
 # -- 3. NEVER A SECRET ----------------------------------------------------------------------
@@ -87,8 +90,8 @@ check("the secret's text is NOT ambient", "alarm code" not in block)
 
 # -- 4. HER VOICE ---------------------------------------------------------------------------
 print("\n4. her voice is hers; covered stays home")
-check("her uncovered conclusion appears in her voice",
-      "I've come to think: Knack is warming to early starts lately" in block, block)
+check("her uncovered conclusion appears addressed to her (the prefix speaks in 'you')",
+      "You've come to think: Knack is warming to early starts lately" in block, block)
 check("the covered inference stays home (his words speak to open water)",
       "comfortable in open water" not in block)
 check("his testimony on that subject IS there",
