@@ -142,7 +142,7 @@ a rule that silences her; it removes the conditions that made silencing rules fe
 |---|---|---|
 | N0 | G-VOICE scoreboard + baseline receipts on the current dials | the receipt |
 | N1 | `render_world()` + G-WORLD (composition obeys the table; secrets never ambient) — **DONE 2026-07-15**: `harness/skills/world.py`, fourth prefix slot in `load_agent_system`, session-cached (the KV-prefix law: a remember() mid-session does not re-prefill; refresh() is the NIGHTSHIFT hook), verdict-gated, salience-ranked, deduped, 180-word budget; armed on the live profile (`[agent] world`, `SP_WORLD`). | **G-WORLD 15/15** |
-| N2 | NIGHTSHIFT narrative + tags taught in persona | snapshot diffs; G-PF-CURATE extension |
+| N2 | NIGHTSHIFT narrative + tags taught in persona — **DONE 2026-07-15**: `harness/skills/narrative.py` (one dated paragraph, her voice, rolling — yesterday feeds tomorrow; injectable composer; fail-safe: a dead model leaves the true record standing; NEVER a fact, registry byte-identical); wired into the idle NIGHTSHIFT (`agency.py`, writes + `world.refresh()`) and the nightly op (refresh only); the standing world renders it named as her account; the tag vocabulary finally TAUGHT in persona.md ("the marks let tomorrow's you remember how today felt"). | **G-NARRATIVE 14/14** |
 | N3 | dial tuning against G-VOICE; ban re-classification (backstop vs crutch) | before/after receipts |
 
 One tier at a time, one receipt per claim — and the measure of success is not a gate going

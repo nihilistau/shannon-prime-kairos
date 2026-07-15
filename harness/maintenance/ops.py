@@ -265,6 +265,14 @@ def reflect() -> dict[str, Any]:
         out["steps"].append({"step": "personality", "result": str(res)[:160]})
     except Exception as exc:
         out["steps"].append({"step": "personality", "skipped": str(exc)[:120]})
+    # N2: the nightly op has no transcript (the idle scheduler writes the narrative);
+    # it DOES fold whatever the day accumulated into the standing world.
+    try:
+        from harness.skills.world import refresh
+        refresh()
+        out["steps"].append({"step": "world_refresh", "ok": True})
+    except Exception as exc:
+        out["steps"].append({"step": "world_refresh", "skipped": str(exc)[:120]})
     try:
         out["steps"].append({"step": "insight", **insight()})
     except Exception as exc:

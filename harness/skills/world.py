@@ -85,7 +85,19 @@ def _compose() -> str:
         words += w
     if not lines:
         return ""
-    return _HEADER + "\n" + "\n".join(lines)
+    block = _HEADER + "\n" + "\n".join(lines)
+    # ── N2: the narrative — her own dated account of what has been happening ─────────
+    # Presentation layer, named as hers, never a fact. This is what gives "when did we
+    # last speak?" a TRUE answer and shrinks the vacuum confabulation fills.
+    try:
+        from harness.skills import narrative as N
+        story = N.current()
+        if story:
+            block += ("\n\nYour own journal line about the two of you "
+                      "(your account, not his words):\n" + story)
+    except Exception:
+        pass
+    return block
 
 
 def render_world() -> str:

@@ -110,6 +110,21 @@ def consolidate_current(convo_path: str, client: Optional[SPDaemonClient] = None
                 result["personality"] = pr
         except Exception as exc:
             logger.warning("[agency] personality curation skipped: %s", exc)
+    # ── N2 (CONTINUITY.md): NIGHTSHIFT writes the days down ──────────────────────────
+    # She composes one dated paragraph — what has been happening between them — and the
+    # standing world folds it in on refresh. Best-effort: an unreachable model leaves
+    # yesterday's paragraph standing (a stale true record beats a fresh empty one).
+    if os.environ.get("SP_WORLD", "0") == "1":
+        try:
+            from harness.skills.narrative import compose_and_write
+            from harness.skills.world import refresh
+            nr = compose_and_write(msgs)
+            refresh()          # the deliberate prefix re-cost, at the night boundary
+            if isinstance(result, dict):
+                result["narrative"] = nr
+            logger.info("[agency] narrative: %s", nr)
+        except Exception as exc:
+            logger.warning("[agency] narrative skipped: %s", exc)
     return result
 
 
